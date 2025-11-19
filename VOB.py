@@ -502,6 +502,7 @@ class NSEOptionsAnalyzer:
             }
 
         except Exception as e:
+            st.error(f"Error in ATM bias analysis: {str(e)}")
             return None
 
     def calculate_detailed_atm_bias(self, df_atm, atm_strike, spot_price):
@@ -567,6 +568,7 @@ class NSEOptionsAnalyzer:
             return detailed_bias
             
         except Exception as e:
+            st.error(f"Error in detailed ATM bias: {str(e)}")
             return {}
 
     def get_overall_market_bias(self):
@@ -1121,6 +1123,204 @@ Watch for breakout/breakdown confirmation!"""
         
         return False
 
+    def style_dataframe_with_colors(self, df):
+        """Apply proper color formatting to dataframe that works in Streamlit"""
+        # Create a copy without the Color column for display
+        display_df = df.drop('Color', axis=1).copy()
+        
+        # Define color mapping
+        def get_cell_style(color_type):
+            color_map = {
+                'bullish': 'background-color: #90EE90; color: black; font-weight: bold',
+                'bearish': 'background-color: #FFB6C1; color: black; font-weight: bold',
+                'neutral': 'background-color: #FFFFE0; color: black',
+                'normal': 'background-color: #FFFFFF; color: black'
+            }
+            return color_map.get(color_type, 'background-color: #FFFFFF; color: black')
+        
+        # Apply styles
+        def apply_styles(row):
+            styles = []
+            color_type = row['Color']
+            for col in display_df.columns:
+                styles.append(get_cell_style(color_type))
+            return styles
+        
+        # Apply the styling
+        styled_df = display_df.style.apply(lambda x: df.apply(apply_styles, axis=1), axis=0)
+        return styled_df
+
+    def get_bias_color(self, bias_text):
+        """Get color for bias text"""
+        if 'Bullish' in str(bias_text):
+            return 'bullish'
+        elif 'Bearish' in str(bias_text):
+            return 'bearish'
+        else:
+            return 'neutral'
+
+    def get_score_color(self, score):
+        """Get color for bias score"""
+        if score >= 2:
+            return 'bullish'
+        elif score <= -2:
+            return 'bearish'
+        else:
+            return 'neutral'
+
+    def get_pcr_color(self, pcr_value):
+        """Get color for PCR value"""
+        if pcr_value > 1.2:
+            return 'bullish'
+        elif pcr_value < 0.8:
+            return 'bearish'
+        else:
+            return 'neutral'
+
+    def get_diff_color(self, diff_value):
+        """Get color for difference values"""
+        if diff_value > 0:
+            return 'bullish'
+        elif diff_value < 0:
+            return 'bearish'
+        else:
+            return 'neutral'
+
+    def get_change_color(self, change_value):
+        """Get color for change values"""
+        if change_value > 0:
+            return 'bullish'
+        elif change_value < 0:
+            return 'bearish'
+        else:
+            return 'neutral'
+
+    def calculate_confidence_score(self, instrument_data, comp_metrics):
+        """Calculate confidence score based on multiple factors"""
+        confidence = 50  # Base confidence
+        
+        # PCR Confidence
+        pcr_oi = instrument_data['pcr_oi']
+        if pcr_oi > 1.3 or pcr_oi < 0.7:
+            confidence += 15
+        elif pcr_oi > 1.1 or pcr_oi < 0.9:
+            confidence += 10
+        
+        # Bias Score Confidence
+        bias_score = abs(instrument_data['bias_score'])
+        if bias_score >= 3:
+            confidence += 20
+        elif bias_score >= 2:
+            confidence += 15
+        elif bias_score >= 1:
+            confidence += 10
+        
+        # Synthetic Bias Confidence
+        synthetic_bias = comp_metrics.get('synthetic_bias', 'Neutral')
+        if 'Bullish' in synthetic_bias or 'Bearish' in synthetic_bias:
+            confidence += 10
+        
+        # Max Pain Confidence
+        dist_mp = abs(comp_metrics.get('distance_from_max_pain', 0))
+        if dist_mp > 100:
+            confidence += 10
+        elif dist_mp > 50:
+            confidence += 5
+        
+        return min(confidence, 100)
+
+    def create_comprehensive_chart(self, df, bullish_blocks, bearish_blocks, interval):
+        """Create comprehensive chart with Volume Order Blocks"""
+        if df.empty:
+            return None
+        
+        fig = make_subplots(
+            rows=2, cols=1,
+            row_heights=[0.7, 0.3],
+            subplot_titles=(f'Nifty 50 Analysis - {interval} Min', 'Volume with Spike Detection'),
+            vertical_spacing=0.05,
+            shared_xaxes=True
+        )
+        
+        # Candlestick chart
+        fig.add_trace(
+            go.Candlestick(
+                x=df.index,
+                open=df['open'],
+                high=df['high'],
+                low=df['low'],
+                close=df['close'],
+                name='Nifty 50',
+                increasing_line_color='#00ff88',
+                decreasing_line_color='#ff4444'
+            ),
+            row=1, col=1
+        )
+        
+        # Add Volume Order Blocks
+        colors = {'bullish': '#26ba9f', 'bearish': '#6626ba'}
+        
+        for block in bullish_blocks:
+            fig.add_shape(
+                type="rect",
+                x0=block['index'], y0=block['upper'],
+                x1=df.index[-1], y1=block['lower'],
+                fillcolor='rgba(38, 186, 159, 0.1)',
+                line=dict(color=colors['bullish'], width=1),
+                row=1, col=1
+            )
+        
+        for block in bearish_blocks:
+            fig.add_shape(
+                type="rect",
+                x0=block['index'], y0=block['upper'],
+                x1=df.index[-1], y1=block['lower'],
+                fillcolor='rgba(102, 38, 186, 0.1)',
+                line=dict(color=colors['bearish'], width=1),
+                row=1, col=1
+            )
+        
+        # Volume bars with spike detection
+        bar_colors = []
+        for i, (idx, row) in enumerate(df.iterrows()):
+            if i < len(df) - 1:
+                bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
+            else:
+                current_volume = row['volume']
+                if len(df) > 5:
+                    avg_volume = df['volume'].iloc[-6:-1].mean()
+                    if current_volume > avg_volume * 2.5:
+                        bar_colors.append('#ffeb3b')
+                    else:
+                        bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
+                else:
+                    bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
+        
+        fig.add_trace(
+            go.Bar(
+                x=df.index,
+                y=df['volume'],
+                name='Volume',
+                marker_color=bar_colors,
+                opacity=0.7
+            ),
+            row=2, col=1
+        )
+        
+        # Update layout
+        fig.update_layout(
+            xaxis_rangeslider_visible=False,
+            template='plotly_dark',
+            height=800,
+            showlegend=True,
+            margin=dict(l=0, r=0, t=50, b=0)
+        )
+        
+        fig.update_xaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)')
+        fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)', side="right")
+        
+        return fig
+
     def display_comprehensive_options_analysis(self):
         """Display comprehensive NSE Options Analysis with detailed ATM bias tabulation"""
         st.header("📊 NSE Options Chain Analysis - Comprehensive ATM Bias")
@@ -1368,209 +1568,6 @@ Watch for breakout/breakdown confirmation!"""
         
         else:
             st.info("👆 Click 'Update Options Data' to load comprehensive options analysis")
-
-    # =============================================
-    # FIXED COLOR FORMATTING METHODS
-    # =============================================
-
-    def style_dataframe_with_colors(self, df):
-        """Apply proper color formatting to dataframe that works in Streamlit"""
-        def color_cells(val, color_type):
-            color_map = {
-                'bullish': 'background-color: #90EE90; color: black; font-weight: bold',
-                'bearish': 'background-color: #FFB6C1; color: black; font-weight: bold',
-                'neutral': 'background-color: #FFFFE0; color: black',
-                'normal': 'background-color: #FFFFFF; color: black'
-            }
-            return color_map.get(color_type, 'background-color: #FFFFFF; color: black')
-        
-        # Create styled dataframe
-        styled_df = df.copy()
-        styled_df = styled_df.drop('Color', axis=1)  # Remove color column from display
-        
-        # Apply styling
-        styles = []
-        for _, row in df.iterrows():
-            row_style = []
-            for col in df.columns:
-                if col == 'Color':
-                    continue
-                color_type = row['Color']
-                row_style.append(color_cells(row[col], color_type))
-            styles.append(row_style)
-        
-        return pd.DataFrame(styled_df).style.apply(lambda x: styles, axis=1)
-
-    def get_bias_color(self, bias_text):
-        """Get color for bias text"""
-        if 'Bullish' in str(bias_text):
-            return 'bullish'
-        elif 'Bearish' in str(bias_text):
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def get_score_color(self, score):
-        """Get color for bias score"""
-        if score >= 2:
-            return 'bullish'
-        elif score <= -2:
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def get_pcr_color(self, pcr_value):
-        """Get color for PCR value"""
-        if pcr_value > 1.2:
-            return 'bullish'
-        elif pcr_value < 0.8:
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def get_diff_color(self, diff_value):
-        """Get color for difference values"""
-        if diff_value > 0:
-            return 'bullish'
-        elif diff_value < 0:
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def get_change_color(self, change_value):
-        """Get color for change values"""
-        if change_value > 0:
-            return 'bullish'
-        elif change_value < 0:
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def calculate_confidence_score(self, instrument_data, comp_metrics):
-        """Calculate confidence score based on multiple factors"""
-        confidence = 50  # Base confidence
-        
-        # PCR Confidence
-        pcr_oi = instrument_data['pcr_oi']
-        if pcr_oi > 1.3 or pcr_oi < 0.7:
-            confidence += 15
-        elif pcr_oi > 1.1 or pcr_oi < 0.9:
-            confidence += 10
-        
-        # Bias Score Confidence
-        bias_score = abs(instrument_data['bias_score'])
-        if bias_score >= 3:
-            confidence += 20
-        elif bias_score >= 2:
-            confidence += 15
-        elif bias_score >= 1:
-            confidence += 10
-        
-        # Synthetic Bias Confidence
-        synthetic_bias = comp_metrics.get('synthetic_bias', 'Neutral')
-        if 'Bullish' in synthetic_bias or 'Bearish' in synthetic_bias:
-            confidence += 10
-        
-        # Max Pain Confidence
-        dist_mp = abs(comp_metrics.get('distance_from_max_pain', 0))
-        if dist_mp > 100:
-            confidence += 10
-        elif dist_mp > 50:
-            confidence += 5
-        
-        return min(confidence, 100)
-
-    def create_comprehensive_chart(self, df, bullish_blocks, bearish_blocks, interval):
-        """Create comprehensive chart with Volume Order Blocks"""
-        if df.empty:
-            return None
-        
-        fig = make_subplots(
-            rows=2, cols=1,
-            row_heights=[0.7, 0.3],
-            subplot_titles=(f'Nifty 50 Analysis - {interval} Min', 'Volume with Spike Detection'),
-            vertical_spacing=0.05,
-            shared_xaxes=True
-        )
-        
-        # Candlestick chart
-        fig.add_trace(
-            go.Candlestick(
-                x=df.index,
-                open=df['open'],
-                high=df['high'],
-                low=df['low'],
-                close=df['close'],
-                name='Nifty 50',
-                increasing_line_color='#00ff88',
-                decreasing_line_color='#ff4444'
-            ),
-            row=1, col=1
-        )
-        
-        # Add Volume Order Blocks
-        colors = {'bullish': '#26ba9f', 'bearish': '#6626ba'}
-        
-        for block in bullish_blocks:
-            fig.add_shape(
-                type="rect",
-                x0=block['index'], y0=block['upper'],
-                x1=df.index[-1], y1=block['lower'],
-                fillcolor='rgba(38, 186, 159, 0.1)',
-                line=dict(color=colors['bullish'], width=1),
-                row=1, col=1
-            )
-        
-        for block in bearish_blocks:
-            fig.add_shape(
-                type="rect",
-                x0=block['index'], y0=block['upper'],
-                x1=df.index[-1], y1=block['lower'],
-                fillcolor='rgba(102, 38, 186, 0.1)',
-                line=dict(color=colors['bearish'], width=1),
-                row=1, col=1
-            )
-        
-        # Volume bars with spike detection
-        bar_colors = []
-        for i, (idx, row) in enumerate(df.iterrows()):
-            if i < len(df) - 1:
-                bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
-            else:
-                current_volume = row['volume']
-                if len(df) > 5:
-                    avg_volume = df['volume'].iloc[-6:-1].mean()
-                    if current_volume > avg_volume * 2.5:
-                        bar_colors.append('#ffeb3b')
-                    else:
-                        bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
-                else:
-                    bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
-        
-        fig.add_trace(
-            go.Bar(
-                x=df.index,
-                y=df['volume'],
-                name='Volume',
-                marker_color=bar_colors,
-                opacity=0.7
-            ),
-            row=2, col=1
-        )
-        
-        # Update layout
-        fig.update_layout(
-            xaxis_rangeslider_visible=False,
-            template='plotly_dark',
-            height=800,
-            showlegend=True,
-            margin=dict(l=0, r=0, t=50, b=0)
-        )
-        
-        fig.update_xaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)')
-        fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)', side="right")
-        
-        return fig
 
     def run(self):
         """Main application"""
