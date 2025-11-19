@@ -1,0 +1,75 @@
+# Core & Data Handling
+streamlit>=1.28.0
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+openpyxl>=3.1.0
+pytz>=2023.3
+streamlit
+streamlit-autorefresh
+requests
+pandas
+numpy
+scipy
+scikit-learn
+xgboost
+pytz
+supabase
+tensorflow
+joblib
+streamlit>=1.28.0
+requests>=2.31.0
+pandas>=2.0.0
+plotly>=5.15.0
+pytz>=2023.3
+supabase>=2.0.0
+postgrest>=0.13.0
+# Plotting & Visualization
+plotly>=5.15.0
+matplotlib
+
+# Technical Analysis & Indicators
+ta
+ta-lib
+
+# Web Scraping & HTTP Requests
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+feedparser>=6.0.10
+websockets
+
+# Authentication & APIs
+google-auth>=2.22.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=1.0.0
+gspread>=5.10.0
+dhanhq
+supabase
+
+# Sentiment Analysis
+textblob>=0.17.1
+vaderSentiment>=3.3.2
+streamlit
+streamlit-autorefresh
+requests
+pandas
+plotly
+numpy
+scipy
+pytz
+websocket-client
+# Utilities & Environment
+streamlit-autorefresh>=0.0.1
+python-dotenv
+schedule
+streamlit
+streamlit-autorefresh
+requests
+pandas
+plotly
+numpy
+scipy
+pytz
+supabase
+aiohttp
