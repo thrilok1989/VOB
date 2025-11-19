@@ -30,6 +30,8 @@ class EnhancedNiftyApp:
             st.session_state.sent_vob_alerts = set()
         if 'sent_rsi_alerts' not in st.session_state:
             st.session_state.sent_rsi_alerts = set()
+        if 'sent_rsi_oi_alerts' not in st.session_state:
+            st.session_state.sent_rsi_oi_alerts = set()
         if 'last_alert_check' not in st.session_state:
             st.session_state.last_alert_check = None
         
@@ -50,6 +52,7 @@ class EnhancedNiftyApp:
         """Initialize Supabase client"""
         try:
             self.supabase: Client = create_client(self.supabase_url, self.supabase_key)
+            # Test connection
             self.supabase.table('nifty_data').select("id").limit(1).execute()
         except Exception as e:
             st.warning(f"Supabase connection error: {str(e)}")
@@ -64,6 +67,41 @@ class EnhancedNiftyApp:
             'client-id': self.dhan_client_id
         }
     
+    def test_api_connection(self):
+        """Test DhanHQ API connection"""
+        st.info("🔍 Testing API connection...")
+        
+        # Test with market quote API (simpler endpoint)
+        test_payload = {
+            "IDX_I": [self.nifty_security_id]
+        }
+        
+        try:
+            response = requests.post(
+                "https://api.dhan.co/v2/marketfeed/ltp",
+                headers=self.get_dhan_headers(),
+                json=test_payload,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                st.success("✅ API Connection Successful!")
+                st.json(data)
+                return True
+            elif response.status_code == 401:
+                st.error("❌ Authentication Failed (401)")
+                st.error("Please check your access token and client ID")
+                return False
+            else:
+                st.error(f"❌ API Connection Failed: {response.status_code}")
+                st.error(f"Response: {response.text}")
+                return False
+                
+        except Exception as e:
+            st.error(f"❌ API Test Failed: {str(e)}")
+            return False
+
     def get_nearest_expiry(self):
         """Fetch nearest expiry for Nifty options"""
         payload = {
@@ -79,7 +117,8 @@ class EnhancedNiftyApp:
                 timeout=10
             )
             response.raise_for_status()
-            expiries = response.json().get("data", [])
+            data = response.json()
+            expiries = data.get("data", [])
             return expiries[0] if expiries else None
         except Exception as e:
             st.error(f"Expiry fetch error: {e}")
@@ -101,25 +140,111 @@ class EnhancedNiftyApp:
                 timeout=15
             )
             response.raise_for_status()
-            return response.json().get("data", {})
+            data = response.json()
+            return data.get("data", {})
         except Exception as e:
             st.error(f"Option chain fetch error: {e}")
             return {}
     
+    def fetch_intraday_data(self, interval="5", days_back=5):
+        """Fetch intraday data from DhanHQ API - CORRECTED VERSION"""
+        try:
+            # Calculate date range
+            end_date = datetime.now(self.ist)
+            start_date = end_date - timedelta(days=min(days_back, 90))  # API limit: 90 days
+            
+            # Market hours (IST)
+            from_date = start_date.strftime("%Y-%m-%d 09:15:00")
+            to_date = end_date.strftime("%Y-%m-%d 15:30:00")
+            
+            # CORRECTED PAYLOAD
+            payload = {
+                "securityId": str(self.nifty_security_id),
+                "exchangeSegment": "IDX_I",
+                "instrument": "INDEX",
+                "interval": str(interval),
+                "fromDate": from_date,
+                "toDate": to_date
+            }
+            
+            response = requests.post(
+                "https://api.dhan.co/v2/charts/intraday",
+                headers=self.get_dhan_headers(),
+                json=payload,
+                timeout=20
+            )
+            
+            if response.status_code == 401:
+                st.error("""
+                ❌ Authentication Failed (401 Unauthorized)
+                
+                Please check:
+                - Your DhanHQ access token is valid
+                - Your client ID is correct  
+                - Token hasn't expired (tokens expire after 24 hours)
+                """)
+                return None
+                
+            elif response.status_code == 400:
+                st.error(f"❌ Bad Request (400): {response.text}")
+                return None
+                
+            elif response.status_code == 200:
+                data = response.json()
+                
+                if not data or 'open' not in data or len(data['open']) == 0:
+                    st.warning("⚠️ API returned empty data")
+                    return None
+                    
+                st.success(f"✅ Data fetched: {len(data['open'])} candles")
+                return data
+                
+            else:
+                st.error(f"❌ API Error {response.status_code}: {response.text}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            st.error(f"❌ Network Error: {str(e)}")
+            return None
+        except Exception as e:
+            st.error(f"❌ Unexpected error: {str(e)}")
+            return None
+
+    def process_data(self, api_data):
+        """Process API data into DataFrame"""
+        if not api_data or 'open' not in api_data:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame({
+            'timestamp': api_data['timestamp'],
+            'open': api_data['open'],
+            'high': api_data['high'],
+            'low': api_data['low'],
+            'close': api_data['close'],
+            'volume': api_data['volume']
+        })
+        
+        # Convert timestamp (epoch seconds) to datetime
+        df['datetime'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
+        df['datetime'] = df['datetime'].dt.tz_convert(self.ist)
+        df = df.set_index('datetime')
+        
+        return df
+
     def analyze_oi_sentiment(self, option_data):
         """Analyze OI sentiment and find ATM strike"""
         if not option_data:
-            return None, None, "Neutral"
+            return None
         
         underlying_price = option_data.get("last_price", 0)
         oc = option_data.get("oc", {})
         
         if not oc:
-            return underlying_price, None, "Neutral"
+            return None
         
         # Find ATM strike
-        strikes = list(oc.keys())
-        atm_strike = min(strikes, key=lambda x: abs(float(x) - underlying_price))
+        strikes = [float(strike) for strike in oc.keys()]
+        atm_strike = min(strikes, key=lambda x: abs(x - underlying_price))
         
         # Calculate total OI change for all strikes
         total_call_oi_change = 0
@@ -128,6 +253,7 @@ class EnhancedNiftyApp:
         atm_pe_ltp = 0
         
         for strike, data in oc.items():
+            strike_float = float(strike)
             ce_data = data.get("ce", {})
             pe_data = data.get("pe", {})
             
@@ -141,20 +267,20 @@ class EnhancedNiftyApp:
                 total_put_oi_change += pe_oi_change
             
             # Get ATM LTPs
-            if strike == atm_strike:
+            if abs(strike_float - atm_strike) < 0.01:  # Float comparison tolerance
                 atm_ce_ltp = ce_data.get("last_price", 0) if ce_data else 0
                 atm_pe_ltp = pe_data.get("last_price", 0) if pe_data else 0
         
         # Determine sentiment
         sentiment = "Neutral"
-        if total_put_oi_change >= total_call_oi_change * 1.3:
+        if total_put_oi_change > total_call_oi_change:
             sentiment = "Bullish"
-        elif total_call_oi_change >= total_put_oi_change * 1.3:
+        elif total_call_oi_change > total_put_oi_change:
             sentiment = "Bearish"
         
         return {
             'underlying_price': underlying_price,
-            'atm_strike': float(atm_strike),
+            'atm_strike': atm_strike,
             'atm_ce_ltp': atm_ce_ltp,
             'atm_pe_ltp': atm_pe_ltp,
             'sentiment': sentiment,
@@ -162,10 +288,10 @@ class EnhancedNiftyApp:
             'put_oi_change': total_put_oi_change
         }
     
-    def calculate_ultimate_rsi(self, df, length=14, smooth=14):
+    def calculate_ultimate_rsi(self, df, length=7, smooth=14):
         """Calculate Ultimate RSI as per LuxAlgo implementation"""
         if len(df) < length + smooth:
-            return pd.Series(index=df.index, dtype=float)
+            return None, None
         
         src = df['close']
         
@@ -206,7 +332,7 @@ class EnhancedNiftyApp:
     
     def check_rsi_alerts(self, rsi_value, signal_value, oi_analysis):
         """Check RSI levels and send Telegram alerts"""
-        if pd.isna(rsi_value) or pd.isna(signal_value):
+        if pd.isna(rsi_value) or pd.isna(signal_value) or not oi_analysis:
             return
         
         current_time = datetime.now(self.ist)
@@ -259,6 +385,76 @@ class EnhancedNiftyApp:
             alerts_list = list(st.session_state.sent_rsi_alerts)
             st.session_state.sent_rsi_alerts = set(alerts_list[-10:])
     
+    def check_rsi_oi_alignment(self, rsi_value, signal_value, oi_analysis):
+        """Check if RSI and OI sentiment align and send Telegram alerts"""
+        if pd.isna(rsi_value) or pd.isna(signal_value) or not oi_analysis:
+            return
+        
+        current_time = datetime.now(self.ist)
+        alert_id = f"rsi_oi_{current_time.strftime('%Y%m%d_%H%M')}"
+        
+        # Check if we already sent an alert for this time period (avoid spam)
+        if alert_id in st.session_state.sent_rsi_oi_alerts:
+            return
+        
+        # Determine RSI sentiment
+        rsi_sentiment = "Neutral"
+        if rsi_value >= 80:
+            rsi_sentiment = "Bearish"
+        elif rsi_value <= 30:
+            rsi_sentiment = "Bullish"
+        
+        # Get OI sentiment
+        oi_sentiment = oi_analysis['sentiment']
+        
+        message = None
+        
+        # Check for alignment
+        if rsi_sentiment == "Bullish" and oi_sentiment == "Bullish":
+            message = f"""🚀 BULLISH CONFIRMATION ALERT!
+            
+📊 Nifty 50 Analysis
+⏰ Time: {current_time.strftime('%H:%M:%S')} IST
+
+📈 RSI: {rsi_value:.2f} (Bullish)
+📊 OI Sentiment: {oi_sentiment}
+
+💰 Current Price: ₹{oi_analysis['underlying_price']:.2f}
+🎯 ATM Strike: {oi_analysis['atm_strike']:.0f}
+
+💡 STRONG BULLISH SIGNAL:
+🔺 Consider CE Buy: ₹{oi_analysis['atm_ce_ltp']:.2f}
+📊 OI Analysis: Call OI Change: {oi_analysis['call_oi_change']:,} | Put OI Change: {oi_analysis['put_oi_change']:,}
+
+✅ Both RSI and OI indicate BULLISH momentum"""
+            
+        elif rsi_sentiment == "Bearish" and oi_sentiment == "Bearish":
+            message = f"""🔻 BEARISH CONFIRMATION ALERT!
+            
+📊 Nifty 50 Analysis
+⏰ Time: {current_time.strftime('%H:%M:%S')} IST
+
+📈 RSI: {rsi_value:.2f} (Bearish)
+📊 OI Sentiment: {oi_sentiment}
+
+💰 Current Price: ₹{oi_analysis['underlying_price']:.2f}
+🎯 ATM Strike: {oi_analysis['atm_strike']:.0f}
+
+💡 STRONG BEARISH SIGNAL:
+🔻 Consider PE Buy: ₹{oi_analysis['atm_pe_ltp']:.2f}
+📊 OI Analysis: Call OI Change: {oi_analysis['call_oi_change']:,} | Put OI Change: {oi_analysis['put_oi_change']:,}
+
+✅ Both RSI and OI indicate BEARISH momentum"""
+        
+        if message and self.send_telegram_message(message):
+            st.session_state.sent_rsi_oi_alerts.add(alert_id)
+            st.success(f"RSI+OI alignment alert sent at {current_time.strftime('%H:%M:%S')}")
+        
+        # Clean up old RSI+OI alerts (keep only last 20)
+        if len(st.session_state.sent_rsi_oi_alerts) > 20:
+            alerts_list = list(st.session_state.sent_rsi_oi_alerts)
+            st.session_state.sent_rsi_oi_alerts = set(alerts_list[-10:])
+    
     def enhanced_vob_alert(self, zone, oi_analysis):
         """Enhanced VOB alert with OI analysis and trade suggestions"""
         zone_type = zone['type'].title()
@@ -293,57 +489,6 @@ class EnhancedNiftyApp:
 ⚠️ Trade at your own risk!"""
         
         return message
-    
-    def fetch_intraday_data(self, interval="3", days_back=5):
-        """Fetch intraday data from DhanHQ API"""
-        end_date = datetime.now(self.ist)
-        start_date = end_date - timedelta(days=days_back)
-        
-        from_date = start_date.strftime("%Y-%m-%d 09:15:00")
-        to_date = end_date.strftime("%Y-%m-%d 15:30:00")
-        
-        payload = {
-            "securityId": self.nifty_security_id,
-            "exchangeSegment": "IDX_I",
-            "instrument": "INDEX",
-            "interval": interval,
-            "oi": False,
-            "fromDate": from_date,
-            "toDate": to_date
-        }
-        
-        try:
-            response = requests.post(
-                "https://api.dhan.co/v2/charts/intraday",
-                headers=self.get_dhan_headers(),
-                json=payload,
-                timeout=10
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            st.error(f"API Error: {e}")
-            return None
-    
-    def process_data(self, api_data):
-        """Process API data into DataFrame"""
-        if not api_data or 'open' not in api_data:
-            return pd.DataFrame()
-        
-        df = pd.DataFrame({
-            'timestamp': api_data['timestamp'],
-            'open': api_data['open'],
-            'high': api_data['high'],
-            'low': api_data['low'],
-            'close': api_data['close'],
-            'volume': api_data['volume']
-        })
-        
-        df['datetime'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
-        df['datetime'] = df['datetime'].dt.tz_convert(self.ist)
-        df = df.set_index('datetime')
-        
-        return df
     
     def send_telegram_message(self, message):
         """Send message to Telegram"""
@@ -629,7 +774,7 @@ class EnhancedNiftyApp:
                     name='Ultimate RSI',
                     line=dict(color='#ffffff', width=2)
                 ),
-                row=3, col=1
+            row=3, col=1
             )
             
             # Signal line
@@ -683,12 +828,16 @@ class EnhancedNiftyApp:
         return fig
     
     def run(self):
-        """Main application"""
+        """Main application with enhanced error handling"""
         st.title("📈 Enhanced Nifty Trading Dashboard")
         st.markdown("*With VOB Zones, Ultimate RSI & OI Analysis*")
         
         # Sidebar controls
         with st.sidebar:
+            st.header("🔧 API Status")
+            if st.button("Test API Connection"):
+                self.test_api_connection()
+            
             st.header("📊 Settings")
             
             timeframe = st.selectbox(
@@ -706,7 +855,7 @@ class EnhancedNiftyApp:
             # RSI Settings
             st.subheader("Ultimate RSI")
             rsi_enabled = st.checkbox("Enable Ultimate RSI", value=True)
-            rsi_length = st.slider("RSI Length", 10, 30, 14)
+            rsi_length = st.slider("RSI Length", 5, 20, 7)
             rsi_smooth = st.slider("RSI Smoothing", 10, 30, 14)
             
             # OI Analysis Settings
@@ -721,9 +870,11 @@ class EnhancedNiftyApp:
             if telegram_enabled:
                 st.info(f"VOB Alerts: {len(st.session_state.sent_vob_alerts)}")
                 st.info(f"RSI Alerts: {len(st.session_state.sent_rsi_alerts)}")
+                st.info(f"RSI+OI Alerts: {len(st.session_state.sent_rsi_oi_alerts)}")
                 if st.button("Clear Alert History"):
                     st.session_state.sent_vob_alerts.clear()
                     st.session_state.sent_rsi_alerts.clear()
+                    st.session_state.sent_rsi_oi_alerts.clear()
                     st.success("Alert history cleared!")
                     st.rerun()
             
@@ -733,7 +884,7 @@ class EnhancedNiftyApp:
                 ["Live API", "Database", "Both"]
             )
             
-            # Auto refresh - Fixed to 25 seconds
+            # Auto refresh
             auto_refresh = st.checkbox("Auto Refresh (25 seconds)", value=True)
             
             if st.button("🔄 Refresh Now"):
@@ -750,7 +901,7 @@ class EnhancedNiftyApp:
         
         # Fetch price data
         if data_source in ["Live API", "Both"]:
-            with st.spinner("Fetching live data..."):
+            with st.spinner("Fetching live data from DhanHQ API..."):
                 api_data = self.fetch_intraday_data(interval=timeframe)
                 if api_data:
                     df_api = self.process_data(api_data)
@@ -758,6 +909,10 @@ class EnhancedNiftyApp:
                         df = df_api
                         if self.supabase:
                             self.save_to_supabase(df_api, timeframe)
+                    else:
+                        st.warning("No data processed from API response")
+                else:
+                    st.error("Failed to fetch data from API")
         
         if data_source in ["Database", "Both"] and df.empty:
             with st.spinner("Loading from database..."):
@@ -769,9 +924,14 @@ class EnhancedNiftyApp:
                 try:
                     expiry = self.get_nearest_expiry()
                     if expiry:
+                        st.info(f"Using expiry: {expiry}")
                         option_data = self.fetch_option_chain(expiry)
                         if option_data:
                             oi_analysis = self.analyze_oi_sentiment(option_data)
+                        else:
+                            st.warning("No option chain data received")
+                    else:
+                        st.warning("Could not fetch expiry dates")
                 except Exception as e:
                     st.warning(f"OI analysis error: {str(e)}")
         
@@ -800,7 +960,12 @@ class EnhancedNiftyApp:
                         if telegram_enabled and rsi_data[0] is not None and oi_analysis:
                             latest_rsi = rsi_data[0].iloc[-1]
                             latest_signal = rsi_data[1].iloc[-1]
+                            
+                            # Check regular RSI alerts
                             self.check_rsi_alerts(latest_rsi, latest_signal, oi_analysis)
+                            
+                            # Check RSI + OI alignment
+                            self.check_rsi_oi_alignment(latest_rsi, latest_signal, oi_analysis)
                     except Exception as e:
                         st.warning(f"RSI calculation error: {str(e)}")
                         rsi_data = None
@@ -939,7 +1104,16 @@ class EnhancedNiftyApp:
                     }).tail(20)
                     st.dataframe(rsi_df, use_container_width=True)
         else:
-            st.warning("⚠️ No data available. Please check your API credentials or try refreshing.")
+            st.error("""
+            ⚠️ No data available. 
+            
+            Common solutions:
+            1. Check your DhanHQ API credentials in secrets.toml
+            2. Verify your access token is valid (tokens expire after 24 hours)
+            3. Ensure you're connected to the internet
+            4. Try the "Test API Connection" button in the sidebar
+            5. Check if market is open (9:15 AM - 3:30 PM IST)
+            """)
         
         # Footer with status
         st.markdown("---")
@@ -956,9 +1130,9 @@ class EnhancedNiftyApp:
             data_points = len(df) if not df.empty else 0
             st.caption(f"📊 Data Points: {data_points}")
         
-        # Auto refresh - Fixed to 25 seconds
+        # Auto refresh
         if auto_refresh:
-            time.sleep(25)  # Fixed 25-second interval
+            time.sleep(25)
             st.rerun()
 
 # Initialize and run the app
