@@ -1212,15 +1212,9 @@ Watch for breakout/breakdown confirmation!"""
                         # Create DataFrame
                         bias_df = pd.DataFrame(bias_data_tabulation, columns=['Bias Type', 'Direction', 'Color'])
                         
-                        # Display with color coding
-                        st.dataframe(
-                            bias_df.style.apply(
-                                lambda x: [f"background-color: {self.get_color_code(x['Color'])}" for _ in x], 
-                                axis=1
-                            ), 
-                            use_container_width=True,
-                            hide_index=True
-                        )
+                        # Display with proper color coding using custom function
+                        styled_bias_df = self.style_dataframe_with_colors(bias_df)
+                        st.dataframe(styled_bias_df, use_container_width=True, hide_index=True)
                     
                     st.divider()
                     
@@ -1260,15 +1254,9 @@ Watch for breakout/breakdown confirmation!"""
                         # Create DataFrame
                         raw_df = pd.DataFrame(raw_data_tabulation, columns=['Metric', 'Value', 'Color'])
                         
-                        # Display with color coding
-                        st.dataframe(
-                            raw_df.style.apply(
-                                lambda x: [f"background-color: {self.get_color_code(x['Color'])}" for _ in x], 
-                                axis=1
-                            ), 
-                            use_container_width=True,
-                            hide_index=True
-                        )
+                        # Display with proper color coding
+                        styled_raw_df = self.style_dataframe_with_colors(raw_df)
+                        st.dataframe(styled_raw_df, use_container_width=True, hide_index=True)
                     
                     st.divider()
                     
@@ -1309,15 +1297,9 @@ Watch for breakout/breakdown confirmation!"""
                     # Create DataFrame
                     advanced_df = pd.DataFrame(advanced_data, columns=['Metric', 'Value', 'Color'])
                     
-                    # Display with color coding
-                    st.dataframe(
-                        advanced_df.style.apply(
-                            lambda x: [f"background-color: {self.get_color_code(x['Color'])}" for _ in x], 
-                            axis=1
-                        ), 
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    # Display with proper color coding
+                    styled_advanced_df = self.style_dataframe_with_colors(advanced_df)
+                    st.dataframe(styled_advanced_df, use_container_width=True, hide_index=True)
                     
                     st.divider()
                     
@@ -1388,8 +1370,36 @@ Watch for breakout/breakdown confirmation!"""
             st.info("👆 Click 'Update Options Data' to load comprehensive options analysis")
 
     # =============================================
-    # HELPER METHODS FOR TABULATION
+    # FIXED COLOR FORMATTING METHODS
     # =============================================
+
+    def style_dataframe_with_colors(self, df):
+        """Apply proper color formatting to dataframe that works in Streamlit"""
+        def color_cells(val, color_type):
+            color_map = {
+                'bullish': 'background-color: #90EE90; color: black; font-weight: bold',
+                'bearish': 'background-color: #FFB6C1; color: black; font-weight: bold',
+                'neutral': 'background-color: #FFFFE0; color: black',
+                'normal': 'background-color: #FFFFFF; color: black'
+            }
+            return color_map.get(color_type, 'background-color: #FFFFFF; color: black')
+        
+        # Create styled dataframe
+        styled_df = df.copy()
+        styled_df = styled_df.drop('Color', axis=1)  # Remove color column from display
+        
+        # Apply styling
+        styles = []
+        for _, row in df.iterrows():
+            row_style = []
+            for col in df.columns:
+                if col == 'Color':
+                    continue
+                color_type = row['Color']
+                row_style.append(color_cells(row[col], color_type))
+            styles.append(row_style)
+        
+        return pd.DataFrame(styled_df).style.apply(lambda x: styles, axis=1)
 
     def get_bias_color(self, bias_text):
         """Get color for bias text"""
@@ -1435,16 +1445,6 @@ Watch for breakout/breakdown confirmation!"""
             return 'bearish'
         else:
             return 'neutral'
-
-    def get_color_code(self, color_type):
-        """Get hex color code for color type"""
-        color_map = {
-            'bullish': '#90EE90',  # Light Green
-            'bearish': '#FFB6C1',  # Light Red
-            'neutral': '#FFFFE0',  # Light Yellow
-            'normal': '#FFFFFF'    # White
-        }
-        return color_map.get(color_type, '#FFFFFF')
 
     def calculate_confidence_score(self, instrument_data, comp_metrics):
         """Calculate confidence score based on multiple factors"""
