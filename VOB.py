@@ -9,6 +9,9 @@ from supabase import create_client, Client
 import json
 import time
 import numpy as np
+from collections import deque
+import warnings
+warnings.filterwarnings('ignore')
 
 # Streamlit configuration
 st.set_page_config(
@@ -17,13 +20,165 @@ st.set_page_config(
     layout="wide"
 )
 
+class VolumeOrderBlocks:
+    """Python implementation of Volume Order Blocks indicator by BigBeluga"""
+    
+    def __init__(self, sensitivity=5):
+        self.length1 = sensitivity
+        self.length2 = sensitivity + 13
+        self.max_lines_count = 500
+        self.bullish_blocks = deque(maxlen=15)
+        self.bearish_blocks = deque(maxlen=15)
+        self.sent_alerts = set()
+        
+    def calculate_ema(self, data, period):
+        """Calculate Exponential Moving Average"""
+        return data.ewm(span=period, adjust=False).mean()
+    
+    def calculate_atr(self, df, period=200):
+        """Calculate Average True Range"""
+        high_low = df['high'] - df['low']
+        high_close = np.abs(df['high'] - df['close'].shift())
+        low_close = np.abs(df['low'] - df['close'].shift())
+        
+        true_range = np.maximum(high_low, np.maximum(high_close, low_close))
+        atr = true_range.rolling(window=period).mean()
+        return atr * 3  # 3x ATR as in original script
+    
+    def detect_volume_order_blocks(self, df):
+        """Detect Volume Order Blocks based on the Pine Script logic"""
+        if len(df) < self.length2:
+            return [], []
+        
+        # Calculate EMAs
+        ema1 = self.calculate_ema(df['close'], self.length1)
+        ema2 = self.calculate_ema(df['close'], self.length2)
+        
+        # Calculate crossovers
+        cross_up = (ema1 > ema2) & (ema1.shift(1) <= ema2.shift(1))
+        cross_down = (ema1 < ema2) & (ema1.shift(1) >= ema2.shift(1))
+        
+        # Calculate ATR
+        atr = self.calculate_atr(df)
+        atr1 = atr * 2 / 3  # 2x ATR as in original script
+        
+        bullish_blocks = []
+        bearish_blocks = []
+        
+        for i in range(len(df)):
+            if cross_up.iloc[i]:
+                # Bullish block detection
+                lookback_data = df.iloc[max(0, i - self.length2):i+1]
+                if len(lookback_data) == 0:
+                    continue
+                    
+                lowest_idx = lookback_data['low'].idxmin()
+                lowest_price = lookback_data.loc[lowest_idx, 'low']
+                
+                # Calculate volume for the block
+                vol = lookback_data['volume'].sum()
+                
+                # Determine base price
+                open_price = lookback_data.loc[lowest_idx, 'open']
+                close_price = lookback_data.loc[lowest_idx, 'close']
+                src = min(open_price, close_price)
+                
+                # Adjust base price if needed (ATR condition)
+                if pd.notna(atr.iloc[i]) and (src - lowest_price) < atr1.iloc[i] * 0.5:
+                    src = lowest_price + atr1.iloc[i] * 0.5
+                
+                mid = (src + lowest_price) / 2
+                
+                bullish_blocks.append({
+                    'index': lowest_idx,
+                    'upper': src,
+                    'lower': lowest_price,
+                    'mid': mid,
+                    'volume': vol,
+                    'type': 'bullish'
+                })
+                
+            elif cross_down.iloc[i]:
+                # Bearish block detection
+                lookback_data = df.iloc[max(0, i - self.length2):i+1]
+                if len(lookback_data) == 0:
+                    continue
+                    
+                highest_idx = lookback_data['high'].idxmax()
+                highest_price = lookback_data.loc[highest_idx, 'high']
+                
+                # Calculate volume for the block
+                vol = lookback_data['volume'].sum()
+                
+                # Determine base price
+                open_price = lookback_data.loc[highest_idx, 'open']
+                close_price = lookback_data.loc[highest_idx, 'close']
+                src = max(open_price, close_price)
+                
+                # Adjust base price if needed (ATR condition)
+                if pd.notna(atr.iloc[i]) and (highest_price - src) < atr1.iloc[i] * 0.5:
+                    src = highest_price - atr1.iloc[i] * 0.5
+                
+                mid = (src + highest_price) / 2
+                
+                bearish_blocks.append({
+                    'index': highest_idx,
+                    'upper': highest_price,
+                    'lower': src,
+                    'mid': mid,
+                    'volume': vol,
+                    'type': 'bearish'
+                })
+        
+        # Filter overlapping blocks
+        bullish_blocks = self.filter_overlapping_blocks(bullish_blocks, atr.iloc[-1] if len(atr) > 0 else 0)
+        bearish_blocks = self.filter_overlapping_blocks(bearish_blocks, atr.iloc[-1] if len(atr) > 0 else 0)
+        
+        return bullish_blocks, bearish_blocks
+    
+    def filter_overlapping_blocks(self, blocks, atr_value):
+        """Filter out overlapping blocks based on ATR distance"""
+        if not blocks:
+            return []
+        
+        filtered_blocks = []
+        
+        for block in blocks:
+            # Check if this block overlaps with any existing block
+            overlap = False
+            for existing_block in filtered_blocks:
+                if abs(block['mid'] - existing_block['mid']) < atr_value:
+                    overlap = True
+                    break
+            
+            if not overlap:
+                filtered_blocks.append(block)
+        
+        return filtered_blocks
+    
+    def check_price_near_blocks(self, current_price, blocks, threshold=5):
+        """Check if current price is within threshold points of any volume order block"""
+        nearby_blocks = []
+        
+        for block in blocks:
+            distance_to_upper = abs(current_price - block['upper'])
+            distance_to_lower = abs(current_price - block['lower'])
+            distance_to_mid = abs(current_price - block['mid'])
+            
+            if (distance_to_upper <= threshold or 
+                distance_to_lower <= threshold or 
+                distance_to_mid <= threshold):
+                nearby_blocks.append(block)
+        
+        return nearby_blocks
+
 class EnhancedNiftyApp:
     def __init__(self):
         self.setup_secrets()
         self.setup_supabase()
         self.ist = pytz.timezone('Asia/Kolkata')
-        self.nifty_security_id = "13"  # Nifty 50 security ID for DhanHQ
-        self.vob_zones = []
+        self.nifty_security_id = "13"
+        self.vob_indicator = VolumeOrderBlocks(sensitivity=5)
         
         # Initialize session state
         if 'sent_vob_alerts' not in st.session_state:
@@ -32,6 +187,8 @@ class EnhancedNiftyApp:
             st.session_state.sent_rsi_alerts = set()
         if 'sent_rsi_oi_alerts' not in st.session_state:
             st.session_state.sent_rsi_oi_alerts = set()
+        if 'sent_volume_block_alerts' not in st.session_state:
+            st.session_state.sent_volume_block_alerts = set()
         if 'last_alert_check' not in st.session_state:
             st.session_state.last_alert_check = None
         
@@ -51,9 +208,11 @@ class EnhancedNiftyApp:
     def setup_supabase(self):
         """Initialize Supabase client"""
         try:
-            self.supabase: Client = create_client(self.supabase_url, self.supabase_key)
-            # Test connection
-            self.supabase.table('nifty_data').select("id").limit(1).execute()
+            if self.supabase_url and self.supabase_key:
+                self.supabase: Client = create_client(self.supabase_url, self.supabase_key)
+                self.supabase.table('nifty_data').select("id").limit(1).execute()
+            else:
+                self.supabase = None
         except Exception as e:
             st.warning(f"Supabase connection error: {str(e)}")
             self.supabase = None
@@ -71,10 +230,7 @@ class EnhancedNiftyApp:
         """Test DhanHQ API connection"""
         st.info("🔍 Testing API connection...")
         
-        # Test with market quote API (simpler endpoint)
-        test_payload = {
-            "IDX_I": [self.nifty_security_id]
-        }
+        test_payload = {"IDX_I": [self.nifty_security_id]}
         
         try:
             response = requests.post(
@@ -87,77 +243,24 @@ class EnhancedNiftyApp:
             if response.status_code == 200:
                 data = response.json()
                 st.success("✅ API Connection Successful!")
-                st.json(data)
                 return True
-            elif response.status_code == 401:
-                st.error("❌ Authentication Failed (401)")
-                st.error("Please check your access token and client ID")
-                return False
             else:
                 st.error(f"❌ API Connection Failed: {response.status_code}")
-                st.error(f"Response: {response.text}")
                 return False
                 
         except Exception as e:
             st.error(f"❌ API Test Failed: {str(e)}")
             return False
 
-    def get_nearest_expiry(self):
-        """Fetch nearest expiry for Nifty options"""
-        payload = {
-            "UnderlyingScrip": int(self.nifty_security_id),
-            "UnderlyingSeg": "IDX_I"
-        }
-        
-        try:
-            response = requests.post(
-                "https://api.dhan.co/v2/optionchain/expirylist",
-                headers=self.get_dhan_headers(),
-                json=payload,
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            expiries = data.get("data", [])
-            return expiries[0] if expiries else None
-        except Exception as e:
-            st.error(f"Expiry fetch error: {e}")
-            return None
-    
-    def fetch_option_chain(self, expiry):
-        """Fetch option chain for Nifty"""
-        payload = {
-            "UnderlyingScrip": int(self.nifty_security_id),
-            "UnderlyingSeg": "IDX_I",
-            "Expiry": expiry
-        }
-        
-        try:
-            response = requests.post(
-                "https://api.dhan.co/v2/optionchain",
-                headers=self.get_dhan_headers(),
-                json=payload,
-                timeout=15
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get("data", {})
-        except Exception as e:
-            st.error(f"Option chain fetch error: {e}")
-            return {}
-    
     def fetch_intraday_data(self, interval="5", days_back=5):
-        """Fetch intraday data from DhanHQ API - CORRECTED VERSION"""
+        """Fetch intraday data from DhanHQ API"""
         try:
-            # Calculate date range
             end_date = datetime.now(self.ist)
-            start_date = end_date - timedelta(days=min(days_back, 90))  # API limit: 90 days
+            start_date = end_date - timedelta(days=min(days_back, 90))
             
-            # Market hours (IST)
             from_date = start_date.strftime("%Y-%m-%d 09:15:00")
             to_date = end_date.strftime("%Y-%m-%d 15:30:00")
             
-            # CORRECTED PAYLOAD
             payload = {
                 "securityId": str(self.nifty_security_id),
                 "exchangeSegment": "IDX_I",
@@ -174,40 +277,19 @@ class EnhancedNiftyApp:
                 timeout=20
             )
             
-            if response.status_code == 401:
-                st.error("""
-                ❌ Authentication Failed (401 Unauthorized)
-                
-                Please check:
-                - Your DhanHQ access token is valid
-                - Your client ID is correct  
-                - Token hasn't expired (tokens expire after 24 hours)
-                """)
-                return None
-                
-            elif response.status_code == 400:
-                st.error(f"❌ Bad Request (400): {response.text}")
-                return None
-                
-            elif response.status_code == 200:
+            if response.status_code == 200:
                 data = response.json()
-                
                 if not data or 'open' not in data or len(data['open']) == 0:
                     st.warning("⚠️ API returned empty data")
                     return None
-                    
                 st.success(f"✅ Data fetched: {len(data['open'])} candles")
                 return data
-                
             else:
-                st.error(f"❌ API Error {response.status_code}: {response.text}")
+                st.error(f"❌ API Error {response.status_code}")
                 return None
                 
-        except requests.exceptions.RequestException as e:
-            st.error(f"❌ Network Error: {str(e)}")
-            return None
         except Exception as e:
-            st.error(f"❌ Unexpected error: {str(e)}")
+            st.error(f"❌ Data fetch error: {str(e)}")
             return None
 
     def process_data(self, api_data):
@@ -224,272 +306,12 @@ class EnhancedNiftyApp:
             'volume': api_data['volume']
         })
         
-        # Convert timestamp (epoch seconds) to datetime
         df['datetime'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
         df['datetime'] = df['datetime'].dt.tz_convert(self.ist)
         df = df.set_index('datetime')
         
         return df
 
-    def analyze_oi_sentiment(self, option_data):
-        """Analyze OI sentiment and find ATM strike"""
-        if not option_data:
-            return None
-        
-        underlying_price = option_data.get("last_price", 0)
-        oc = option_data.get("oc", {})
-        
-        if not oc:
-            return None
-        
-        # Find ATM strike
-        strikes = [float(strike) for strike in oc.keys()]
-        atm_strike = min(strikes, key=lambda x: abs(x - underlying_price))
-        
-        # Calculate total OI change for all strikes
-        total_call_oi_change = 0
-        total_put_oi_change = 0
-        atm_ce_ltp = 0
-        atm_pe_ltp = 0
-        
-        for strike, data in oc.items():
-            strike_float = float(strike)
-            ce_data = data.get("ce", {})
-            pe_data = data.get("pe", {})
-            
-            # Calculate OI change (current - previous)
-            if ce_data:
-                ce_oi_change = ce_data.get("oi", 0) - ce_data.get("previous_oi", 0)
-                total_call_oi_change += ce_oi_change
-            
-            if pe_data:
-                pe_oi_change = pe_data.get("oi", 0) - pe_data.get("previous_oi", 0)
-                total_put_oi_change += pe_oi_change
-            
-            # Get ATM LTPs
-            if abs(strike_float - atm_strike) < 0.01:  # Float comparison tolerance
-                atm_ce_ltp = ce_data.get("last_price", 0) if ce_data else 0
-                atm_pe_ltp = pe_data.get("last_price", 0) if pe_data else 0
-        
-        # Determine sentiment
-        sentiment = "Neutral"
-        if total_put_oi_change > total_call_oi_change:
-            sentiment = "Bullish"
-        elif total_call_oi_change > total_put_oi_change:
-            sentiment = "Bearish"
-        
-        return {
-            'underlying_price': underlying_price,
-            'atm_strike': atm_strike,
-            'atm_ce_ltp': atm_ce_ltp,
-            'atm_pe_ltp': atm_pe_ltp,
-            'sentiment': sentiment,
-            'call_oi_change': total_call_oi_change,
-            'put_oi_change': total_put_oi_change
-        }
-    
-    def calculate_ultimate_rsi(self, df, length=7, smooth=14):
-        """Calculate Ultimate RSI as per LuxAlgo implementation"""
-        if len(df) < length + smooth:
-            return None, None
-        
-        src = df['close']
-        
-        # Calculate upper and lower using rolling windows
-        upper = src.rolling(window=length).max()
-        lower = src.rolling(window=length).min()
-        
-        # Calculate range and difference
-        r = upper - lower
-        d = src.diff()
-        
-        # Calculate diff based on conditions
-        diff = pd.Series(index=df.index, dtype=float)
-        for i in range(1, len(df)):
-            if upper.iloc[i] > upper.iloc[i-1]:
-                diff.iloc[i] = r.iloc[i]
-            elif lower.iloc[i] < lower.iloc[i-1]:
-                diff.iloc[i] = -r.iloc[i]
-            else:
-                diff.iloc[i] = d.iloc[i]
-        
-        # Calculate RMA (Wilder's moving average)
-        def rma(series, period):
-            alpha = 1.0 / period
-            return series.ewm(alpha=alpha, adjust=False).mean()
-        
-        # Calculate numerator and denominator
-        num = rma(diff, length)
-        den = rma(diff.abs(), length)
-        
-        # Calculate Ultimate RSI
-        arsi = (num / den) * 50 + 50
-        
-        # Calculate signal line
-        signal = arsi.ewm(span=smooth, adjust=False).mean()
-        
-        return arsi, signal
-    
-    def check_rsi_alerts(self, rsi_value, signal_value, oi_analysis):
-        """Check RSI levels and send Telegram alerts"""
-        if pd.isna(rsi_value) or pd.isna(signal_value) or not oi_analysis:
-            return
-        
-        current_time = datetime.now(self.ist)
-        alert_id = f"rsi_{current_time.strftime('%Y%m%d_%H%M')}"
-        
-        # Check if we already sent an alert for this time period (avoid spam)
-        if alert_id in st.session_state.sent_rsi_alerts:
-            return
-        
-        message = None
-        
-        if rsi_value >= 80:  # Overbought
-            message = f"""🔴 RSI Overbought Alert!
-            
-📊 Nifty 50 Analysis
-⏰ Time: {current_time.strftime('%H:%M:%S')} IST
-📈 RSI: {rsi_value:.2f} (Overbought)
-📉 Signal: {signal_value:.2f}
-
-💰 Current Price: ₹{oi_analysis['underlying_price']:.2f}
-🎯 ATM Strike: {oi_analysis['atm_strike']:.0f}
-📊 OI Sentiment: {oi_analysis['sentiment']}
-
-💡 Suggested Trade:
-🔻 Consider PE Buy: ₹{oi_analysis['atm_pe_ltp']:.2f}
-📊 OI Analysis: Call OI Change: {oi_analysis['call_oi_change']:,} | Put OI Change: {oi_analysis['put_oi_change']:,}"""
-            
-        elif rsi_value <= 20:  # Oversold
-            message = f"""🟢 RSI Oversold Alert!
-            
-📊 Nifty 50 Analysis
-⏰ Time: {current_time.strftime('%H:%M:%S')} IST
-📈 RSI: {rsi_value:.2f} (Oversold)
-📉 Signal: {signal_value:.2f}
-
-💰 Current Price: ₹{oi_analysis['underlying_price']:.2f}
-🎯 ATM Strike: {oi_analysis['atm_strike']:.0f}
-📊 OI Sentiment: {oi_analysis['sentiment']}
-
-💡 Suggested Trade:
-🔺 Consider CE Buy: ₹{oi_analysis['atm_ce_ltp']:.2f}
-📊 OI Analysis: Call OI Change: {oi_analysis['call_oi_change']:,} | Put OI Change: {oi_analysis['put_oi_change']:,}"""
-        
-        if message and self.send_telegram_message(message):
-            st.session_state.sent_rsi_alerts.add(alert_id)
-            st.success(f"RSI alert sent at {current_time.strftime('%H:%M:%S')}")
-        
-        # Clean up old RSI alerts (keep only last 20)
-        if len(st.session_state.sent_rsi_alerts) > 20:
-            alerts_list = list(st.session_state.sent_rsi_alerts)
-            st.session_state.sent_rsi_alerts = set(alerts_list[-10:])
-    
-    def check_rsi_oi_alignment(self, rsi_value, signal_value, oi_analysis):
-        """Check if RSI and OI sentiment align and send Telegram alerts"""
-        if pd.isna(rsi_value) or pd.isna(signal_value) or not oi_analysis:
-            return
-        
-        current_time = datetime.now(self.ist)
-        alert_id = f"rsi_oi_{current_time.strftime('%Y%m%d_%H%M')}"
-        
-        # Check if we already sent an alert for this time period (avoid spam)
-        if alert_id in st.session_state.sent_rsi_oi_alerts:
-            return
-        
-        # Determine RSI sentiment
-        rsi_sentiment = "Neutral"
-        if rsi_value >= 80:
-            rsi_sentiment = "Bearish"
-        elif rsi_value <= 30:
-            rsi_sentiment = "Bullish"
-        
-        # Get OI sentiment
-        oi_sentiment = oi_analysis['sentiment']
-        
-        message = None
-        
-        # Check for alignment
-        if rsi_sentiment == "Bullish" and oi_sentiment == "Bullish":
-            message = f"""🚀 BULLISH CONFIRMATION ALERT!
-            
-📊 Nifty 50 Analysis
-⏰ Time: {current_time.strftime('%H:%M:%S')} IST
-
-📈 RSI: {rsi_value:.2f} (Bullish)
-📊 OI Sentiment: {oi_sentiment}
-
-💰 Current Price: ₹{oi_analysis['underlying_price']:.2f}
-🎯 ATM Strike: {oi_analysis['atm_strike']:.0f}
-
-💡 STRONG BULLISH SIGNAL:
-🔺 Consider CE Buy: ₹{oi_analysis['atm_ce_ltp']:.2f}
-📊 OI Analysis: Call OI Change: {oi_analysis['call_oi_change']:,} | Put OI Change: {oi_analysis['put_oi_change']:,}
-
-✅ Both RSI and OI indicate BULLISH momentum"""
-            
-        elif rsi_sentiment == "Bearish" and oi_sentiment == "Bearish":
-            message = f"""🔻 BEARISH CONFIRMATION ALERT!
-            
-📊 Nifty 50 Analysis
-⏰ Time: {current_time.strftime('%H:%M:%S')} IST
-
-📈 RSI: {rsi_value:.2f} (Bearish)
-📊 OI Sentiment: {oi_sentiment}
-
-💰 Current Price: ₹{oi_analysis['underlying_price']:.2f}
-🎯 ATM Strike: {oi_analysis['atm_strike']:.0f}
-
-💡 STRONG BEARISH SIGNAL:
-🔻 Consider PE Buy: ₹{oi_analysis['atm_pe_ltp']:.2f}
-📊 OI Analysis: Call OI Change: {oi_analysis['call_oi_change']:,} | Put OI Change: {oi_analysis['put_oi_change']:,}
-
-✅ Both RSI and OI indicate BEARISH momentum"""
-        
-        if message and self.send_telegram_message(message):
-            st.session_state.sent_rsi_oi_alerts.add(alert_id)
-            st.success(f"RSI+OI alignment alert sent at {current_time.strftime('%H:%M:%S')}")
-        
-        # Clean up old RSI+OI alerts (keep only last 20)
-        if len(st.session_state.sent_rsi_oi_alerts) > 20:
-            alerts_list = list(st.session_state.sent_rsi_oi_alerts)
-            st.session_state.sent_rsi_oi_alerts = set(alerts_list[-10:])
-    
-    def enhanced_vob_alert(self, zone, oi_analysis):
-        """Enhanced VOB alert with OI analysis and trade suggestions"""
-        zone_type = zone['type'].title()
-        signal_time_str = zone['signal_time'].strftime("%H:%M:%S")
-        
-        if zone['type'] == 'bullish':
-            price_info = f"Base: ₹{zone['base_price']:.2f}\nSupport: ₹{zone['lowest_price']:.2f}"
-            suggested_trade = f"🔺 Consider CE Buy: ₹{oi_analysis['atm_ce_ltp']:.2f}"
-        else:
-            price_info = f"Base: ₹{zone['base_price']:.2f}\nResistance: ₹{zone['highest_price']:.2f}"
-            suggested_trade = f"🔻 Consider PE Buy: ₹{oi_analysis['atm_pe_ltp']:.2f}"
-        
-        message = f"""🚨 New VOB Zone + OI Analysis!
-
-📊 Nifty 50
-🔥 VOB Type: {zone_type}
-⏰ Time: {signal_time_str} IST
-💰 Current Price: ₹{oi_analysis['underlying_price']:.2f}
-
-📈 VOB Levels:
-{price_info}
-
-🎯 ATM Strike: {oi_analysis['atm_strike']:.0f}
-📊 OI Sentiment: {oi_analysis['sentiment']}
-📊 OI Changes: 
-   • Call OI: {oi_analysis['call_oi_change']:+,}
-   • Put OI: {oi_analysis['put_oi_change']:+,}
-
-💡 Trade Suggestion:
-{suggested_trade}
-
-⚠️ Trade at your own risk!"""
-        
-        return message
-    
     def send_telegram_message(self, message):
         """Send message to Telegram"""
         if not self.telegram_bot_token or not self.telegram_chat_id:
@@ -507,174 +329,93 @@ class EnhancedNiftyApp:
         except Exception as e:
             st.error(f"Telegram error: {e}")
             return False
-    
-    def calculate_ema(self, data, period):
-        """Calculate Exponential Moving Average"""
-        return data.ewm(span=period, adjust=False).mean()
-    
-    def calculate_atr(self, df, period=200):
-        """Calculate Average True Range"""
-        high_low = df['high'] - df['low']
-        high_close = np.abs(df['high'] - df['close'].shift())
-        low_close = np.abs(df['low'] - df['close'].shift())
-        
-        true_range = np.maximum(high_low, np.maximum(high_close, low_close))
-        atr = true_range.rolling(window=period).mean()
-        return atr * 3
-    
-    def detect_vob_zones(self, df, length1=5):
-        """Detect VOB zones based on Pine Script logic"""
-        if len(df) < length1 + 13:
-            return []
-        
-        ema1 = self.calculate_ema(df['close'], length1)
-        ema2 = self.calculate_ema(df['close'], length1 + 13)
-        atr = self.calculate_atr(df)
-        
-        cross_up = (ema1 > ema2) & (ema1.shift(1) <= ema2.shift(1))
-        cross_down = (ema1 < ema2) & (ema1.shift(1) >= ema2.shift(1))
-        
-        vob_zones = []
-        
-        for i in df.index:
-            if cross_up.loc[i]:
-                start_idx = max(0, df.index.get_loc(i) - (length1 + 13))
-                lookback_data = df.iloc[start_idx:df.index.get_loc(i)+1]
-                
-                if not lookback_data.empty:
-                    lowest_idx = lookback_data['low'].idxmin()
-                    lowest_price = lookback_data.loc[lowest_idx, 'low']
-                    base_price = min(lookback_data.loc[lowest_idx, 'open'], 
-                                   lookback_data.loc[lowest_idx, 'close'])
-                    
-                    if pd.notna(atr.loc[i]) and (base_price - lowest_price) < atr.loc[i] * 0.5:
-                        base_price = lowest_price + atr.loc[i] * 0.5
-                    
-                    vob_zones.append({
-                        'type': 'bullish',
-                        'start_time': lowest_idx,
-                        'end_time': i,
-                        'base_price': base_price,
-                        'lowest_price': lowest_price,
-                        'signal_time': i
-                    })
-            
-            elif cross_down.loc[i]:
-                start_idx = max(0, df.index.get_loc(i) - (length1 + 13))
-                lookback_data = df.iloc[start_idx:df.index.get_loc(i)+1]
-                
-                if not lookback_data.empty:
-                    highest_idx = lookback_data['high'].idxmax()
-                    highest_price = lookback_data.loc[highest_idx, 'high']
-                    base_price = max(lookback_data.loc[highest_idx, 'open'], 
-                                   lookback_data.loc[highest_idx, 'close'])
-                    
-                    if pd.notna(atr.loc[i]) and (highest_price - base_price) < atr.loc[i] * 0.5:
-                        base_price = highest_price - atr.loc[i] * 0.5
-                    
-                    vob_zones.append({
-                        'type': 'bearish',
-                        'start_time': highest_idx,
-                        'end_time': i,
-                        'base_price': base_price,
-                        'highest_price': highest_price,
-                        'signal_time': i
-                    })
-        
-        return vob_zones
-    
-    def check_new_vob_zones(self, current_zones, oi_analysis):
-        """Check for new VOB zones and send enhanced Telegram alerts"""
-        if not current_zones or not oi_analysis:
+
+    def check_volume_block_alerts(self, current_price, bullish_blocks, bearish_blocks, threshold=5):
+        """Check if price is near volume order blocks and send alerts"""
+        if not bullish_blocks and not bearish_blocks:
             return
         
-        new_alerts_sent = 0
+        current_time = datetime.now(self.ist)
+        alert_sent = False
         
-        for zone in current_zones:
-            zone_id = f"{zone['type']}_{zone['signal_time'].isoformat()}_{zone['base_price']:.2f}"
+        # Check bullish blocks
+        nearby_bullish = self.vob_indicator.check_price_near_blocks(current_price, bullish_blocks, threshold)
+        for block in nearby_bullish:
+            alert_id = f"vol_block_bullish_{block['index'].strftime('%Y%m%d_%H%M')}"
             
-            if zone_id not in st.session_state.sent_vob_alerts:
-                zone_age_minutes = (datetime.now(self.ist) - zone['signal_time']).total_seconds() / 60
+            if alert_id not in st.session_state.sent_volume_block_alerts:
+                message = f"""🚨 PRICE NEAR BULLISH VOLUME ORDER BLOCK!
+
+📊 Nifty 50 Alert
+⏰ Time: {current_time.strftime('%H:%M:%S')} IST
+💰 Current Price: ₹{current_price:.2f}
+
+🎯 Volume Order Block:
+• Type: BULLISH 
+• Upper: ₹{block['upper']:.2f}
+• Lower: ₹{block['lower']:.2f}
+• Mid: ₹{block['mid']:.2f}
+• Volume: {block['volume']:,}
+
+📈 Distance to Block: {abs(current_price - block['mid']):.2f} points
+
+💡 Trading Suggestion:
+Consider LONG positions with stop below support
+
+⚠️ Trade at your own risk!"""
                 
-                if zone_age_minutes <= 5:
-                    message = self.enhanced_vob_alert(zone, oi_analysis)
-                    
-                    if self.send_telegram_message(message):
-                        st.success(f"Enhanced VOB alert sent for {zone['type']} at {zone['signal_time'].strftime('%H:%M:%S')}")
-                        st.session_state.sent_vob_alerts.add(zone_id)
-                        new_alerts_sent += 1
-                else:
-                    st.session_state.sent_vob_alerts.add(zone_id)
+                if self.send_telegram_message(message):
+                    st.session_state.sent_volume_block_alerts.add(alert_id)
+                    st.success(f"Bullish Volume Block alert sent!")
+                    alert_sent = True
+        
+        # Check bearish blocks
+        nearby_bearish = self.vob_indicator.check_price_near_blocks(current_price, bearish_blocks, threshold)
+        for block in nearby_bearish:
+            alert_id = f"vol_block_bearish_{block['index'].strftime('%Y%m%d_%H%M')}"
+            
+            if alert_id not in st.session_state.sent_volume_block_alerts:
+                message = f"""🚨 PRICE NEAR BEARISH VOLUME ORDER BLOCK!
+
+📊 Nifty 50 Alert
+⏰ Time: {current_time.strftime('%H:%M:%S')} IST
+💰 Current Price: ₹{current_price:.2f}
+
+🎯 Volume Order Block:
+• Type: BEARISH 
+• Upper: ₹{block['upper']:.2f}
+• Lower: ₹{block['lower']:.2f}
+• Mid: ₹{block['mid']:.2f}
+• Volume: {block['volume']:,}
+
+📉 Distance to Block: {abs(current_price - block['mid']):.2f} points
+
+💡 Trading Suggestion:
+Consider SHORT positions with stop above resistance
+
+⚠️ Trade at your own risk!"""
+                
+                if self.send_telegram_message(message):
+                    st.session_state.sent_volume_block_alerts.add(alert_id)
+                    st.success(f"Bearish Volume Block alert sent!")
+                    alert_sent = True
         
         # Clean up old alerts
-        if len(st.session_state.sent_vob_alerts) > 100:
-            alerts_list = list(st.session_state.sent_vob_alerts)
-            st.session_state.sent_vob_alerts = set(alerts_list[-50:])
+        if len(st.session_state.sent_volume_block_alerts) > 50:
+            alerts_list = list(st.session_state.sent_volume_block_alerts)
+            st.session_state.sent_volume_block_alerts = set(alerts_list[-25:])
         
-        if new_alerts_sent > 0:
-            st.info(f"Sent {new_alerts_sent} enhanced VOB alert(s)")
-    
-    def save_to_supabase(self, df, interval):
-        """Save data to Supabase"""
-        if df.empty or not self.supabase:
-            return
-        
-        try:
-            records = []
-            for idx, row in df.iterrows():
-                records.append({
-                    'datetime': idx.isoformat(),
-                    'open': float(row['open']),
-                    'high': float(row['high']),
-                    'low': float(row['low']),
-                    'close': float(row['close']),
-                    'volume': int(row['volume']),
-                    'interval': interval,
-                    'symbol': 'NIFTY50'
-                })
-            
-            self.supabase.table('nifty_data').upsert(records).execute()
-            
-        except Exception as e:
-            st.warning(f"Database save error: {e}")
-    
-    def load_from_supabase(self, interval, hours_back=24):
-        """Load data from Supabase"""
-        if not self.supabase:
-            return pd.DataFrame()
-            
-        try:
-            cutoff_time = (datetime.now(self.ist) - timedelta(hours=hours_back)).isoformat()
-            
-            response = self.supabase.table('nifty_data')\
-                .select("*")\
-                .eq('interval', str(interval))\
-                .eq('symbol', 'NIFTY50')\
-                .gte('datetime', cutoff_time)\
-                .order('datetime')\
-                .execute()
-            
-            if response.data:
-                df = pd.DataFrame(response.data)
-                df['datetime'] = pd.to_datetime(df['datetime'])
-                df = df.set_index('datetime')
-                return df[['open', 'high', 'low', 'close', 'volume']]
-            
-        except Exception as e:
-            st.warning(f"Database load error: {str(e)}")
-        
-        return pd.DataFrame()
-    
-    def create_enhanced_chart(self, df, interval, vob_zones=None, rsi_data=None):
-        """Create enhanced chart with VOB zones and RSI"""
+        return alert_sent
+
+    def create_volume_blocks_chart(self, df, bullish_blocks, bearish_blocks, interval):
+        """Create chart with Volume Order Blocks"""
         if df.empty:
             return None
         
-        # Create subplots: Price, Volume, RSI
         fig = make_subplots(
-            rows=3, cols=1,
-            row_heights=[0.5, 0.25, 0.25],
-            subplot_titles=('Nifty 50 Price Action with VOB Zones', 'Volume', 'Ultimate RSI'),
+            rows=2, cols=1,
+            row_heights=[0.7, 0.3],
+            subplot_titles=(f'Nifty 50 with Volume Order Blocks - {interval} Min', 'Volume'),
             vertical_spacing=0.05,
             shared_xaxes=True
         )
@@ -689,150 +430,163 @@ class EnhancedNiftyApp:
                 close=df['close'],
                 name='Nifty 50',
                 increasing_line_color='#00ff88',
-                decreasing_line_color='#ff4444',
-                increasing_fillcolor='#00ff88',
-                decreasing_fillcolor='#ff4444'
+                decreasing_line_color='#ff4444'
             ),
             row=1, col=1
         )
         
-        # Add VOB zones
-        if vob_zones:
-            for zone in vob_zones[-10:]:
-                color = '#26ba9f' if zone['type'] == 'bullish' else '#ba2646'
-                
-                fig.add_shape(
-                    type="line",
-                    x0=zone['start_time'], y0=zone['base_price'],
-                    x1=zone['end_time'], y1=zone['base_price'],
-                    line=dict(color=color, width=2),
-                    row=1, col=1
-                )
-                
-                if zone['type'] == 'bullish':
-                    support_price = zone['lowest_price']
-                    fig.add_shape(
-                        type="line",
-                        x0=zone['start_time'], y0=support_price,
-                        x1=zone['end_time'], y1=support_price,
-                        line=dict(color=color, width=2),
-                        row=1, col=1
-                    )
-                    fig.add_shape(
-                        type="rect",
-                        x0=zone['start_time'], y0=support_price,
-                        x1=zone['end_time'], y1=zone['base_price'],
-                        fillcolor=color,
-                        opacity=0.1,
-                        line_width=0,
-                        row=1, col=1
-                    )
-                else:
-                    resistance_price = zone['highest_price']
-                    fig.add_shape(
-                        type="line",
-                        x0=zone['start_time'], y0=resistance_price,
-                        x1=zone['end_time'], y1=resistance_price,
-                        line=dict(color=color, width=2),
-                        row=1, col=1
-                    )
-                    fig.add_shape(
-                        type="rect",
-                        x0=zone['start_time'], y0=zone['base_price'],
-                        x1=zone['end_time'], y1=resistance_price,
-                        fillcolor=color,
-                        opacity=0.1,
-                        line_width=0,
-                        row=1, col=1
-                    )
+        # Add Volume Order Blocks
+        colors = {'bullish': '#26ba9f', 'bearish': '#6626ba'}
+        
+        # Bullish blocks (Support zones)
+        for block in bullish_blocks:
+            # Upper line (base)
+            fig.add_shape(
+                type="line",
+                x0=block['index'], y0=block['upper'],
+                x1=df.index[-1], y1=block['upper'],
+                line=dict(color=colors['bullish'], width=2),
+                row=1, col=1
+            )
+            
+            # Lower line (support)
+            fig.add_shape(
+                type="line",
+                x0=block['index'], y0=block['lower'],
+                x1=df.index[-1], y1=block['lower'],
+                line=dict(color=colors['bullish'], width=2),
+                row=1, col=1
+            )
+            
+            # Mid line (dashed)
+            fig.add_shape(
+                type="line",
+                x0=block['index'], y0=block['mid'],
+                x1=df.index[-1], y1=block['mid'],
+                line=dict(color=colors['bullish'], width=1, dash='dash'),
+                row=1, col=1
+            )
+            
+            # Fill between upper and lower
+            fig.add_trace(
+                go.Scatter(
+                    x=[block['index'], block['index'], df.index[-1], df.index[-1]],
+                    y=[block['upper'], block['lower'], block['lower'], block['upper']],
+                    fill="toself",
+                    fillcolor='rgba(38, 186, 159, 0.1)',
+                    line=dict(width=0),
+                    showlegend=False,
+                    name=f"Bullish Block {block['index'].strftime('%H:%M')}"
+                ),
+                row=1, col=1
+            )
+            
+            # Volume label
+            volume_pct = (block['volume'] / sum(b['volume'] for b in bullish_blocks)) * 100 if bullish_blocks else 0
+            fig.add_annotation(
+                x=df.index[-1],
+                y=block['mid'],
+                text=f"⮜ {volume_pct:.1f}% ({block['volume']:,})",
+                showarrow=False,
+                xanchor='left',
+                bgcolor="rgba(0,0,0,0.5)",
+                bordercolor="white",
+                borderwidth=1,
+                row=1, col=1
+            )
+        
+        # Bearish blocks (Resistance zones)
+        for block in bearish_blocks:
+            # Upper line (resistance)
+            fig.add_shape(
+                type="line",
+                x0=block['index'], y0=block['upper'],
+                x1=df.index[-1], y1=block['upper'],
+                line=dict(color=colors['bearish'], width=2),
+                row=1, col=1
+            )
+            
+            # Lower line (base)
+            fig.add_shape(
+                type="line",
+                x0=block['index'], y0=block['lower'],
+                x1=df.index[-1], y1=block['lower'],
+                line=dict(color=colors['bearish'], width=2),
+                row=1, col=1
+            )
+            
+            # Mid line (dashed)
+            fig.add_shape(
+                type="line",
+                x0=block['index'], y0=block['mid'],
+                x1=df.index[-1], y1=block['mid'],
+                line=dict(color=colors['bearish'], width=1, dash='dash'),
+                row=1, col=1
+            )
+            
+            # Fill between upper and lower
+            fig.add_trace(
+                go.Scatter(
+                    x=[block['index'], block['index'], df.index[-1], df.index[-1]],
+                    y=[block['upper'], block['lower'], block['lower'], block['upper']],
+                    fill="toself",
+                    fillcolor='rgba(102, 38, 186, 0.1)',
+                    line=dict(width=0),
+                    showlegend=False,
+                    name=f"Bearish Block {block['index'].strftime('%H:%M')}"
+                ),
+                row=1, col=1
+            )
+            
+            # Volume label
+            volume_pct = (block['volume'] / sum(b['volume'] for b in bearish_blocks)) * 100 if bearish_blocks else 0
+            fig.add_annotation(
+                x=df.index[-1],
+                y=block['mid'],
+                text=f"⮜ {volume_pct:.1f}% ({block['volume']:,})",
+                showarrow=False,
+                xanchor='left',
+                bgcolor="rgba(0,0,0,0.5)",
+                bordercolor="white",
+                borderwidth=1,
+                row=1, col=1
+            )
         
         # Volume bars
-        colors = ['#00ff88' if close >= open else '#ff4444' 
-                 for close, open in zip(df['close'], df['open'])]
+        bar_colors = ['#00ff88' if close >= open else '#ff4444' 
+                     for close, open in zip(df['close'], df['open'])]
         
         fig.add_trace(
             go.Bar(
                 x=df.index,
                 y=df['volume'],
                 name='Volume',
-                marker_color=colors,
+                marker_color=bar_colors,
                 opacity=0.6
             ),
             row=2, col=1
         )
         
-        # RSI subplot
-        if rsi_data is not None:
-            rsi, signal = rsi_data
-            
-            # RSI line
-            fig.add_trace(
-                go.Scatter(
-                    x=rsi.index,
-                    y=rsi,
-                    mode='lines',
-                    name='Ultimate RSI',
-                    line=dict(color='#ffffff', width=2)
-                ),
-            row=3, col=1
-            )
-            
-            # Signal line
-            fig.add_trace(
-                go.Scatter(
-                    x=signal.index,
-                    y=signal,
-                    mode='lines',
-                    name='Signal',
-                    line=dict(color='#ff5d00', width=1)
-                ),
-                row=3, col=1
-            )
-            
-            # Add RSI levels
-            fig.add_hline(y=80, line_dash="dash", line_color="#089981", row=3, col=1)
-            fig.add_hline(y=50, line_dash="dash", line_color="gray", row=3, col=1)
-            fig.add_hline(y=20, line_dash="dash", line_color="#f23645", row=3, col=1)
-            
-            # Fill overbought/oversold areas
-            fig.add_shape(
-                type="rect",
-                x0=rsi.index[0], y0=80, x1=rsi.index[-1], y1=100,
-                fillcolor="#089981", opacity=0.1, line_width=0,
-                row=3, col=1
-            )
-            fig.add_shape(
-                type="rect",
-                x0=rsi.index[0], y0=0, x1=rsi.index[-1], y1=20,
-                fillcolor="#f23645", opacity=0.1, line_width=0,
-                row=3, col=1
-            )
-        
         # Update layout
         fig.update_layout(
-            title=f"Enhanced Nifty 50 Analysis - {interval} Min",
             xaxis_rangeslider_visible=False,
             template='plotly_dark',
-            height=900,
-            showlegend=False,
+            height=800,
+            showlegend=True,
             margin=dict(l=0, r=0, t=50, b=0)
         )
         
-        # Update axes
         fig.update_xaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)')
         fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)', side="right")
         
-        # Set RSI y-axis range
-        fig.update_yaxes(range=[0, 100], row=3, col=1)
-        
         return fig
-    
+
     def run(self):
-        """Main application with enhanced error handling"""
+        """Main application"""
         st.title("📈 Enhanced Nifty Trading Dashboard")
-        st.markdown("*With VOB Zones, Ultimate RSI & OI Analysis*")
+        st.markdown("*With Volume Order Blocks, VOB Zones & OI Analysis*")
         
-        # Sidebar controls
+        # Sidebar
         with st.sidebar:
             st.header("🔧 API Status")
             if st.button("Test API Connection"):
@@ -840,302 +594,113 @@ class EnhancedNiftyApp:
             
             st.header("📊 Settings")
             
-            timeframe = st.selectbox(
-                "Timeframe",
-                options=['1', '3', '5', '15'],
-                index=1,
-                format_func=lambda x: f"{x} Min"
-            )
+            timeframe = st.selectbox("Timeframe", ['1', '3', '5', '15'], index=1)
             
-            # VOB Settings
-            st.subheader("VOB Indicator")
-            vob_enabled = st.checkbox("Enable VOB Zones", value=True)
-            vob_sensitivity = st.slider("VOB Sensitivity", 3, 10, 5)
+            st.subheader("Volume Order Blocks")
+            vob_sensitivity = st.slider("Sensitivity", 3, 10, 5)
+            alert_threshold = st.slider("Alert Threshold (points)", 1, 10, 5)
+            show_mid_lines = st.checkbox("Show Mid Lines", value=True)
             
-            # RSI Settings
-            st.subheader("Ultimate RSI")
-            rsi_enabled = st.checkbox("Enable Ultimate RSI", value=True)
-            rsi_length = st.slider("RSI Length", 5, 20, 7)
-            rsi_smooth = st.slider("RSI Smoothing", 10, 30, 14)
-            
-            # OI Analysis Settings
-            st.subheader("Options Analysis")
-            oi_enabled = st.checkbox("Enable OI Analysis", value=True)
-            
-            # Telegram Settings
-            st.subheader("Telegram Alerts")
-            telegram_enabled = st.checkbox("Enable Telegram Alerts", 
-                                         value=bool(self.telegram_bot_token))
-            
-            if telegram_enabled:
-                st.info(f"VOB Alerts: {len(st.session_state.sent_vob_alerts)}")
-                st.info(f"RSI Alerts: {len(st.session_state.sent_rsi_alerts)}")
-                st.info(f"RSI+OI Alerts: {len(st.session_state.sent_rsi_oi_alerts)}")
-                if st.button("Clear Alert History"):
-                    st.session_state.sent_vob_alerts.clear()
-                    st.session_state.sent_rsi_alerts.clear()
-                    st.session_state.sent_rsi_oi_alerts.clear()
-                    st.success("Alert history cleared!")
-                    st.rerun()
-            
-            # Data source
-            data_source = st.radio(
-                "Data Source",
-                ["Live API", "Database", "Both"]
-            )
-            
-            # Auto refresh
-            auto_refresh = st.checkbox("Auto Refresh (25 seconds)", value=True)
+            st.subheader("Alerts")
+            volume_block_alerts = st.checkbox("Volume Block Alerts", value=True)
+            telegram_enabled = st.checkbox("Enable Telegram", value=bool(self.telegram_bot_token))
             
             if st.button("🔄 Refresh Now"):
                 st.rerun()
         
-        # Main content area
+        # Main content
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        # Fetch and process data
+        # Update indicator sensitivity
+        self.vob_indicator = VolumeOrderBlocks(sensitivity=vob_sensitivity)
+        
+        # Fetch data
         df = pd.DataFrame()
-        vob_zones = []
-        oi_analysis = None
-        rsi_data = None
+        with st.spinner("Fetching market data..."):
+            api_data = self.fetch_intraday_data(interval=timeframe)
+            if api_data:
+                df = self.process_data(api_data)
         
-        # Fetch price data
-        if data_source in ["Live API", "Both"]:
-            with st.spinner("Fetching live data from DhanHQ API..."):
-                api_data = self.fetch_intraday_data(interval=timeframe)
-                if api_data:
-                    df_api = self.process_data(api_data)
-                    if not df_api.empty:
-                        df = df_api
-                        if self.supabase:
-                            self.save_to_supabase(df_api, timeframe)
-                    else:
-                        st.warning("No data processed from API response")
-                else:
-                    st.error("Failed to fetch data from API")
-        
-        if data_source in ["Database", "Both"] and df.empty:
-            with st.spinner("Loading from database..."):
-                df = self.load_from_supabase(timeframe)
-        
-        # Fetch option chain data for OI analysis
-        if oi_enabled and not df.empty:
-            with st.spinner("Analyzing options data..."):
-                try:
-                    expiry = self.get_nearest_expiry()
-                    if expiry:
-                        st.info(f"Using expiry: {expiry}")
-                        option_data = self.fetch_option_chain(expiry)
-                        if option_data:
-                            oi_analysis = self.analyze_oi_sentiment(option_data)
-                        else:
-                            st.warning("No option chain data received")
-                    else:
-                        st.warning("Could not fetch expiry dates")
-                except Exception as e:
-                    st.warning(f"OI analysis error: {str(e)}")
-        
-        # Calculate indicators
-        if not df.empty:
-            # VOB zones calculation
-            if vob_enabled and len(df) >= 18:
-                with st.spinner("Calculating VOB zones..."):
-                    try:
-                        vob_zones = self.detect_vob_zones(df, length1=vob_sensitivity)
-                        
-                        # Check for new VOB zones and send enhanced alerts
-                        if telegram_enabled and vob_zones and oi_analysis:
-                            self.check_new_vob_zones(vob_zones, oi_analysis)
-                    except Exception as e:
-                        st.warning(f"VOB calculation error: {str(e)}")
-                        vob_zones = []
-            
-            # Ultimate RSI calculation
-            if rsi_enabled and len(df) >= rsi_length + rsi_smooth:
-                with st.spinner("Calculating Ultimate RSI..."):
-                    try:
-                        rsi_data = self.calculate_ultimate_rsi(df, rsi_length, rsi_smooth)
-                        
-                        # Check RSI alerts
-                        if telegram_enabled and rsi_data[0] is not None and oi_analysis:
-                            latest_rsi = rsi_data[0].iloc[-1]
-                            latest_signal = rsi_data[1].iloc[-1]
-                            
-                            # Check regular RSI alerts
-                            self.check_rsi_alerts(latest_rsi, latest_signal, oi_analysis)
-                            
-                            # Check RSI + OI alignment
-                            self.check_rsi_oi_alignment(latest_rsi, latest_signal, oi_analysis)
-                    except Exception as e:
-                        st.warning(f"RSI calculation error: {str(e)}")
-                        rsi_data = None
-        
-        # Display key metrics
         if not df.empty:
             latest = df.iloc[-1]
-            prev = df.iloc[-2] if len(df) > 1 else latest
+            current_price = latest['close']
             
+            # Detect Volume Order Blocks
+            bullish_blocks, bearish_blocks = self.vob_indicator.detect_volume_order_blocks(df)
+            
+            # Display metrics
             with col1:
-                change = latest['close'] - prev['close']
-                change_pct = (change / prev['close']) * 100
-                st.metric(
-                    "Nifty Price", 
-                    f"₹{latest['close']:.2f}",
-                    f"{change:+.2f} ({change_pct:+.2f}%)"
-                )
-            
+                st.metric("Nifty Price", f"₹{current_price:.2f}")
             with col2:
-                st.metric("Day High", f"₹{df['high'].max():.2f}")
-            
+                st.metric("Bullish Blocks", len(bullish_blocks))
             with col3:
-                st.metric("Day Low", f"₹{df['low'].min():.2f}")
-            
+                st.metric("Bearish Blocks", len(bearish_blocks))
             with col4:
-                if rsi_data and rsi_data[0] is not None:
-                    latest_rsi = rsi_data[0].iloc[-1]
-                    rsi_status = "Overbought" if latest_rsi >= 80 else "Oversold" if latest_rsi <= 20 else "Normal"
-                    st.metric("Ultimate RSI", f"{latest_rsi:.2f}", rsi_status)
-                else:
-                    st.metric("Volume", f"{df['volume'].sum():,}")
-            
+                total_volume = sum(b['volume'] for b in bullish_blocks) + sum(b['volume'] for b in bearish_blocks)
+                st.metric("Total Block Volume", f"{total_volume:,}")
             with col5:
-                if oi_analysis:
-                    sentiment_color = {"Bullish": "🟢", "Bearish": "🔴", "Neutral": "🟡"}
-                    st.metric("OI Sentiment", 
-                             f"{sentiment_color.get(oi_analysis['sentiment'], '🟡')} {oi_analysis['sentiment']}")
+                if volume_block_alerts and telegram_enabled:
+                    st.metric("Block Alerts", "✅ Active")
                 else:
-                    st.metric("VOB Zones", len(vob_zones) if vob_zones else 0)
-        
-        # Options Analysis Panel
-        if oi_analysis:
-            st.subheader("📊 Options Analysis")
-            oi_col1, oi_col2, oi_col3, oi_col4 = st.columns(4)
+                    st.metric("Alerts", "❌ Inactive")
             
-            with oi_col1:
-                st.metric("ATM Strike", f"{oi_analysis['atm_strike']:.0f}")
-            
-            with oi_col2:
-                st.metric("ATM CE LTP", f"₹{oi_analysis['atm_ce_ltp']:.2f}")
-            
-            with oi_col3:
-                st.metric("ATM PE LTP", f"₹{oi_analysis['atm_pe_ltp']:.2f}")
-            
-            with oi_col4:
-                oi_ratio = abs(oi_analysis['put_oi_change'] / max(oi_analysis['call_oi_change'], 1))
-                st.metric("Put/Call OI Ratio", f"{oi_ratio:.2f}")
-            
-            # OI Change Details
-            oi_change_col1, oi_change_col2 = st.columns(2)
-            with oi_change_col1:
-                st.info(f"📈 Call OI Change: {oi_analysis['call_oi_change']:+,}")
-            with oi_change_col2:
-                st.info(f"📉 Put OI Change: {oi_analysis['put_oi_change']:+,}")
-        
-        # VOB Zone Summary
-        if vob_enabled and vob_zones:
-            st.subheader("🎯 Recent VOB Zones")
-            vob_cols = st.columns(min(3, len(vob_zones[-3:])))
-            
-            for i, zone in enumerate(vob_zones[-3:]):
-                col = vob_cols[i]
-                zone_type = zone['type'].title()
-                zone_color = "🟢" if zone['type'] == 'bullish' else "🔴"
-                signal_time = zone['signal_time'].strftime("%H:%M")
-                
-                with col:
-                    if zone['type'] == 'bullish':
-                        st.success(f"{zone_color} **{zone_type} VOB** at {signal_time}\n"
-                                 f"Support: ₹{zone['lowest_price']:.2f}\n"
-                                 f"Base: ₹{zone['base_price']:.2f}")
-                    else:
-                        st.error(f"{zone_color} **{zone_type} VOB** at {signal_time}\n"
-                               f"Resistance: ₹{zone['highest_price']:.2f}\n"
-                               f"Base: ₹{zone['base_price']:.2f}")
-        
-        # Create and display enhanced chart
-        if not df.empty:
-            chart = self.create_enhanced_chart(df, timeframe, vob_zones, rsi_data)
+            # Create and display chart
+            chart = self.create_volume_blocks_chart(df, bullish_blocks, bearish_blocks, timeframe)
             if chart:
                 st.plotly_chart(chart, use_container_width=True)
             
-            # Trading Signals Summary
-            if rsi_data and oi_analysis:
-                st.subheader("🚦 Trading Signals")
-                signal_col1, signal_col2, signal_col3 = st.columns(3)
-                
-                latest_rsi = rsi_data[0].iloc[-1] if rsi_data[0] is not None else 50
-                
-                with signal_col1:
-                    if latest_rsi >= 80:
-                        st.error("🔻 RSI Overbought - Consider PE positions")
-                    elif latest_rsi <= 20:
-                        st.success("🔺 RSI Oversold - Consider CE positions")
-                    else:
-                        st.info("📊 RSI in normal range")
-                
-                with signal_col2:
-                    sentiment = oi_analysis['sentiment']
-                    if sentiment == "Bullish":
-                        st.success(f"🟢 OI Sentiment: {sentiment}")
-                    elif sentiment == "Bearish":
-                        st.error(f"🔴 OI Sentiment: {sentiment}")
-                    else:
-                        st.info(f"🟡 OI Sentiment: {sentiment}")
-                
-                with signal_col3:
-                    if vob_zones:
-                        latest_vob = vob_zones[-1]['type']
-                        if latest_vob == 'bullish':
-                            st.success("🟢 Latest VOB: Bullish")
-                        else:
-                            st.error("🔴 Latest VOB: Bearish")
-                    else:
-                        st.info("📊 No recent VOB zones")
+            # Check for alerts
+            if volume_block_alerts and telegram_enabled and not df.empty:
+                alert_sent = self.check_volume_block_alerts(
+                    current_price, bullish_blocks, bearish_blocks, alert_threshold
+                )
+                if alert_sent:
+                    st.info("📱 Volume Order Block alert sent to Telegram!")
             
-            # Data tables
-            with st.expander("📈 Price Data"):
-                st.dataframe(df.tail(20), use_container_width=True)
+            # Display blocks information
+            st.subheader("🎯 Volume Order Blocks Summary")
             
-            if rsi_data and rsi_data[0] is not None:
-                with st.expander("📊 RSI Data"):
-                    rsi_df = pd.DataFrame({
-                        'Ultimate_RSI': rsi_data[0],
-                        'Signal_Line': rsi_data[1]
-                    }).tail(20)
-                    st.dataframe(rsi_df, use_container_width=True)
+            if bullish_blocks or bearish_blocks:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**🟢 Bullish Blocks (Support)**")
+                    for i, block in enumerate(bullish_blocks[-5:]):  # Show last 5
+                        st.write(f"""
+                        **Block {i+1}** - {block['index'].strftime('%H:%M')}
+                        - Upper: ₹{block['upper']:.2f}
+                        - Lower: ₹{block['lower']:.2f}
+                        - Mid: ₹{block['mid']:.2f}
+                        - Volume: {block['volume']:,}
+                        - Distance: {abs(current_price - block['mid']):.2f} points
+                        """)
+                
+                with col2:
+                    st.write("**🔴 Bearish Blocks (Resistance)**")
+                    for i, block in enumerate(bearish_blocks[-5:]):  # Show last 5
+                        st.write(f"""
+                        **Block {i+1}** - {block['index'].strftime('%H:%M')}
+                        - Upper: ₹{block['upper']:.2f}
+                        - Lower: ₹{block['lower']:.2f}
+                        - Mid: ₹{block['mid']:.2f}
+                        - Volume: {block['volume']:,}
+                        - Distance: {abs(current_price - block['mid']):.2f} points
+                        """)
+            else:
+                st.info("No Volume Order Blocks detected yet. The indicator needs more data to identify blocks.")
+            
+            # Data table
+            with st.expander("📈 View Raw Data"):
+                st.dataframe(df.tail(20))
+        
         else:
-            st.error("""
-            ⚠️ No data available. 
-            
-            Common solutions:
-            1. Check your DhanHQ API credentials in secrets.toml
-            2. Verify your access token is valid (tokens expire after 24 hours)
-            3. Ensure you're connected to the internet
-            4. Try the "Test API Connection" button in the sidebar
-            5. Check if market is open (9:15 AM - 3:30 PM IST)
-            """)
-        
-        # Footer with status
-        st.markdown("---")
-        status_col1, status_col2, status_col3 = st.columns(3)
-        
-        with status_col1:
-            st.caption(f"🕐 Last Updated: {datetime.now(self.ist).strftime('%H:%M:%S IST')}")
-        
-        with status_col2:
-            if st.session_state.last_alert_check:
-                st.caption(f"📱 Last Alert Check: {st.session_state.last_alert_check.strftime('%H:%M:%S')}")
-        
-        with status_col3:
-            data_points = len(df) if not df.empty else 0
-            st.caption(f"📊 Data Points: {data_points}")
+            st.error("No data available. Please check your API credentials and try again.")
         
         # Auto refresh
-        if auto_refresh:
-            time.sleep(25)
-            st.rerun()
+        time.sleep(30)
+        st.rerun()
 
-# Initialize and run the app
+# Run the app
 if __name__ == "__main__":
     app = EnhancedNiftyApp()
     app.run()
