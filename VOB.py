@@ -11,6 +11,9 @@ import time
 import numpy as np
 from collections import deque
 import warnings
+import math
+from scipy.stats import norm
+import io
 warnings.filterwarnings('ignore')
 
 # Streamlit configuration
@@ -20,187 +23,221 @@ st.set_page_config(
     layout="wide"
 )
 
-class HTFSupportResistance:
-    """Higher Time Frame Support/Resistance Levels by BigBeluga"""
+# =============================================
+# NSE OPTIONS ANALYZER INTEGRATION
+# =============================================
+
+class NSEOptionsAnalyzer:
+    """Integrated NSE Options Analyzer with enhanced features"""
     
     def __init__(self):
-        self.levels = {
-            '5min': {'pivot_high': None, 'pivot_low': None, 'color': '#00ff88'},
-            '10min': {'pivot_high': None, 'pivot_low': None, 'color': '#298ada'},
-            '15min': {'pivot_high': None, 'pivot_low': None, 'color': '#9c27b0'},
-            '1D': {'pivot_high': None, 'pivot_low': None, 'color': '#ff9800'},
-            '1W': {'pivot_high': None, 'pivot_low': None, 'color': '#ff5722'}
+        self.ist = pytz.timezone('Asia/Kolkata')
+        self.NSE_INSTRUMENTS = {
+            'indices': {
+                'NIFTY': {'lot_size': 50, 'atm_range': 200, 'zone_size': 100},
+                'BANKNIFTY': {'lot_size': 25, 'atm_range': 400, 'zone_size': 200},
+                'FINNIFTY': {'lot_size': 40, 'atm_range': 200, 'zone_size': 100},
+            },
+            'stocks': {
+                'RELIANCE': {'lot_size': 250, 'atm_range': 100, 'zone_size': 50},
+                'TCS': {'lot_size': 150, 'atm_range': 100, 'zone_size': 50},
+            }
         }
-        self.sent_alerts = set()
         
-    def calculate_pivot_levels(self, df, length=5):
-        """Calculate pivot highs and lows"""
-        if len(df) < length * 2:
-            return None, None
-            
-        pivot_highs = []
-        pivot_lows = []
-        
-        for i in range(length, len(df) - length):
-            # Check for pivot high
-            is_pivot_high = True
-            for j in range(1, length + 1):
-                if df['high'].iloc[i] <= df['high'].iloc[i - j] or df['high'].iloc[i] <= df['high'].iloc[i + j]:
-                    is_pivot_high = False
-                    break
-            
-            if is_pivot_high:
-                pivot_highs.append({'index': df.index[i], 'price': df['high'].iloc[i]})
-            
-            # Check for pivot low
-            is_pivot_low = True
-            for j in range(1, length + 1):
-                if df['low'].iloc[i] >= df['low'].iloc[i - j] or df['low'].iloc[i] >= df['low'].iloc[i + j]:
-                    is_pivot_low = False
-                    break
-            
-            if is_pivot_low:
-                pivot_lows.append({'index': df.index[i], 'price': df['low'].iloc[i]})
-        
-        # Get the most recent pivot levels
-        latest_high = pivot_highs[-1]['price'] if pivot_highs else None
-        latest_low = pivot_lows[-1]['price'] if pivot_lows else None
-        
-        return latest_high, latest_low
-    
-    def update_htf_levels(self, df_5min, df_15min, df_1D, df_1W):
-        """Update all HTF levels from different timeframes"""
+    def calculate_greeks(self, option_type, S, K, T, r, sigma):
+        """Calculate option Greeks"""
         try:
-            # 5-minute levels
-            if len(df_5min) >= 10:
-                ph_5min, pl_5min = self.calculate_pivot_levels(df_5min, 4)
-                if ph_5min:
-                    self.levels['5min']['pivot_high'] = ph_5min
-                if pl_5min:
-                    self.levels['5min']['pivot_low'] = pl_5min
+            d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+            d2 = d1 - sigma * math.sqrt(T)
             
-            # 15-minute levels (using 15min data for 10min approximation)
-            if len(df_15min) >= 10:
-                ph_15min, pl_15min = self.calculate_pivot_levels(df_15min, 5)
-                if ph_15min:
-                    self.levels['10min']['pivot_high'] = ph_15min
-                    self.levels['15min']['pivot_high'] = ph_15min
-                if pl_15min:
-                    self.levels['10min']['pivot_low'] = pl_15min
-                    self.levels['15min']['pivot_low'] = pl_15min
+            if option_type == 'CE':
+                delta = norm.cdf(d1)
+            else:
+                delta = -norm.cdf(-d1)
+                
+            gamma = norm.pdf(d1) / (S * sigma * math.sqrt(T))
+            vega = S * norm.pdf(d1) * math.sqrt(T) / 100
+            theta = (- (S * norm.pdf(d1) * sigma) / (2 * math.sqrt(T)) - r * K * math.exp(-r * T) * norm.cdf(d2)) / 365 if option_type == 'CE' else (- (S * norm.pdf(d1) * sigma) / (2 * math.sqrt(T)) + r * K * math.exp(-r * T) * norm.cdf(-d2)) / 365
+            rho = (K * T * math.exp(-r * T) * norm.cdf(d2)) / 100 if option_type == 'CE' else (-K * T * math.exp(-r * T) * norm.cdf(-d2)) / 100
             
-            # Daily levels
-            if len(df_1D) >= 10:
-                ph_1D, pl_1D = self.calculate_pivot_levels(df_1D, 5)
-                if ph_1D:
-                    self.levels['1D']['pivot_high'] = ph_1D
-                if pl_1D:
-                    self.levels['1D']['pivot_low'] = pl_1D
-            
-            # Weekly levels (approximated from daily data)
-            if len(df_1D) >= 35:  # 7 weeks of data
-                ph_1W, pl_1W = self.calculate_pivot_levels(df_1D, 5)
-                if ph_1W:
-                    self.levels['1W']['pivot_high'] = ph_1W
-                if pl_1W:
-                    self.levels['1W']['pivot_low'] = pl_1W
-                    
-        except Exception as e:
-            st.warning(f"HTF levels calculation error: {e}")
-    
-    def check_price_near_htf_levels(self, current_price, threshold=5):
-        """Check if price is near any HTF support/resistance level"""
-        nearby_levels = []
-        
-        for tf, level_data in self.levels.items():
-            for level_type in ['pivot_high', 'pivot_low']:
-                level_price = level_data[level_type]
-                if level_price is not None:
-                    distance = abs(current_price - level_price)
-                    if distance <= threshold:
-                        level_name = "Resistance" if level_type == "pivot_high" else "Support"
-                        nearby_levels.append({
-                            'timeframe': tf,
-                            'type': level_name,
-                            'price': level_price,
-                            'distance': distance
-                        })
-        
-        return nearby_levels
+            return round(delta, 4), round(gamma, 4), round(vega, 4), round(theta, 4), round(rho, 4)
+        except:
+            return 0, 0, 0, 0, 0
 
-class VolumeFootprint:
-    """Real-Time HTF Volume Footprint by BigBeluga"""
-    
-    def __init__(self, bins=10, timeframe='1D'):
-        self.bins = bins
-        self.timeframe = timeframe
-        self.profile_high = None
-        self.profile_low = None
-        self.poc_price = None
-        self.volume_profile = {}
-        self.sent_alerts = set()
-    
-    def calculate_volume_profile(self, df):
-        """Calculate volume profile and Point of Control (POC)"""
-        if len(df) < 10:
-            return None, None, None
-        
-        # Use recent data for profile
-        recent_data = df.tail(50)  # Last 50 candles
-        
-        profile_high = recent_data['high'].max()
-        profile_low = recent_data['low'].min()
-        
-        if profile_high == profile_low:
-            return None, None, None
-        
-        # Calculate bin size
-        bin_size = (profile_high - profile_low) / self.bins
-        
-        # Initialize volume bins
-        volume_bins = {i: 0 for i in range(self.bins)}
-        
-        # Distribute volume into bins
-        for idx, row in recent_data.iterrows():
-            price_range = (row['high'] - row['low'])
-            if price_range == 0:
-                continue
+    def fetch_option_chain_data(self, instrument):
+        """Fetch option chain data from NSE"""
+        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            session = requests.Session()
+            session.headers.update(headers)
+            session.get("https://www.nseindia.com", timeout=5)
+
+            url_instrument = instrument.replace(' ', '%20')
+            url = f"https://www.nseindia.com/api/option-chain-indices?symbol={url_instrument}" if instrument in self.NSE_INSTRUMENTS['indices'] else \
+                  f"https://www.nseindia.com/api/option-chain-equities?symbol={url_instrument}"
+
+            response = session.get(url, timeout=10)
+            data = response.json()
+
+            records = data['records']['data']
+            expiry = data['records']['expiryDates'][0]
+            underlying = data['records']['underlyingValue']
+
+            # Calculate totals
+            total_ce_oi = sum(item['CE']['openInterest'] for item in records if 'CE' in item)
+            total_pe_oi = sum(item['PE']['openInterest'] for item in records if 'PE' in item)
+            total_ce_change = sum(item['CE']['changeinOpenInterest'] for item in records if 'CE' in item)
+            total_pe_change = sum(item['PE']['changeinOpenInterest'] for item in records if 'PE' in item)
+
+            return {
+                'success': True,
+                'instrument': instrument,
+                'spot': underlying,
+                'expiry': expiry,
+                'total_ce_oi': total_ce_oi,
+                'total_pe_oi': total_pe_oi,
+                'total_ce_change': total_ce_change,
+                'total_pe_change': total_pe_change,
+                'records': records
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'instrument': instrument,
+                'error': str(e)
+            }
+
+    def analyze_atm_bias(self, instrument):
+        """Analyze ATM bias for an instrument"""
+        try:
+            data = self.fetch_option_chain_data(instrument)
+            if not data['success']:
+                return None
+
+            records = data['records']
+            spot = data['spot']
+            expiry = data['expiry']
+
+            # Calculate time to expiry
+            today = datetime.now(self.ist)
+            expiry_date = self.ist.localize(datetime.strptime(expiry, "%d-%b-%Y"))
+            T = max((expiry_date - today).days, 1) / 365
+            r = 0.06
+
+            calls, puts = [], []
+            for item in records:
+                if 'CE' in item and item['CE']['expiryDate'] == expiry:
+                    ce = item['CE']
+                    if ce['impliedVolatility'] > 0:
+                        greeks = self.calculate_greeks('CE', spot, ce['strikePrice'], T, r, ce['impliedVolatility'] / 100)
+                        ce.update(dict(zip(['Delta', 'Gamma', 'Vega', 'Theta', 'Rho'], greeks)))
+                    calls.append(ce)
+
+                if 'PE' in item and item['PE']['expiryDate'] == expiry:
+                    pe = item['PE']
+                    if pe['impliedVolatility'] > 0:
+                        greeks = self.calculate_greeks('PE', spot, pe['strikePrice'], T, r, pe['impliedVolatility'] / 100)
+                        pe.update(dict(zip(['Delta', 'Gamma', 'Vega', 'Theta', 'Rho'], greeks)))
+                    puts.append(pe)
+
+            if not calls or not puts:
+                return None
+
+            df_ce = pd.DataFrame(calls)
+            df_pe = pd.DataFrame(puts)
+            df = pd.merge(df_ce, df_pe, on='strikePrice', suffixes=('_CE', '_PE')).sort_values('strikePrice')
+
+            # Find ATM strike
+            atm_range = self.NSE_INSTRUMENTS['indices'].get(instrument, {}).get('atm_range', 200)
+            atm_strike = min(df['strikePrice'], key=lambda x: abs(x - spot))
+            df_atm = df[abs(df['strikePrice'] - atm_strike) <= atm_range]
+
+            if df_atm.empty:
+                return None
+
+            # Calculate ATM bias metrics
+            total_score = 0
+            weights = {
+                "oi_bias": 2, "chg_oi_bias": 2, "volume_bias": 1, 
+                "iv_bias": 1, "premium_bias": 1, "delta_bias": 1
+            }
+
+            for _, row in df_atm.iterrows():
+                score = 0
                 
-            volume_per_point = row['volume'] / price_range
-            
-            for bin_idx in range(self.bins):
-                bin_low = profile_low + (bin_idx * bin_size)
-                bin_high = bin_low + bin_size
+                # OI Bias
+                oi_bias = "Bullish" if row['openInterest_PE'] > row['openInterest_CE'] else "Bearish"
+                score += weights["oi_bias"] if oi_bias == "Bullish" else -weights["oi_bias"]
                 
-                # Calculate overlap between candle and bin
-                overlap_low = max(row['low'], bin_low)
-                overlap_high = min(row['high'], bin_high)
-                overlap_range = max(0, overlap_high - overlap_low)
+                # Change in OI Bias
+                chg_oi_bias = "Bullish" if row['changeinOpenInterest_PE'] > row['changeinOpenInterest_CE'] else "Bearish"
+                score += weights["chg_oi_bias"] if chg_oi_bias == "Bullish" else -weights["chg_oi_bias"]
                 
-                if overlap_range > 0:
-                    volume_bins[bin_idx] += volume_per_point * overlap_range
-        
-        # Find POC (bin with highest volume)
-        if volume_bins:
-            poc_bin = max(volume_bins, key=volume_bins.get)
-            poc_price = profile_low + (poc_bin * bin_size) + (bin_size / 2)
+                # Volume Bias
+                volume_bias = "Bullish" if row['totalTradedVolume_PE'] > row['totalTradedVolume_CE'] else "Bearish"
+                score += weights["volume_bias"] if volume_bias == "Bullish" else -weights["volume_bias"]
+                
+                # IV Bias
+                iv_bias = "Bullish" if row['impliedVolatility_PE'] > row['impliedVolatility_CE'] else "Bearish"
+                score += weights["iv_bias"] if iv_bias == "Bullish" else -weights["iv_bias"]
+                
+                # Premium Bias
+                premium_bias = "Bullish" if row['lastPrice_PE'] > row['lastPrice_CE'] else "Bearish"
+                score += weights["premium_bias"] if premium_bias == "Bullish" else -weights["premium_bias"]
+                
+                # Delta Bias
+                delta_bias = "Bullish" if abs(row['Delta_PE']) > abs(row['Delta_CE']) else "Bearish"
+                score += weights["delta_bias"] if delta_bias == "Bullish" else -weights["delta_bias"]
+
+                total_score += score
+
+            # Normalize score
+            avg_score = total_score / len(df_atm) if len(df_atm) > 0 else 0
             
-            self.profile_high = profile_high
-            self.profile_low = profile_low
-            self.poc_price = poc_price
-            self.volume_profile = volume_bins
-            
-            return profile_high, profile_low, poc_price
+            # Determine overall bias
+            if avg_score >= 2:
+                overall_bias = "Strong Bullish"
+            elif avg_score >= 0.5:
+                overall_bias = "Bullish"
+            elif avg_score <= -2:
+                overall_bias = "Strong Bearish"
+            elif avg_score <= -0.5:
+                overall_bias = "Bearish"
+            else:
+                overall_bias = "Neutral"
+
+            return {
+                'instrument': instrument,
+                'spot_price': spot,
+                'atm_strike': atm_strike,
+                'overall_bias': overall_bias,
+                'bias_score': avg_score,
+                'pcr_oi': data['total_pe_oi'] / data['total_ce_oi'] if data['total_ce_oi'] > 0 else 0,
+                'pcr_change': abs(data['total_pe_change']) / abs(data['total_ce_change']) if data['total_ce_change'] != 0 else 0,
+                'total_ce_oi': data['total_ce_oi'],
+                'total_pe_oi': data['total_pe_oi'],
+                'total_ce_change': data['total_ce_change'],
+                'total_pe_change': data['total_pe_change']
+            }
+
+        except Exception as e:
+            return None
+
+    def get_overall_market_bias(self):
+        """Get overall market bias across all instruments"""
+        instruments = list(self.NSE_INSTRUMENTS['indices'].keys())
+        results = []
         
-        return None, None, None
-    
-    def check_price_near_poc(self, current_price, threshold=5):
-        """Check if price is near Point of Control"""
-        if self.poc_price is None:
-            return False, 0
+        for instrument in instruments:
+            bias_data = self.analyze_atm_bias(instrument)
+            if bias_data:
+                results.append(bias_data)
         
-        distance = abs(current_price - self.poc_price)
-        return distance <= threshold, distance
+        return results
+
+# =============================================
+# EXISTING DASHBOARD CLASSES (UPDATED)
+# =============================================
 
 class VolumeSpikeDetector:
     """Detect sudden volume spikes in real-time"""
@@ -409,9 +446,8 @@ class EnhancedNiftyApp:
         # Initialize all indicators
         self.vob_indicator = VolumeOrderBlocks(sensitivity=5)
         self.volume_spike_detector = VolumeSpikeDetector(lookback_period=20, spike_threshold=2.5)
-        self.htf_sr = HTFSupportResistance()
-        self.volume_footprint = VolumeFootprint(bins=10, timeframe='1D')
         self.alert_manager = AlertManager(cooldown_minutes=10)
+        self.options_analyzer = NSEOptionsAnalyzer()
         
         # Initialize session state
         self.init_session_state()
@@ -420,22 +456,18 @@ class EnhancedNiftyApp:
         """Initialize all session state variables"""
         if 'sent_vob_alerts' not in st.session_state:
             st.session_state.sent_vob_alerts = set()
-        if 'sent_rsi_alerts' not in st.session_state:
-            st.session_state.sent_rsi_alerts = set()
-        if 'sent_rsi_oi_alerts' not in st.session_state:
-            st.session_state.sent_rsi_oi_alerts = set()
         if 'sent_volume_block_alerts' not in st.session_state:
             st.session_state.sent_volume_block_alerts = set()
         if 'sent_volume_spike_alerts' not in st.session_state:
             st.session_state.sent_volume_spike_alerts = set()
-        if 'sent_htf_level_alerts' not in st.session_state:
-            st.session_state.sent_htf_level_alerts = set()
-        if 'sent_poc_alerts' not in st.session_state:
-            st.session_state.sent_poc_alerts = set()
         if 'last_alert_check' not in st.session_state:
             st.session_state.last_alert_check = None
         if 'volume_history' not in st.session_state:
             st.session_state.volume_history = []
+        if 'market_bias_data' not in st.session_state:
+            st.session_state.market_bias_data = None
+        if 'last_bias_update' not in st.session_state:
+            st.session_state.last_bias_update = None
     
     def setup_secrets(self):
         """Setup API credentials from Streamlit secrets"""
@@ -575,12 +607,15 @@ class EnhancedNiftyApp:
             return False
 
     def check_volume_block_alerts(self, current_price, bullish_blocks, bearish_blocks, threshold=5):
-        """Check if price is near volume order blocks and send alerts"""
+        """Check if price is near volume order blocks and send alerts with ATM bias"""
         if not bullish_blocks and not bearish_blocks:
             return False
         
         current_time = datetime.now(self.ist)
         alert_sent = False
+        
+        # Get current market bias
+        market_bias = self.get_current_market_bias()
         
         # Check bullish blocks
         nearby_bullish = self.vob_indicator.check_price_near_blocks(current_price, bullish_blocks, threshold)
@@ -602,6 +637,9 @@ class EnhancedNiftyApp:
 • Volume: {block['volume']:,}
 
 📈 Distance to Block: {abs(current_price - block['mid']):.2f} points
+
+📊 OVERALL MARKET BIAS:
+{market_bias}
 
 💡 Trading Suggestion:
 Consider LONG positions with stop below support
@@ -635,6 +673,9 @@ Consider LONG positions with stop below support
 
 📉 Distance to Block: {abs(current_price - block['mid']):.2f} points
 
+📊 OVERALL MARKET BIAS:
+{market_bias}
+
 💡 Trading Suggestion:
 Consider SHORT positions with stop above resistance
 
@@ -649,7 +690,7 @@ Consider SHORT positions with stop above resistance
         return alert_sent
 
     def check_volume_spike_alerts(self, df):
-        """Check for sudden volume spikes and send alerts"""
+        """Check for sudden volume spikes and send alerts with ATM bias"""
         if df.empty or len(df) < 2:
             return False
         
@@ -669,6 +710,9 @@ Consider SHORT positions with stop above resistance
             alert_id = f"volume_spike_{current_time.strftime('%Y%m%d_%H%M')}"
             
             if self.alert_manager.can_send_alert("volume_spike", alert_id):
+                # Get current market bias
+                market_bias = self.get_current_market_bias()
+                
                 spike_type = "BUYING" if price_change > 0 else "SELLING"
                 emoji = "🟢" if price_change > 0 else "🔴"
                 
@@ -685,6 +729,9 @@ Consider SHORT positions with stop above resistance
 
 🎯 Spike Type: {spike_type} PRESSURE
 
+📊 OVERALL MARKET BIAS:
+{market_bias}
+
 💡 Market Interpretation:
 High volume with {spike_type.lower()} pressure indicates 
 strong institutional activity
@@ -700,88 +747,164 @@ Watch for breakout/breakdown confirmation!"""
         
         return False
 
-    def check_htf_level_alerts(self, current_price, threshold=5):
-        """Check if price is near HTF support/resistance levels"""
-        nearby_levels = self.htf_sr.check_price_near_htf_levels(current_price, threshold)
-        
-        if not nearby_levels:
-            return False
-        
-        current_time = datetime.now(self.ist)
-        alert_sent = False
-        
-        for level in nearby_levels:
-            alert_id = f"htf_{level['timeframe']}_{level['type']}_{level['price']}"
-            
-            if self.alert_manager.can_send_alert("htf_level", alert_id):
-                message = f"""🎯 PRICE NEAR HTF {level['type'].upper()}!
-
-📊 Nifty 50 HTF Level Alert
-⏰ Time: {current_time.strftime('%H:%M:%S')} IST
-💰 Current Price: ₹{current_price:.2f}
-
-🎯 {level['timeframe']} {level['type']}:
-• Level Price: ₹{level['price']:.2f}
-• Distance: {level['distance']:.2f} points
-
-💡 Trading Suggestion:
-{level['type'].upper()} levels often act as strong 
-reversal or breakout points
-
-⏳ Next alert in 10 minutes
-
-⚠️ Watch for price reaction at this level!"""
-                
-                if self.send_telegram_message(message):
-                    st.success(f"HTF {level['type']} alert sent for {level['timeframe']}!")
-                    alert_sent = True
-        
-        return alert_sent
-
-    def check_poc_alerts(self, current_price, threshold=5):
-        """Check if price is near Volume Footprint POC"""
-        is_near_poc, distance = self.volume_footprint.check_price_near_poc(current_price, threshold)
-        
-        if is_near_poc:
+    def get_current_market_bias(self):
+        """Get current market bias from options analyzer"""
+        try:
+            # Update market bias if needed
             current_time = datetime.now(self.ist)
-            alert_id = f"poc_{self.volume_footprint.poc_price}"
-            
-            if self.alert_manager.can_send_alert("poc", alert_id):
-                message = f"""📊 PRICE NEAR VOLUME POC (Point of Control)!
-
-🎯 Nifty 50 Volume Profile Alert
-⏰ Time: {current_time.strftime('%H:%M:%S')} IST
-💰 Current Price: ₹{current_price:.2f}
-
-📈 Volume Footprint Analysis:
-• POC Price: ₹{self.volume_footprint.poc_price:.2f}
-• Distance: {distance:.2f} points
-• Profile High: ₹{self.volume_footprint.profile_high:.2f}
-• Profile Low: ₹{self.volume_footprint.profile_low:.2f}
-
-💡 Market Interpretation:
-POC represents the price with highest trading activity
-Often acts as strong support/resistance
-
-⏳ Next alert in 10 minutes
-
-⚡ Watch for institutional activity at this level!"""
+            if (st.session_state.last_bias_update is None or 
+                (current_time - st.session_state.last_bias_update).total_seconds() > 300):  # 5 minutes
                 
-                if self.send_telegram_message(message):
-                    st.success(f"Volume POC alert sent! (Distance: {distance:.2f} points)")
-                    return True
+                with st.spinner("Updating market bias..."):
+                    bias_data = self.options_analyzer.get_overall_market_bias()
+                    st.session_state.market_bias_data = bias_data
+                    st.session_state.last_bias_update = current_time
+            
+            bias_data = st.session_state.market_bias_data
+            if not bias_data:
+                return "Market bias data not available"
+            
+            # Format market bias message
+            bias_message = "📊 OPTIONS MARKET BIAS ANALYSIS:\n\n"
+            
+            for instrument_data in bias_data:
+                bias_message += f"• {instrument_data['instrument']}:\n"
+                bias_message += f"  Spot: ₹{instrument_data['spot_price']:.2f}\n"
+                bias_message += f"  Bias: {instrument_data['overall_bias']} (Score: {instrument_data['bias_score']:.2f})\n"
+                bias_message += f"  PCR OI: {instrument_data['pcr_oi']:.2f} | PCR Δ: {instrument_data['pcr_change']:.2f}\n"
+                bias_message += f"  CE OI: {instrument_data['total_ce_oi']:,} | PE OI: {instrument_data['total_pe_oi']:,}\n\n"
+            
+            return bias_message
+            
+        except Exception as e:
+            return f"Market bias analysis temporarily unavailable"
+
+    def display_options_analysis(self):
+        """Display NSE Options Analysis"""
+        st.header("📊 NSE Options Chain Analysis")
         
-        return False
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("Real-time options market bias analysis across major indices")
+        with col2:
+            if st.button("🔄 Update Options Data", type="primary"):
+                with st.spinner("Fetching latest options data..."):
+                    bias_data = self.options_analyzer.get_overall_market_bias()
+                    st.session_state.market_bias_data = bias_data
+                    st.session_state.last_bias_update = datetime.now(self.ist)
+                    st.success("Options data updated!")
+        
+        st.divider()
+        
+        # Display current market bias
+        if st.session_state.market_bias_data:
+            bias_data = st.session_state.market_bias_data
+            
+            st.subheader("🎯 Current Market Bias")
+            
+            # Create metrics for each instrument
+            cols = st.columns(len(bias_data))
+            for idx, instrument_data in enumerate(bias_data):
+                with cols[idx]:
+                    bias_color = "🟢" if "Bullish" in instrument_data['overall_bias'] else "🔴" if "Bearish" in instrument_data['overall_bias'] else "🟡"
+                    st.metric(
+                        f"{instrument_data['instrument']}",
+                        f"{bias_color} {instrument_data['overall_bias']}",
+                        f"Score: {instrument_data['bias_score']:.2f}"
+                    )
+            
+            st.divider()
+            
+            # Detailed analysis
+            st.subheader("📈 Detailed Options Analysis")
+            
+            for instrument_data in bias_data:
+                with st.expander(f"📊 {instrument_data['instrument']} Detailed Analysis"):
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Spot Price", f"₹{instrument_data['spot_price']:.2f}")
+                    with col2:
+                        st.metric("ATM Strike", f"₹{instrument_data['atm_strike']:.2f}")
+                    with col3:
+                        st.metric("PCR (OI)", f"{instrument_data['pcr_oi']:.2f}")
+                    with col4:
+                        st.metric("PCR (Δ OI)", f"{instrument_data['pcr_change']:.2f}")
+                    
+                    # OI Analysis
+                    st.markdown("#### 📊 Open Interest Analysis")
+                    oi_col1, oi_col2, oi_col3, oi_col4 = st.columns(4)
+                    
+                    with oi_col1:
+                        st.metric("Total CE OI", f"{instrument_data['total_ce_oi']:,}")
+                    with oi_col2:
+                        st.metric("Total PE OI", f"{instrument_data['total_pe_oi']:,}")
+                    with oi_col3:
+                        st.metric("CE Δ OI", f"{instrument_data['total_ce_change']:,}")
+                    with oi_col4:
+                        st.metric("PE Δ OI", f"{instrument_data['total_pe_change']:,}")
+                    
+                    # Trading recommendation based on bias
+                    st.markdown("#### 💡 Trading Recommendation")
+                    if "Bullish" in instrument_data['overall_bias']:
+                        st.success(f"""
+                        **{instrument_data['instrument']} shows BULLISH bias**
+                        
+                        ✅ Consider LONG/CALL positions
+                        ✅ Look for support levels to enter
+                        ✅ Target resistance levels for exits
+                        ⚠️ Use proper stop losses
+                        """)
+                    elif "Bearish" in instrument_data['overall_bias']:
+                        st.error(f"""
+                        **{instrument_data['instrument']} shows BEARISH bias**
+                        
+                        ✅ Consider SHORT/PUT positions  
+                        ✅ Look for resistance levels to enter
+                        ✅ Target support levels for exits
+                        ⚠️ Use proper stop losses
+                        """)
+                    else:
+                        st.warning(f"""
+                        **{instrument_data['instrument']} shows NEUTRAL bias**
+                        
+                        🔄 Wait for clear directional bias
+                        🔄 Consider range-bound strategies
+                        🔄 Reduce position sizes
+                        ⚠️ Monitor key levels closely
+                        """)
+        else:
+            st.info("👆 Click 'Update Options Data' to load options chain analysis")
+            
+            st.markdown("""
+            ### About Options Chain Analysis
+            
+            This section provides:
+            
+            - **Real-time market bias** across major indices
+            - **PCR (Put-Call Ratio)** analysis
+            - **Open Interest** buildup patterns
+            - **Trading recommendations** based on options data
+            
+            **Instruments analyzed:**
+            - NIFTY, BANKNIFTY, FINNIFTY
+            
+            **How to use:**
+            1. Click 'Update Options Data' for latest analysis
+            2. Review market bias for each instrument
+            3. Check PCR ratios and OI patterns
+            4. Use insights for trading decisions
+            """)
 
     def create_comprehensive_chart(self, df, bullish_blocks, bearish_blocks, interval):
-        """Create comprehensive chart with all indicators"""
+        """Create comprehensive chart with Volume Order Blocks"""
         if df.empty:
             return None
         
         fig = make_subplots(
             rows=2, cols=1,
             row_heights=[0.7, 0.3],
-            subplot_titles=(f'Nifty 50 Comprehensive Analysis - {interval} Min', 'Volume with Indicators'),
+            subplot_titles=(f'Nifty 50 Analysis - {interval} Min', 'Volume with Spike Detection'),
             vertical_spacing=0.05,
             shared_xaxes=True
         )
@@ -800,44 +923,6 @@ Often acts as strong support/resistance
             ),
             row=1, col=1
         )
-        
-        # Add HTF Support/Resistance Levels
-        for tf, level_data in self.htf_sr.levels.items():
-            color = level_data['color']
-            
-            # Pivot High (Resistance)
-            if level_data['pivot_high'] is not None:
-                fig.add_hline(
-                    y=level_data['pivot_high'],
-                    line_dash="dash",
-                    line_color=color,
-                    annotation_text=f"{tf} Resistance",
-                    annotation_position="top right",
-                    row=1, col=1
-                )
-            
-            # Pivot Low (Support)
-            if level_data['pivot_low'] is not None:
-                fig.add_hline(
-                    y=level_data['pivot_low'],
-                    line_dash="dash",
-                    line_color=color,
-                    annotation_text=f"{tf} Support",
-                    annotation_position="bottom right",
-                    row=1, col=1
-                )
-        
-        # Add Volume Footprint POC
-        if self.volume_footprint.poc_price is not None:
-            fig.add_hline(
-                y=self.volume_footprint.poc_price,
-                line_dash="dot",
-                line_color='#298ada',
-                line_width=3,
-                annotation_text="POC",
-                annotation_position="left",
-                row=1, col=1
-            )
         
         # Add Volume Order Blocks
         colors = {'bullish': '#26ba9f', 'bearish': '#6626ba'}
@@ -906,7 +991,7 @@ Often acts as strong support/resistance
     def run(self):
         """Main application"""
         st.title("📈 Advanced Nifty Trading Dashboard")
-        st.markdown("*HTF Support/Resistance, Volume Footprint, Order Blocks & Real-time Alerts*")
+        st.markdown("*Volume Analysis, Options Chain & Real-time Alerts*")
         
         # Sidebar
         with st.sidebar:
@@ -931,8 +1016,6 @@ Often acts as strong support/resistance
             st.subheader("Alerts")
             volume_block_alerts = st.checkbox("Volume Block Alerts", value=True)
             volume_spike_alerts = st.checkbox("Volume Spike Alerts", value=True)
-            htf_level_alerts = st.checkbox("HTF Level Alerts", value=True)
-            poc_alerts = st.checkbox("Volume POC Alerts", value=True)
             telegram_enabled = st.checkbox("Enable Telegram", value=bool(self.telegram_bot_token))
             
             if st.button("🔄 Refresh Now"):
@@ -941,127 +1024,110 @@ Often acts as strong support/resistance
         # Update cooldown period
         self.alert_manager.cooldown_minutes = cooldown_minutes
         
-        # Main content
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
+        # Main content - Tabs
+        tab1, tab2 = st.tabs(["📈 Price Analysis", "📊 Options Analysis"])
         
-        # Update detectors
-        self.vob_indicator = VolumeOrderBlocks(sensitivity=vob_sensitivity)
-        self.volume_spike_detector.spike_threshold = spike_threshold
-        
-        # Fetch data for different timeframes
-        df_5min = pd.DataFrame()
-        df_15min = pd.DataFrame()
-        df_1D = pd.DataFrame()
-        
-        with st.spinner("Fetching market data..."):
-            # Fetch 5min data for current chart
-            api_data_5min = self.fetch_intraday_data(interval=timeframe)
-            if api_data_5min:
-                df_5min = self.process_data(api_data_5min)
+        with tab1:
+            # Price Analysis Tab
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
             
-            # Fetch 15min data for HTF levels
-            api_data_15min = self.fetch_intraday_data(interval="15")
-            if api_data_15min:
-                df_15min = self.process_data(api_data_15min)
+            # Update detectors
+            self.vob_indicator = VolumeOrderBlocks(sensitivity=vob_sensitivity)
+            self.volume_spike_detector.spike_threshold = spike_threshold
             
-            # Fetch 1D data (approximated from intraday)
-            api_data_1D = self.fetch_intraday_data(interval="60", days_back=30)
-            if api_data_1D:
-                df_1D = self.process_data(api_data_1D)
-        
-        if not df_5min.empty:
-            latest = df_5min.iloc[-1]
-            current_price = latest['close']
-            current_volume = latest['volume']
+            # Fetch data
+            df = pd.DataFrame()
+            with st.spinner("Fetching market data..."):
+                api_data = self.fetch_intraday_data(interval=timeframe)
+                if api_data:
+                    df = self.process_data(api_data)
             
-            # Update all indicators
-            bullish_blocks, bearish_blocks = self.vob_indicator.detect_volume_order_blocks(df_5min)
-            self.htf_sr.update_htf_levels(df_5min, df_15min, df_1D, df_1D)  # Using same for weekly
-            self.volume_footprint.calculate_volume_profile(df_1D)
-            
-            # Display metrics
-            with col1:
-                st.metric("Nifty Price", f"₹{current_price:.2f}")
-            with col2:
-                st.metric("HTF Levels", f"{sum(1 for tf in self.htf_sr.levels.values() if tf['pivot_high'] or tf['pivot_low'])}")
-            with col3:
-                poc_status = "✅" if self.volume_footprint.poc_price else "❌"
-                st.metric("Volume POC", poc_status)
-            with col4:
-                st.metric("Volume Blocks", f"{len(bullish_blocks) + len(bearish_blocks)}")
-            with col5:
-                if len(df_5min) > 5:
-                    avg_vol = df_5min['volume'].iloc[-6:-1].mean()
-                    vol_ratio = current_volume / avg_vol if avg_vol > 0 else 0
-                    st.metric("Volume Ratio", f"{vol_ratio:.1f}x")
-            with col6:
-                alert_status = "✅ Active" if telegram_enabled else "❌ Inactive"
-                st.metric("Alerts", alert_status)
-            
-            # Create and display chart
-            chart = self.create_comprehensive_chart(df_5min, bullish_blocks, bearish_blocks, timeframe)
-            if chart:
-                st.plotly_chart(chart, use_container_width=True)
-            
-            # Check for alerts
-            alerts_sent = []
-            if telegram_enabled:
-                if volume_block_alerts:
-                    block_alert = self.check_volume_block_alerts(current_price, bullish_blocks, bearish_blocks, alert_threshold)
-                    if block_alert:
-                        alerts_sent.append("Volume Block")
+            if not df.empty:
+                latest = df.iloc[-1]
+                current_price = latest['close']
+                current_volume = latest['volume']
                 
-                if volume_spike_alerts:
-                    spike_alert = self.check_volume_spike_alerts(df_5min)
-                    if spike_alert:
-                        alerts_sent.append("Volume Spike")
+                # Detect Volume Order Blocks
+                bullish_blocks, bearish_blocks = self.vob_indicator.detect_volume_order_blocks(df)
                 
-                if htf_level_alerts:
-                    htf_alert = self.check_htf_level_alerts(current_price, alert_threshold)
-                    if htf_alert:
-                        alerts_sent.append("HTF Level")
+                # Calculate volume statistics
+                if len(df) > 5:
+                    avg_vol = df['volume'].iloc[-6:-1].mean()
+                    volume_ratio = current_volume / avg_vol if avg_vol > 0 else 0
+                else:
+                    volume_ratio = 0
                 
-                if poc_alerts:
-                    poc_alert = self.check_poc_alerts(current_price, alert_threshold)
-                    if poc_alert:
-                        alerts_sent.append("Volume POC")
-            
-            if alerts_sent:
-                st.success(f"📱 Alerts sent: {', '.join(alerts_sent)} (Cooldown: {cooldown_minutes}min)")
-            
-            # Display HTF Levels Summary
-            st.subheader("🎯 Higher Time Frame Levels")
-            htf_cols = st.columns(5)
-            
-            for i, (tf, level_data) in enumerate(self.htf_sr.levels.items()):
-                with htf_cols[i]:
-                    st.write(f"**{tf}**")
-                    if level_data['pivot_high']:
-                        distance_high = abs(current_price - level_data['pivot_high'])
-                        st.write(f"Resistance: ₹{level_data['pivot_high']:.2f}")
-                        st.write(f"Distance: {distance_high:.2f}")
-                    if level_data['pivot_low']:
-                        distance_low = abs(current_price - level_data['pivot_low'])
-                        st.write(f"Support: ₹{level_data['pivot_low']:.2f}")
-                        st.write(f"Distance: {distance_low:.2f}")
-            
-            # Display Volume Footprint Info
-            if self.volume_footprint.poc_price:
-                st.subheader("📊 Volume Footprint Profile")
-                footprint_cols = st.columns(4)
+                # Display metrics
+                with col1:
+                    st.metric("Nifty Price", f"₹{current_price:.2f}")
+                with col2:
+                    st.metric("Current Volume", f"{current_volume:,}")
+                with col3:
+                    st.metric("Volume Ratio", f"{volume_ratio:.1f}x")
+                with col4:
+                    st.metric("Bullish Blocks", len(bullish_blocks))
+                with col5:
+                    st.metric("Bearish Blocks", len(bearish_blocks))
+                with col6:
+                    if volume_spike_alerts and telegram_enabled:
+                        st.metric("Alerts Status", "✅ Active")
+                    else:
+                        st.metric("Alerts Status", "❌ Inactive")
                 
-                with footprint_cols[0]:
-                    st.metric("POC Price", f"₹{self.volume_footprint.poc_price:.2f}")
-                with footprint_cols[1]:
-                    st.metric("Profile High", f"₹{self.volume_footprint.profile_high:.2f}")
-                with footprint_cols[2]:
-                    st.metric("Profile Low", f"₹{self.volume_footprint.profile_low:.2f}")
-                with footprint_cols[3]:
-                    distance_poc = abs(current_price - self.volume_footprint.poc_price)
-                    st.metric("Distance to POC", f"{distance_poc:.2f}")
+                # Create and display chart
+                chart = self.create_comprehensive_chart(df, bullish_blocks, bearish_blocks, timeframe)
+                if chart:
+                    st.plotly_chart(chart, use_container_width=True)
+                
+                # Check for alerts
+                alerts_sent = []
+                if telegram_enabled:
+                    if volume_block_alerts:
+                        block_alert = self.check_volume_block_alerts(
+                            current_price, bullish_blocks, bearish_blocks, alert_threshold
+                        )
+                        if block_alert:
+                            alerts_sent.append("Volume Block")
+                    
+                    if volume_spike_alerts:
+                        spike_alert = self.check_volume_spike_alerts(df)
+                        if spike_alert:
+                            alerts_sent.append("Volume Spike")
+                
+                if alerts_sent:
+                    st.success(f"📱 Alerts sent: {', '.join(alerts_sent)} (Cooldown: {cooldown_minutes}min)")
+                
+                # Real-time volume monitoring
+                st.subheader("🔍 Live Volume Monitoring")
+                vol_col1, vol_col2, vol_col3, vol_col4 = st.columns(4)
+                
+                with vol_col1:
+                    if len(df) > 5:
+                        avg_vol = df['volume'].iloc[-6:-1].mean()
+                        st.metric("20-period Avg Volume", f"{avg_vol:,.0f}")
+                
+                with vol_col2:
+                    st.metric("Current Volume", f"{current_volume:,.0f}")
+                
+                with vol_col3:
+                    if volume_ratio > spike_threshold:
+                        st.error(f"Volume Spike: {volume_ratio:.1f}x")
+                    elif volume_ratio > 1.5:
+                        st.warning(f"High Volume: {volume_ratio:.1f}x")
+                    else:
+                        st.success(f"Normal: {volume_ratio:.1f}x")
+                
+                with vol_col4:
+                    if len(df) > 1:
+                        price_change = latest['close'] - df.iloc[-2]['close']
+                        st.metric("Price Change", f"₹{price_change:+.2f}")
+            
+            else:
+                st.error("No data available. Please check your API credentials and try again.")
         
-        else:
-            st.error("No data available. Please check your API credentials and try again.")
+        with tab2:
+            # Options Analysis Tab
+            self.display_options_analysis()
         
         # Cleanup old alerts and auto refresh
         self.alert_manager.cleanup_old_alerts()
