@@ -16,7 +16,9 @@ from scipy.stats import norm
 import io
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Tuple, Any  # Added missing imports
+from typing import Dict, List, Optional, Tuple, Any
+import plotly.express as px
+
 warnings.filterwarnings('ignore')
 
 # Streamlit configuration
@@ -119,7 +121,7 @@ class BiasAnalysisPro:
         }
 
     def fetch_data(self, symbol: str, period: str = '7d', interval: str = '5m') -> pd.DataFrame:
-        """Fetch data from Yahoo Finance"""
+        """Fetch data from Yahoo Finance with enhanced error handling"""
         try:
             ticker = yf.Ticker(symbol)
             df = ticker.history(period=period, interval=interval)
@@ -382,295 +384,306 @@ class BiasAnalysisPro:
         return market_breadth, breadth_bullish, breadth_bearish, bullish_stocks, total_stocks, stock_data
 
     def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict[str, Any]:
-        """Analyze all 8 bias indicators"""
+        """Analyze all 8 bias indicators with enhanced error handling"""
 
         print(f"Fetching data for {symbol}...")
-        df = self.fetch_data(symbol, period='7d', interval='5m')
+        try:
+            df = self.fetch_data(symbol, period='7d', interval='5m')
 
-        if df.empty or len(df) < 100:
-            error_msg = f'Insufficient data (fetched {len(df)} candles, need at least 100)'
+            if df.empty or len(df) < 100:
+                error_msg = f'Insufficient data (fetched {len(df)} candles, need at least 100)'
+                print(f"❌ {error_msg}")
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'symbol': symbol
+                }
+
+            current_price = df['Close'].iloc[-1]
+            bias_results = []
+            stock_data = []
+
+            # 1. VOLUME DELTA
+            volume_delta, volume_bullish, volume_bearish = self.calculate_volume_delta(df)
+            if volume_bullish:
+                vol_delta_bias = "BULLISH"
+                vol_delta_score = 100
+            elif volume_bearish:
+                vol_delta_bias = "BEARISH"
+                vol_delta_score = -100
+            else:
+                vol_delta_bias = "NEUTRAL"
+                vol_delta_score = 0
+
+            bias_results.append({
+                'indicator': 'Volume Delta',
+                'value': f"{volume_delta:.0f}",
+                'bias': vol_delta_bias,
+                'score': vol_delta_score,
+                'weight': 1.0,
+                'category': 'fast'
+            })
+
+            # 2. HVP (High Volume Pivots)
+            hvp_bullish, hvp_bearish, pivot_highs, pivot_lows = self.calculate_hvp(df)
+            if hvp_bullish:
+                hvp_bias = "BULLISH"
+                hvp_score = 100
+                hvp_value = f"Bull Signal (Lows: {pivot_lows}, Highs: {pivot_highs})"
+            elif hvp_bearish:
+                hvp_bias = "BEARISH"
+                hvp_score = -100
+                hvp_value = f"Bear Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
+            else:
+                hvp_bias = "NEUTRAL"
+                hvp_score = 0
+                hvp_value = f"No Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
+
+            bias_results.append({
+                'indicator': 'HVP (High Volume Pivots)',
+                'value': hvp_value,
+                'bias': hvp_bias,
+                'score': hvp_score,
+                'weight': 1.0,
+                'category': 'fast'
+            })
+
+            # 3. VOB (Volume Order Blocks)
+            vob_bullish, vob_bearish, vob_ema5, vob_ema18 = self.calculate_vob(df)
+            if vob_bullish:
+                vob_bias = "BULLISH"
+                vob_score = 100
+                vob_value = f"Bull Cross (EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f})"
+            elif vob_bearish:
+                vob_bias = "BEARISH"
+                vob_score = -100
+                vob_value = f"Bear Cross (EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f})"
+            else:
+                vob_bias = "NEUTRAL"
+                vob_score = 0
+                if vob_ema5 > vob_ema18:
+                    vob_value = f"EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f} (No Cross)"
+                else:
+                    vob_value = f"EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f} (No Cross)"
+
+            bias_results.append({
+                'indicator': 'VOB (Volume Order Blocks)',
+                'value': vob_value,
+                'bias': vob_bias,
+                'score': vob_score,
+                'weight': 1.0,
+                'category': 'fast'
+            })
+
+            # 4. ORDER BLOCKS (EMA Crossover)
+            ema5 = self.calculate_ema(df['Close'], 5)
+            ema18 = self.calculate_ema(df['Close'], 18)
+            cross_up = (ema5.iloc[-2] <= ema18.iloc[-2]) and (ema5.iloc[-1] > ema18.iloc[-1])
+            cross_dn = (ema5.iloc[-2] >= ema18.iloc[-2]) and (ema5.iloc[-1] < ema18.iloc[-1])
+
+            if cross_up:
+                ob_bias = "BULLISH"
+                ob_score = 100
+            elif cross_dn:
+                ob_bias = "BEARISH"
+                ob_score = -100
+            else:
+                ob_bias = "NEUTRAL"
+                ob_score = 0
+
+            bias_results.append({
+                'indicator': 'Order Blocks (EMA 5/18)',
+                'value': f"EMA5: {ema5.iloc[-1]:.2f} | EMA18: {ema18.iloc[-1]:.2f}",
+                'bias': ob_bias,
+                'score': ob_score,
+                'weight': 1.0,
+                'category': 'fast'
+            })
+
+            # 5. RSI
+            rsi = self.calculate_rsi(df['Close'], self.config['rsi_period'])
+            rsi_value = rsi.iloc[-1]
+            if rsi_value > 50:
+                rsi_bias = "BULLISH"
+                rsi_score = 100
+            else:
+                rsi_bias = "BEARISH"
+                rsi_score = -100
+
+            bias_results.append({
+                'indicator': 'RSI',
+                'value': f"{rsi_value:.2f}",
+                'bias': rsi_bias,
+                'score': rsi_score,
+                'weight': 1.0,
+                'category': 'fast'
+            })
+
+            # 6. DMI
+            plus_di, minus_di, adx = self.calculate_dmi(df, self.config['dmi_period'], self.config['dmi_smoothing'])
+            plus_di_value = plus_di.iloc[-1]
+            minus_di_value = minus_di.iloc[-1]
+            if plus_di_value > minus_di_value:
+                dmi_bias = "BULLISH"
+                dmi_score = 100
+            else:
+                dmi_bias = "BEARISH"
+                dmi_score = -100
+
+            bias_results.append({
+                'indicator': 'DMI',
+                'value': f"+DI:{plus_di_value:.1f} -DI:{minus_di_value:.1f}",
+                'bias': dmi_bias,
+                'score': dmi_score,
+                'weight': 1.0,
+                'category': 'fast'
+            })
+
+            # 7. VIDYA
+            vidya_val, vidya_bullish, vidya_bearish = self.calculate_vidya(df)
+            if vidya_bullish:
+                vidya_bias = "BULLISH"
+                vidya_score = 100
+            elif vidya_bearish:
+                vidya_bias = "BEARISH"
+                vidya_score = -100
+            else:
+                vidya_bias = "NEUTRAL"
+                vidya_score = 0
+
+            bias_results.append({
+                'indicator': 'VIDYA',
+                'value': f"{vidya_val.iloc[-1]:.2f}" if not vidya_val.empty else "N/A",
+                'bias': vidya_bias,
+                'score': vidya_score,
+                'weight': 1.0,
+                'category': 'fast'
+            })
+
+            # 8. MFI
+            mfi = self.calculate_mfi(df, self.config['mfi_period'])
+            mfi_value = mfi.iloc[-1]
+            if np.isnan(mfi_value):
+                mfi_value = 50.0
+
+            if mfi_value > 50:
+                mfi_bias = "BULLISH"
+                mfi_score = 100
+            else:
+                mfi_bias = "BEARISH"
+                mfi_score = -100
+
+            bias_results.append({
+                'indicator': 'MFI (Money Flow)',
+                'value': f"{mfi_value:.2f}",
+                'bias': mfi_bias,
+                'score': mfi_score,
+                'weight': 1.0,
+                'category': 'fast'
+            })
+
+            # Calculate overall bias
+            fast_bull = 0
+            fast_bear = 0
+            fast_total = 0
+
+            medium_bull = 0
+            medium_bear = 0
+            medium_total = 0
+
+            slow_bull = 0
+            slow_bear = 0
+            slow_total = 0
+
+            bullish_count = 0
+            bearish_count = 0
+            neutral_count = 0
+
+            for bias in bias_results:
+                if 'BULLISH' in bias['bias']:
+                    bullish_count += 1
+                    if bias['category'] == 'fast':
+                        fast_bull += 1
+                elif 'BEARISH' in bias['bias']:
+                    bearish_count += 1
+                    if bias['category'] == 'fast':
+                        fast_bear += 1
+                else:
+                    neutral_count += 1
+
+                if bias['category'] == 'fast':
+                    fast_total += 1
+
+            # Calculate percentages
+            fast_bull_pct = (fast_bull / fast_total) * 100 if fast_total > 0 else 0
+            fast_bear_pct = (fast_bear / fast_total) * 100 if fast_total > 0 else 0
+
+            # Adaptive weighting
+            divergence_threshold = self.config['divergence_threshold']
+            bullish_divergence = False  # Simplified for this implementation
+            bearish_divergence = False
+            divergence_detected = bullish_divergence or bearish_divergence
+
+            if divergence_detected:
+                fast_weight = self.config['reversal_fast_weight']
+                mode = "REVERSAL"
+            else:
+                fast_weight = self.config['normal_fast_weight']
+                mode = "NORMAL"
+
+            # Calculate weighted scores
+            bullish_signals = fast_bull * fast_weight
+            bearish_signals = fast_bear * fast_weight
+            total_signals = fast_total * fast_weight
+
+            bullish_bias_pct = (bullish_signals / total_signals) * 100 if total_signals > 0 else 0
+            bearish_bias_pct = (bearish_signals / total_signals) * 100 if total_signals > 0 else 0
+
+            # Determine overall bias
+            bias_strength = self.config['bias_strength']
+
+            if bullish_bias_pct >= bias_strength:
+                overall_bias = "BULLISH"
+                overall_score = bullish_bias_pct
+                overall_confidence = min(100, bullish_bias_pct)
+            elif bearish_bias_pct >= bias_strength:
+                overall_bias = "BEARISH"
+                overall_score = -bearish_bias_pct
+                overall_confidence = min(100, bearish_bias_pct)
+            else:
+                overall_bias = "NEUTRAL"
+                overall_score = 0
+                overall_confidence = 100 - max(bullish_bias_pct, bearish_bias_pct)
+
+            return {
+                'success': True,
+                'symbol': symbol,
+                'current_price': current_price,
+                'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')),
+                'bias_results': bias_results,
+                'overall_bias': overall_bias,
+                'overall_score': overall_score,
+                'overall_confidence': overall_confidence,
+                'bullish_count': bullish_count,
+                'bearish_count': bearish_count,
+                'neutral_count': neutral_count,
+                'total_indicators': len(bias_results),
+                'stock_data': stock_data,
+                'mode': mode,
+                'fast_bull_pct': fast_bull_pct,
+                'fast_bear_pct': fast_bear_pct,
+                'bullish_bias_pct': bullish_bias_pct,
+                'bearish_bias_pct': bearish_bias_pct
+            }
+            
+        except Exception as e:
+            error_msg = f"Error in bias analysis: {str(e)}"
             print(f"❌ {error_msg}")
             return {
                 'success': False,
-                'error': error_msg
+                'error': error_msg,
+                'symbol': symbol
             }
-
-        current_price = df['Close'].iloc[-1]
-        bias_results = []
-        stock_data = []
-
-        # 1. VOLUME DELTA
-        volume_delta, volume_bullish, volume_bearish = self.calculate_volume_delta(df)
-        if volume_bullish:
-            vol_delta_bias = "BULLISH"
-            vol_delta_score = 100
-        elif volume_bearish:
-            vol_delta_bias = "BEARISH"
-            vol_delta_score = -100
-        else:
-            vol_delta_bias = "NEUTRAL"
-            vol_delta_score = 0
-
-        bias_results.append({
-            'indicator': 'Volume Delta',
-            'value': f"{volume_delta:.0f}",
-            'bias': vol_delta_bias,
-            'score': vol_delta_score,
-            'weight': 1.0,
-            'category': 'fast'
-        })
-
-        # 2. HVP (High Volume Pivots)
-        hvp_bullish, hvp_bearish, pivot_highs, pivot_lows = self.calculate_hvp(df)
-        if hvp_bullish:
-            hvp_bias = "BULLISH"
-            hvp_score = 100
-            hvp_value = f"Bull Signal (Lows: {pivot_lows}, Highs: {pivot_highs})"
-        elif hvp_bearish:
-            hvp_bias = "BEARISH"
-            hvp_score = -100
-            hvp_value = f"Bear Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
-        else:
-            hvp_bias = "NEUTRAL"
-            hvp_score = 0
-            hvp_value = f"No Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
-
-        bias_results.append({
-            'indicator': 'HVP (High Volume Pivots)',
-            'value': hvp_value,
-            'bias': hvp_bias,
-            'score': hvp_score,
-            'weight': 1.0,
-            'category': 'fast'
-        })
-
-        # 3. VOB (Volume Order Blocks)
-        vob_bullish, vob_bearish, vob_ema5, vob_ema18 = self.calculate_vob(df)
-        if vob_bullish:
-            vob_bias = "BULLISH"
-            vob_score = 100
-            vob_value = f"Bull Cross (EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f})"
-        elif vob_bearish:
-            vob_bias = "BEARISH"
-            vob_score = -100
-            vob_value = f"Bear Cross (EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f})"
-        else:
-            vob_bias = "NEUTRAL"
-            vob_score = 0
-            if vob_ema5 > vob_ema18:
-                vob_value = f"EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f} (No Cross)"
-            else:
-                vob_value = f"EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f} (No Cross)"
-
-        bias_results.append({
-            'indicator': 'VOB (Volume Order Blocks)',
-            'value': vob_value,
-            'bias': vob_bias,
-            'score': vob_score,
-            'weight': 1.0,
-            'category': 'fast'
-        })
-
-        # 4. ORDER BLOCKS (EMA Crossover)
-        ema5 = self.calculate_ema(df['Close'], 5)
-        ema18 = self.calculate_ema(df['Close'], 18)
-        cross_up = (ema5.iloc[-2] <= ema18.iloc[-2]) and (ema5.iloc[-1] > ema18.iloc[-1])
-        cross_dn = (ema5.iloc[-2] >= ema18.iloc[-2]) and (ema5.iloc[-1] < ema18.iloc[-1])
-
-        if cross_up:
-            ob_bias = "BULLISH"
-            ob_score = 100
-        elif cross_dn:
-            ob_bias = "BEARISH"
-            ob_score = -100
-        else:
-            ob_bias = "NEUTRAL"
-            ob_score = 0
-
-        bias_results.append({
-            'indicator': 'Order Blocks (EMA 5/18)',
-            'value': f"EMA5: {ema5.iloc[-1]:.2f} | EMA18: {ema18.iloc[-1]:.2f}",
-            'bias': ob_bias,
-            'score': ob_score,
-            'weight': 1.0,
-            'category': 'fast'
-        })
-
-        # 5. RSI
-        rsi = self.calculate_rsi(df['Close'], self.config['rsi_period'])
-        rsi_value = rsi.iloc[-1]
-        if rsi_value > 50:
-            rsi_bias = "BULLISH"
-            rsi_score = 100
-        else:
-            rsi_bias = "BEARISH"
-            rsi_score = -100
-
-        bias_results.append({
-            'indicator': 'RSI',
-            'value': f"{rsi_value:.2f}",
-            'bias': rsi_bias,
-            'score': rsi_score,
-            'weight': 1.0,
-            'category': 'fast'
-        })
-
-        # 6. DMI
-        plus_di, minus_di, adx = self.calculate_dmi(df, self.config['dmi_period'], self.config['dmi_smoothing'])
-        plus_di_value = plus_di.iloc[-1]
-        minus_di_value = minus_di.iloc[-1]
-        if plus_di_value > minus_di_value:
-            dmi_bias = "BULLISH"
-            dmi_score = 100
-        else:
-            dmi_bias = "BEARISH"
-            dmi_score = -100
-
-        bias_results.append({
-            'indicator': 'DMI',
-            'value': f"+DI:{plus_di_value:.1f} -DI:{minus_di_value:.1f}",
-            'bias': dmi_bias,
-            'score': dmi_score,
-            'weight': 1.0,
-            'category': 'fast'
-        })
-
-        # 7. VIDYA
-        vidya_val, vidya_bullish, vidya_bearish = self.calculate_vidya(df)
-        if vidya_bullish:
-            vidya_bias = "BULLISH"
-            vidya_score = 100
-        elif vidya_bearish:
-            vidya_bias = "BEARISH"
-            vidya_score = -100
-        else:
-            vidya_bias = "NEUTRAL"
-            vidya_score = 0
-
-        bias_results.append({
-            'indicator': 'VIDYA',
-            'value': f"{vidya_val.iloc[-1]:.2f}" if not vidya_val.empty else "N/A",
-            'bias': vidya_bias,
-            'score': vidya_score,
-            'weight': 1.0,
-            'category': 'fast'
-        })
-
-        # 8. MFI
-        mfi = self.calculate_mfi(df, self.config['mfi_period'])
-        mfi_value = mfi.iloc[-1]
-        if np.isnan(mfi_value):
-            mfi_value = 50.0
-
-        if mfi_value > 50:
-            mfi_bias = "BULLISH"
-            mfi_score = 100
-        else:
-            mfi_bias = "BEARISH"
-            mfi_score = -100
-
-        bias_results.append({
-            'indicator': 'MFI (Money Flow)',
-            'value': f"{mfi_value:.2f}",
-            'bias': mfi_bias,
-            'score': mfi_score,
-            'weight': 1.0,
-            'category': 'fast'
-        })
-
-        # Calculate overall bias
-        fast_bull = 0
-        fast_bear = 0
-        fast_total = 0
-
-        medium_bull = 0
-        medium_bear = 0
-        medium_total = 0
-
-        slow_bull = 0
-        slow_bear = 0
-        slow_total = 0
-
-        bullish_count = 0
-        bearish_count = 0
-        neutral_count = 0
-
-        for bias in bias_results:
-            if 'BULLISH' in bias['bias']:
-                bullish_count += 1
-                if bias['category'] == 'fast':
-                    fast_bull += 1
-            elif 'BEARISH' in bias['bias']:
-                bearish_count += 1
-                if bias['category'] == 'fast':
-                    fast_bear += 1
-            else:
-                neutral_count += 1
-
-            if bias['category'] == 'fast':
-                fast_total += 1
-
-        # Calculate percentages
-        fast_bull_pct = (fast_bull / fast_total) * 100 if fast_total > 0 else 0
-        fast_bear_pct = (fast_bear / fast_total) * 100 if fast_total > 0 else 0
-
-        # Adaptive weighting
-        divergence_threshold = self.config['divergence_threshold']
-        bullish_divergence = False  # Simplified for this implementation
-        bearish_divergence = False
-        divergence_detected = bullish_divergence or bearish_divergence
-
-        if divergence_detected:
-            fast_weight = self.config['reversal_fast_weight']
-            mode = "REVERSAL"
-        else:
-            fast_weight = self.config['normal_fast_weight']
-            mode = "NORMAL"
-
-        # Calculate weighted scores
-        bullish_signals = fast_bull * fast_weight
-        bearish_signals = fast_bear * fast_weight
-        total_signals = fast_total * fast_weight
-
-        bullish_bias_pct = (bullish_signals / total_signals) * 100 if total_signals > 0 else 0
-        bearish_bias_pct = (bearish_signals / total_signals) * 100 if total_signals > 0 else 0
-
-        # Determine overall bias
-        bias_strength = self.config['bias_strength']
-
-        if bullish_bias_pct >= bias_strength:
-            overall_bias = "BULLISH"
-            overall_score = bullish_bias_pct
-            overall_confidence = min(100, bullish_bias_pct)
-        elif bearish_bias_pct >= bias_strength:
-            overall_bias = "BEARISH"
-            overall_score = -bearish_bias_pct
-            overall_confidence = min(100, bearish_bias_pct)
-        else:
-            overall_bias = "NEUTRAL"
-            overall_score = 0
-            overall_confidence = 100 - max(bullish_bias_pct, bearish_bias_pct)
-
-        return {
-            'success': True,
-            'symbol': symbol,
-            'current_price': current_price,
-            'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')),
-            'bias_results': bias_results,
-            'overall_bias': overall_bias,
-            'overall_score': overall_score,
-            'overall_confidence': overall_confidence,
-            'bullish_count': bullish_count,
-            'bearish_count': bearish_count,
-            'neutral_count': neutral_count,
-            'total_indicators': len(bias_results),
-            'stock_data': stock_data,
-            'mode': mode,
-            'fast_bull_pct': fast_bull_pct,
-            'fast_bear_pct': fast_bear_pct,
-            'bullish_bias_pct': bullish_bias_pct,
-            'bearish_bias_pct': bearish_bias_pct
-        }
 
 # =============================================
 # TRADING SIGNAL MANAGER WITH COOLDOWN
@@ -1719,15 +1732,14 @@ class EnhancedNiftyApp:
     def setup_secrets(self):
         """Setup API credentials from Streamlit secrets"""
         try:
-            self.dhan_token = st.secrets["dhan"]["access_token"]
-            self.dhan_client_id = st.secrets["dhan"]["client_id"]
-            self.supabase_url = st.secrets["supabase"]["url"]
-            self.supabase_key = st.secrets["supabase"]["anon_key"]
+            self.dhan_token = st.secrets.get("dhan", {}).get("access_token", "demo_token")
+            self.dhan_client_id = st.secrets.get("dhan", {}).get("client_id", "demo_client")
+            self.supabase_url = st.secrets.get("supabase", {}).get("url", "")
+            self.supabase_key = st.secrets.get("supabase", {}).get("anon_key", "")
             self.telegram_bot_token = st.secrets.get("telegram", {}).get("bot_token", "")
             self.telegram_chat_id = st.secrets.get("telegram", {}).get("chat_id", "")
-        except KeyError as e:
-            st.error(f"Missing secret: {e}")
-            st.stop()
+        except Exception as e:
+            st.warning(f"Secrets setup warning: {e}")
     
     def setup_supabase(self):
         """Initialize Supabase client"""
@@ -2327,7 +2339,7 @@ Watch for breakout/breakdown confirmation!"""
             st.info("👆 Options data will auto-refresh. Click 'Force Refresh' to load immediately.")
 
     def display_comprehensive_bias_analysis(self):
-        """Display comprehensive bias analysis from BiasAnalysisPro"""
+        """Display comprehensive bias analysis from BiasAnalysisPro with enhanced error handling"""
         st.header("🎯 Comprehensive Technical Bias Analysis")
         
         col1, col2 = st.columns([3, 1])
@@ -2336,27 +2348,98 @@ Watch for breakout/breakdown confirmation!"""
         with col2:
             if st.button("🔄 Update Bias Analysis", type="primary"):
                 with st.spinner("Running comprehensive bias analysis..."):
-                    bias_data = self.bias_analyzer.analyze_all_bias_indicators("^NSEI")
-                    st.session_state.comprehensive_bias_data = bias_data
-                    st.session_state.last_comprehensive_bias_update = datetime.now(self.ist)
-                    st.success("Bias analysis updated!")
+                    try:
+                        bias_data = self.bias_analyzer.analyze_all_bias_indicators("^NSEI")
+                        st.session_state.comprehensive_bias_data = bias_data
+                        st.session_state.last_comprehensive_bias_update = datetime.now(self.ist)
+                        if bias_data['success']:
+                            st.success("Bias analysis completed successfully!")
+                        else:
+                            st.error(f"Bias analysis failed: {bias_data['error']}")
+                    except Exception as e:
+                        st.error(f"Error during bias analysis: {str(e)}")
         
         st.divider()
+        
+        # Display last update time
+        if st.session_state.last_comprehensive_bias_update:
+            st.write(f"Last analysis: {st.session_state.last_comprehensive_bias_update.strftime('%H:%M:%S')} IST")
         
         if st.session_state.comprehensive_bias_data:
             bias_data = st.session_state.comprehensive_bias_data
             
             if not bias_data['success']:
-                st.error(f"Bias analysis failed: {bias_data['error']}")
+                st.error(f"❌ Bias analysis failed: {bias_data['error']}")
+                
+                # Provide alternative data source options
+                st.info("💡 **Troubleshooting Tips:**")
+                st.write("""
+                1. Try using a different symbol (e.g., 'NSEI' instead of '^NSEI')
+                2. Check your internet connection
+                3. Try again in a few minutes as Yahoo Finance might be temporarily unavailable
+                4. Use the Options Chain analysis below which uses NSE data directly
+                """)
+                
+                # Fallback to manual input for testing
+                with st.expander("🛠️ Manual Data Input (Testing)"):
+                    st.warning("Use this for testing when Yahoo Finance is unavailable")
+                    manual_bias = st.selectbox("Manual Bias", ["BULLISH", "BEARISH", "NEUTRAL"])
+                    manual_score = st.slider("Manual Score", -100, 100, 0)
+                    
+                    if st.button("Apply Manual Data"):
+                        st.session_state.comprehensive_bias_data = {
+                            'success': True,
+                            'overall_bias': manual_bias,
+                            'overall_score': manual_score,
+                            'overall_confidence': 75,
+                            'current_price': 22000,
+                            'bias_results': [
+                                {'indicator': 'RSI', 'value': '55.0', 'bias': manual_bias, 'score': manual_score},
+                                {'indicator': 'Volume Delta', 'value': '1000', 'bias': manual_bias, 'score': manual_score},
+                                {'indicator': 'DMI', 'value': '+DI:25 -DI:20', 'bias': manual_bias, 'score': manual_score},
+                            ],
+                            'bullish_count': 3 if manual_bias == "BULLISH" else 0,
+                            'bearish_count': 3 if manual_bias == "BEARISH" else 0,
+                            'neutral_count': 3 if manual_bias == "NEUTRAL" else 0,
+                            'total_indicators': 3
+                        }
+                        st.rerun()
+                
                 return
             
             # Overall bias summary
+            st.subheader("📊 Overall Market Bias")
+            
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 bias_color = "🟢" if bias_data['overall_bias'] == "BULLISH" else "🔴" if bias_data['overall_bias'] == "BEARISH" else "🟡"
-                st.metric("Overall Bias", f"{bias_color} {bias_data['overall_bias']}")
+                st.metric(
+                    "Overall Bias", 
+                    f"{bias_color} {bias_data['overall_bias']}",
+                    delta=f"Score: {bias_data['overall_score']:.1f}"
+                )
             with col2:
-                st.metric("Bias Score", f"{bias_data['overall_score']:.1f}")
+                # Create a gauge chart for bias score
+                fig = go.Figure(go.Indicator(
+                    mode = "gauge+number+delta",
+                    value = bias_data['overall_score'],
+                    domain = {'x': [0, 1], 'y': [0, 1]},
+                    title = {'text': "Bias Score"},
+                    gauge = {
+                        'axis': {'range': [-100, 100]},
+                        'bar': {'color': "darkblue"},
+                        'steps': [
+                            {'range': [-100, -50], 'color': "lightcoral"},
+                            {'range': [-50, 0], 'color': "lightyellow"},
+                            {'range': [0, 50], 'color': "lightgreen"},
+                            {'range': [50, 100], 'color': "limegreen"}],
+                        'threshold': {
+                            'line': {'color': "red", 'width': 4},
+                            'thickness': 0.75,
+                            'value': bias_data['overall_score']}}
+                ))
+                fig.update_layout(height=200, margin=dict(l=10, r=10, t=50, b=10))
+                st.plotly_chart(fig, use_container_width=True)
             with col3:
                 st.metric("Confidence", f"{bias_data['overall_confidence']:.1f}%")
             with col4:
@@ -2364,66 +2447,324 @@ Watch for breakout/breakdown confirmation!"""
             
             st.divider()
             
-            # Detailed bias indicators
-            st.subheader("📊 Detailed Bias Indicators")
+            # Detailed bias indicators in a table
+            st.subheader("📈 Detailed Technical Indicators")
             
-            # Create columns for better layout
-            cols = st.columns(2)
-            current_col = 0
+            # Convert bias results to DataFrame for better display
+            bias_df = pd.DataFrame(bias_data['bias_results'])
             
-            for i, bias in enumerate(bias_data['bias_results']):
-                with cols[current_col]:
-                    with st.container():
-                        # Color code based on bias
-                        if bias['bias'] == "BULLISH":
-                            st.success(f"**{bias['indicator']}**")
-                            st.write(f"Value: {bias['value']}")
-                            st.write(f"Bias: 🟢 {bias['bias']}")
-                        elif bias['bias'] == "BEARISH":
-                            st.error(f"**{bias['indicator']}**")
-                            st.write(f"Value: {bias['value']}")
-                            st.write(f"Bias: 🔴 {bias['bias']}")
-                        else:
-                            st.warning(f"**{bias['indicator']}**")
-                            st.write(f"Value: {bias['value']}")
-                            st.write(f"Bias: 🟡 {bias['bias']}")
-                        
-                        st.progress(abs(bias['score']) / 100)
+            # Add color coding
+            def style_bias(val):
+                if val == 'BULLISH':
+                    return 'color: green; font-weight: bold'
+                elif val == 'BEARISH':
+                    return 'color: red; font-weight: bold'
+                else:
+                    return 'color: orange; font-weight: bold'
+            
+            # Display as styled table
+            styled_df = bias_df[['indicator', 'value', 'bias', 'score']].style.applymap(
+                style_bias, subset=['bias']
+            )
+            
+            st.dataframe(styled_df, use_container_width=True)
+            
+            # Visual representation
+            st.subheader("📊 Bias Distribution")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Pie chart of bias distribution
+                bias_counts = {
+                    'Bullish': bias_data['bullish_count'],
+                    'Bearish': bias_data['bearish_count'], 
+                    'Neutral': bias_data['neutral_count']
+                }
                 
-                current_col = (current_col + 1) % 2
+                fig_pie = px.pie(
+                    values=list(bias_counts.values()),
+                    names=list(bias_counts.keys()),
+                    title="Bias Distribution",
+                    color=list(bias_counts.keys()),
+                    color_discrete_map={
+                        'Bullish': 'green',
+                        'Bearish': 'red',
+                        'Neutral': 'orange'
+                    }
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+            with col2:
+                # Bar chart of indicator scores
+                fig_bar = px.bar(
+                    bias_df,
+                    x='indicator',
+                    y='score',
+                    color='bias',
+                    title="Indicator Scores",
+                    color_discrete_map={
+                        'BULLISH': 'green',
+                        'BEARISH': 'red', 
+                        'NEUTRAL': 'orange'
+                    }
+                )
+                fig_bar.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_bar, use_container_width=True)
             
             st.divider()
             
-            # Statistics
-            col1, col2, col3 = st.columns(3)
+            # Advanced metrics
+            st.subheader("🔍 Advanced Analysis Metrics")
+            
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Bullish Indicators", bias_data['bullish_count'])
             with col2:
                 st.metric("Bearish Indicators", bias_data['bearish_count'])
             with col3:
                 st.metric("Neutral Indicators", bias_data['neutral_count'])
-            
-            # Mode and percentages
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Analysis Mode", bias_data['mode'])
-            with col2:
+            with col4:
                 st.metric("Total Indicators", bias_data['total_indicators'])
             
-            # Additional metrics
-            st.subheader("📈 Advanced Metrics")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Fast Bull %", f"{bias_data['fast_bull_pct']:.1f}%")
-            with col2:
-                st.metric("Fast Bear %", f"{bias_data['fast_bear_pct']:.1f}%")
-            with col3:
-                st.metric("Bullish Bias %", f"{bias_data['bullish_bias_pct']:.1f}%")
-            with col4:
-                st.metric("Bearish Bias %", f"{bias_data['bearish_bias_pct']:.1f}%")
+            # Additional metrics if available
+            if 'fast_bull_pct' in bias_data:
+                st.subheader("📈 Weighted Analysis")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Fast Bull %", f"{bias_data['fast_bull_pct']:.1f}%")
+                with col2:
+                    st.metric("Fast Bear %", f"{bias_data['fast_bear_pct']:.1f}%")
+                with col3:
+                    st.metric("Bullish Bias %", f"{bias_data['bullish_bias_pct']:.1f}%")
+                with col4:
+                    st.metric("Bearish Bias %", f"{bias_data['bearish_bias_pct']:.1f}%")
+            
+            # Trading recommendation based on bias
+            st.divider()
+            st.subheader("💡 Trading Recommendation")
+            
+            bias_strength = abs(bias_data['overall_score'])
+            overall_bias = bias_data['overall_bias']
+            confidence = bias_data['overall_confidence']
+            
+            if overall_bias == "BULLISH" and bias_strength > 60 and confidence > 70:
+                st.success("""
+                **🎯 STRONG BULLISH SIGNAL - HIGH CONFIDENCE**
+                
+                **Recommended Action:** Consider LONG positions
+                **Strategy:** Look for buying opportunities on dips
+                **Risk Management:** Use tight stop losses
+                **Target:** Expect upward momentum to continue
+                """)
+            elif overall_bias == "BULLISH":
+                st.info("""
+                **📈 BULLISH BIAS - MODERATE CONFIDENCE**
+                
+                **Recommended Action:** Cautious LONG positions
+                **Strategy:** Wait for confirmations before entering
+                **Risk Management:** Use proper position sizing
+                """)
+            elif overall_bias == "BEARISH" and bias_strength > 60 and confidence > 70:
+                st.error("""
+                **🎯 STRONG BEARISH SIGNAL - HIGH CONFIDENCE**
+                
+                **Recommended Action:** Consider SHORT positions  
+                **Strategy:** Look for selling opportunities on rallies
+                **Risk Management:** Use tight stop losses
+                **Target:** Expect downward momentum to continue
+                """)
+            elif overall_bias == "BEARISH":
+                st.warning("""
+                **📉 BEARISH BIAS - MODERATE CONFIDENCE**
+                
+                **Recommended Action:** Cautious SHORT positions
+                **Strategy:** Wait for confirmations before entering
+                **Risk Management:** Use proper position sizing
+                """)
+            else:
+                st.warning("""
+                **⚖️ NEUTRAL/UNCLEAR BIAS**
+                
+                **Recommended Action:** Wait for clearer direction
+                **Strategy:** Consider range-bound strategies
+                **Risk Management:** Reduce position sizes
+                **Advice:** Monitor for breakout signals
+                """)
         
         else:
             st.info("👆 Click 'Update Bias Analysis' to run comprehensive technical analysis")
+            st.write("This analysis uses 8 technical indicators to determine market bias:")
+            st.write("""
+            - **Volume Delta** - Buying vs Selling pressure
+            - **HVP** - High Volume Pivots  
+            - **VOB** - Volume Order Blocks
+            - **Order Blocks** - EMA crossover signals
+            - **RSI** - Momentum indicator
+            - **DMI** - Directional Movement Index
+            - **VIDYA** - Variable Index Dynamic Average
+            - **MFI** - Money Flow Index
+            """)
+
+    def display_option_chain_bias_tabulation(self):
+        """Display all option chain bias data in comprehensive tabulation"""
+        st.header("📋 Comprehensive Option Chain Bias Data")
+        
+        if not st.session_state.market_bias_data:
+            st.info("No option chain data available. Please refresh options analysis first.")
+            return
+        
+        for instrument_data in st.session_state.market_bias_data:
+            with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True):
+                
+                # Basic Information Table
+                st.subheader("📊 Basic Information")
+                basic_info = pd.DataFrame({
+                    'Metric': [
+                        'Instrument', 'Spot Price', 'ATM Strike', 'Overall Bias', 
+                        'Bias Score', 'PCR OI', 'PCR Change OI'
+                    ],
+                    'Value': [
+                        instrument_data['instrument'],
+                        f"₹{instrument_data['spot_price']:.2f}",
+                        f"₹{instrument_data['atm_strike']:.2f}",
+                        instrument_data['overall_bias'],
+                        f"{instrument_data['bias_score']:.2f}",
+                        f"{instrument_data['pcr_oi']:.2f}",
+                        f"{instrument_data['pcr_change']:.2f}"
+                    ]
+                })
+                st.dataframe(basic_info, use_container_width=True, hide_index=True)
+                
+                # Detailed ATM Bias Table
+                if 'detailed_atm_bias' in instrument_data and instrument_data['detailed_atm_bias']:
+                    st.subheader("🔍 Detailed ATM Bias Analysis")
+                    detailed_bias = instrument_data['detailed_atm_bias']
+                    
+                    # Create comprehensive table for detailed bias
+                    bias_metrics = []
+                    bias_values = []
+                    bias_signals = []
+                    
+                    for key, value in detailed_bias.items():
+                        if key not in ['Strike', 'Zone', 'CE_OI', 'PE_OI', 'CE_Change', 'PE_Change', 
+                                     'CE_Volume', 'PE_Volume', 'CE_Price', 'PE_Price', 'CE_IV', 'PE_IV',
+                                     'Delta_CE', 'Delta_PE', 'Gamma_CE', 'Gamma_PE']:
+                            bias_metrics.append(key.replace('_', ' ').title())
+                            bias_values.append(str(value))
+                            
+                            # Determine signal strength
+                            if 'Bullish' in str(value):
+                                bias_signals.append('🟢 Bullish')
+                            elif 'Bearish' in str(value):
+                                bias_signals.append('🔴 Bearish')
+                            else:
+                                bias_signals.append('🟡 Neutral')
+                    
+                    detailed_df = pd.DataFrame({
+                        'Metric': bias_metrics,
+                        'Value': bias_values,
+                        'Signal': bias_signals
+                    })
+                    st.dataframe(detailed_df, use_container_width=True, hide_index=True)
+                    
+                    # Raw values table
+                    st.subheader("📈 Raw Option Data")
+                    raw_data = []
+                    if 'CE_OI' in detailed_bias:
+                        raw_data.append(['Call OI', f"{detailed_bias['CE_OI']:,.0f}"])
+                        raw_data.append(['Put OI', f"{detailed_bias['PE_OI']:,.0f}"])
+                        raw_data.append(['Call OI Change', f"{detailed_bias['CE_Change']:,.0f}"])
+                        raw_data.append(['Put OI Change', f"{detailed_bias['PE_Change']:,.0f}"])
+                        raw_data.append(['Call Volume', f"{detailed_bias['CE_Volume']:,.0f}"])
+                        raw_data.append(['Put Volume', f"{detailed_bias['PE_Volume']:,.0f}"])
+                        raw_data.append(['Call Price', f"₹{detailed_bias['CE_Price']:.2f}"])
+                        raw_data.append(['Put Price', f"₹{detailed_bias['PE_Price']:.2f}"])
+                        raw_data.append(['Call IV', f"{detailed_bias['CE_IV']:.2f}%"])
+                        raw_data.append(['Put IV', f"{detailed_bias['PE_IV']:.2f}%"])
+                        raw_data.append(['Call Delta', f"{detailed_bias['Delta_CE']:.4f}"])
+                        raw_data.append(['Put Delta', f"{detailed_bias['Delta_PE']:.4f}"])
+                        raw_data.append(['Call Gamma', f"{detailed_bias['Gamma_CE']:.4f}"])
+                        raw_data.append(['Put Gamma', f"{detailed_bias['Gamma_PE']:.4f}"])
+                    
+                    raw_df = pd.DataFrame(raw_data, columns=['Parameter', 'Value'])
+                    st.dataframe(raw_df, use_container_width=True, hide_index=True)
+                
+                # Comprehensive Metrics Table
+                if 'comprehensive_metrics' in instrument_data and instrument_data['comprehensive_metrics']:
+                    st.subheader("🎯 Advanced Option Metrics")
+                    comp_metrics = instrument_data['comprehensive_metrics']
+                    
+                    comp_data = []
+                    for key, value in comp_metrics.items():
+                        if key not in ['total_vega', 'total_ce_vega_exp', 'total_pe_vega_exp']:
+                            comp_data.append([
+                                key.replace('_', ' ').title(),
+                                str(value) if not isinstance(value, (int, float)) else f"{value:.2f}"
+                            ])
+                    
+                    comp_df = pd.DataFrame(comp_data, columns=['Metric', 'Value'])
+                    st.dataframe(comp_df, use_container_width=True, hide_index=True)
+                
+                # Visual Analysis
+                st.subheader("📊 Visual Bias Analysis")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Bias Score Gauge
+                    fig = go.Figure(go.Indicator(
+                        mode = "gauge+number+delta",
+                        value = instrument_data['bias_score'],
+                        domain = {'x': [0, 1], 'y': [0, 1]},
+                        title = {'text': f"{instrument_data['instrument']} Bias Score"},
+                        gauge = {
+                            'axis': {'range': [-10, 10]},
+                            'bar': {'color': "darkblue"},
+                            'steps': [
+                                {'range': [-10, -4], 'color': "lightcoral"},
+                                {'range': [-4, -2], 'color': "lightyellow"},
+                                {'range': [-2, 2], 'color': "lightgray"},
+                                {'range': [2, 4], 'color': "lightgreen"},
+                                {'range': [4, 10], 'color': "limegreen"}],
+                            'threshold': {
+                                'line': {'color': "red", 'width': 4},
+                                'thickness': 0.75,
+                                'value': instrument_data['bias_score']}}
+                    ))
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # PCR Analysis
+                    pcr_data = {
+                        'Metric': ['PCR OI', 'PCR Change OI'],
+                        'Value': [instrument_data['pcr_oi'], instrument_data['pcr_change']],
+                        'Interpretation': [
+                            'Bullish' if instrument_data['pcr_oi'] > 1.0 else 'Bearish',
+                            'Bullish' if instrument_data['pcr_change'] > 1.0 else 'Bearish'
+                        ]
+                    }
+                    pcr_df = pd.DataFrame(pcr_data)
+                    st.dataframe(pcr_df, use_container_width=True, hide_index=True)
+                
+                # Trading Levels
+                if 'comprehensive_metrics' in instrument_data:
+                    comp_metrics = instrument_data['comprehensive_metrics']
+                    st.subheader("🎯 Key Trading Levels")
+                    
+                    levels_data = []
+                    if 'call_resistance' in comp_metrics and comp_metrics['call_resistance']:
+                        levels_data.append(['Call Resistance', f"₹{comp_metrics['call_resistance']:.0f}"])
+                    if 'put_support' in comp_metrics and comp_metrics['put_support']:
+                        levels_data.append(['Put Support', f"₹{comp_metrics['put_support']:.0f}"])
+                    if 'max_pain_strike' in comp_metrics and comp_metrics['max_pain_strike']:
+                        levels_data.append(['Max Pain', f"₹{comp_metrics['max_pain_strike']:.0f}"])
+                    
+                    levels_data.append(['Current Spot', f"₹{instrument_data['spot_price']:.0f}"])
+                    
+                    levels_df = pd.DataFrame(levels_data, columns=['Level', 'Price'])
+                    st.dataframe(levels_df, use_container_width=True, hide_index=True)
 
     def create_comprehensive_chart(self, df: pd.DataFrame, bullish_blocks: List[Dict[str, Any]], bearish_blocks: List[Dict[str, Any]], interval: str) -> Optional[go.Figure]:
         """Create comprehensive chart with Volume Order Blocks"""
@@ -2556,7 +2897,10 @@ Watch for breakout/breakdown confirmation!"""
         self.alert_manager.cooldown_minutes = cooldown_minutes
         
         # Main content - Tabs
-        tab1, tab2, tab3, tab4 = st.tabs(["📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", "🚀 Trading Signals"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", 
+            "📋 Bias Tabulation", "🚀 Trading Signals"
+        ])
         
         with tab1:
             # Price Analysis Tab
@@ -2676,6 +3020,10 @@ Watch for breakout/breakdown confirmation!"""
             self.display_comprehensive_bias_analysis()
         
         with tab4:
+            # New comprehensive bias tabulation
+            self.display_option_chain_bias_tabulation()
+        
+        with tab5:
             # Trading Signals Tab
             st.header("🚀 Automated Trading Signals")
             
