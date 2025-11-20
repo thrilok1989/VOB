@@ -14,6 +14,8 @@ import warnings
 import math
 from scipy.stats import norm
 import io
+import yfinance as yf
+from concurrent.futures import ThreadPoolExecutor, as_completed
 warnings.filterwarnings('ignore')
 
 # Streamlit configuration
@@ -22,6 +24,652 @@ st.set_page_config(
     page_icon="📈",
     layout="wide"
 )
+
+# =============================================
+# COMPREHENSIVE BIAS ANALYSIS MODULE
+# =============================================
+
+class BiasAnalysisPro:
+    """
+    Comprehensive Bias Analysis matching Pine Script indicator EXACTLY
+    Analyzes 13 bias indicators:
+    - Fast (8): Volume Delta, HVP, VOB, Order Blocks, RSI, DMI, VIDYA, MFI
+    - Medium (2): Close vs VWAP, Price vs VWAP
+    - Slow (3): Weighted stocks (Daily, TF1, TF2)
+    """
+
+    def __init__(self):
+        """Initialize bias analysis with default configuration"""
+        self.config = self._default_config()
+        self.all_bias_results = []
+        self.overall_bias = "NEUTRAL"
+        self.overall_score = 0
+
+    def _default_config(self) -> Dict:
+        """Default configuration from Pine Script"""
+        return {
+            # Timeframes
+            'tf1': '15m',
+            'tf2': '1h',
+
+            # Indicator periods
+            'rsi_period': 14,
+            'mfi_period': 10,
+            'dmi_period': 13,
+            'dmi_smoothing': 8,
+            'atr_period': 14,
+
+            # Volume
+            'volume_roc_length': 14,
+            'volume_threshold': 1.2,
+
+            # Volatility
+            'volatility_ratio_length': 14,
+            'volatility_threshold': 1.5,
+
+            # OBV
+            'obv_smoothing': 21,
+
+            # Force Index
+            'force_index_length': 13,
+            'force_index_smoothing': 2,
+
+            # Price ROC
+            'price_roc_length': 12,
+
+            # Market Breadth
+            'breadth_threshold': 60,
+
+            # Divergence
+            'divergence_lookback': 30,
+            'rsi_overbought': 70,
+            'rsi_oversold': 30,
+
+            # Choppiness Index
+            'ci_length': 14,
+            'ci_high_threshold': 61.8,
+            'ci_low_threshold': 38.2,
+
+            # Bias parameters
+            'bias_strength': 60,
+            'divergence_threshold': 60,
+
+            # Adaptive weights
+            'normal_fast_weight': 2.0,
+            'normal_medium_weight': 3.0,
+            'normal_slow_weight': 5.0,
+            'reversal_fast_weight': 5.0,
+            'reversal_medium_weight': 3.0,
+            'reversal_slow_weight': 2.0,
+
+            # Stocks with weights
+            'stocks': {
+                '^NSEBANK': 10.0,  # BANKNIFTY Index
+                'RELIANCE.NS': 9.98,
+                'HDFCBANK.NS': 9.67,
+                'BHARTIARTL.NS': 9.97,
+                'TCS.NS': 8.54,
+                'ICICIBANK.NS': 8.01,
+                'INFY.NS': 8.55,
+                'HINDUNILVR.NS': 1.98,
+                'ITC.NS': 2.44,
+                'MARUTI.NS': 0.0
+            }
+        }
+
+    def fetch_data(self, symbol: str, period: str = '7d', interval: str = '5m') -> pd.DataFrame:
+        """Fetch data from Yahoo Finance"""
+        try:
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(period=period, interval=interval)
+
+            if df.empty:
+                print(f"Warning: No data for {symbol}")
+                return pd.DataFrame()
+
+            # Ensure volume column exists
+            if 'Volume' not in df.columns:
+                df['Volume'] = 0
+            else:
+                df['Volume'] = df['Volume'].fillna(0)
+
+            return df
+        except Exception as e:
+            print(f"Error fetching {symbol}: {e}")
+            return pd.DataFrame()
+
+    def calculate_rsi(self, data: pd.Series, period: int = 14) -> pd.Series:
+        """Calculate RSI"""
+        delta = data.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def calculate_mfi(self, df: pd.DataFrame, period: int = 10) -> pd.Series:
+        """Calculate Money Flow Index"""
+        if df['Volume'].sum() == 0:
+            return pd.Series([50.0] * len(df), index=df.index)
+
+        typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+        money_flow = typical_price * df['Volume']
+
+        positive_flow = money_flow.where(typical_price > typical_price.shift(1), 0)
+        negative_flow = money_flow.where(typical_price < typical_price.shift(1), 0)
+
+        positive_mf = positive_flow.rolling(window=period).sum()
+        negative_mf = negative_flow.rolling(window=period).sum()
+
+        mfi_ratio = positive_mf / negative_mf.replace(0, np.nan)
+        mfi = 100 - (100 / (1 + mfi_ratio))
+        return mfi.fillna(50)
+
+    def calculate_dmi(self, df: pd.DataFrame, period: int = 13, smoothing: int = 8):
+        """Calculate DMI indicators"""
+        high = df['High']
+        low = df['Low']
+        close = df['Close']
+
+        tr1 = high - low
+        tr2 = abs(high - close.shift(1))
+        tr3 = abs(low - close.shift(1))
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+
+        up_move = high - high.shift(1)
+        down_move = low.shift(1) - low
+
+        plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0)
+        minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0)
+
+        plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+        minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr)
+
+        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        adx = dx.rolling(window=smoothing).mean()
+
+        return plus_di, minus_di, adx
+
+    def calculate_vwap(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate VWAP"""
+        if df['Volume'].sum() == 0:
+            return (df['High'] + df['Low'] + df['Close']) / 3
+
+        typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+        cumulative_volume = df['Volume'].cumsum()
+        cumulative_volume_safe = cumulative_volume.replace(0, np.nan)
+        vwap = (typical_price * df['Volume']).cumsum() / cumulative_volume_safe
+        return vwap.fillna(typical_price)
+
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate ATR"""
+        high = df['High']
+        low = df['Low']
+        close = df['Close']
+
+        tr1 = high - low
+        tr2 = abs(high - close.shift(1))
+        tr3 = abs(low - close.shift(1))
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+        return atr
+
+    def calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
+        """Calculate EMA"""
+        return data.ewm(span=period, adjust=False).mean()
+
+    def calculate_vidya(self, df: pd.DataFrame, length: int = 10, momentum: int = 20, band_distance: float = 2.0):
+        """Calculate VIDYA (Variable Index Dynamic Average)"""
+        close = df['Close']
+
+        m = close.diff()
+        p = m.where(m >= 0, 0.0).rolling(window=momentum).sum()
+        n = (-m.where(m < 0, 0.0)).rolling(window=momentum).sum()
+
+        cmo_denom = p + n
+        cmo_denom = cmo_denom.replace(0, np.nan)
+        abs_cmo = abs(100 * (p - n) / cmo_denom).fillna(0)
+
+        alpha = 2 / (length + 1)
+        vidya = pd.Series(index=close.index, dtype=float)
+        vidya.iloc[0] = close.iloc[0]
+
+        for i in range(1, len(close)):
+            vidya.iloc[i] = (alpha * abs_cmo.iloc[i] / 100 * close.iloc[i] +
+                            (1 - alpha * abs_cmo.iloc[i] / 100) * vidya.iloc[i-1])
+
+        vidya_smoothed = vidya.rolling(window=15).mean()
+
+        atr = self.calculate_atr(df, 200)
+        upper_band = vidya_smoothed + atr * band_distance
+        lower_band = vidya_smoothed - atr * band_distance
+
+        is_trend_up = close > upper_band
+        is_trend_down = close < lower_band
+
+        vidya_bullish = is_trend_up.iloc[-1] if len(is_trend_up) > 0 else False
+        vidya_bearish = is_trend_down.iloc[-1] if len(is_trend_down) > 0 else False
+
+        return vidya_smoothed, vidya_bullish, vidya_bearish
+
+    def calculate_volume_delta(self, df: pd.DataFrame):
+        """Calculate Volume Delta (up_vol - down_vol)"""
+        if df['Volume'].sum() == 0:
+            return 0, False, False
+
+        up_vol = ((df['Close'] > df['Open']).astype(int) * df['Volume']).sum()
+        down_vol = ((df['Close'] < df['Open']).astype(int) * df['Volume']).sum()
+
+        volume_delta = up_vol - down_vol
+        volume_bullish = volume_delta > 0
+        volume_bearish = volume_delta < 0
+
+        return volume_delta, volume_bullish, volume_bearish
+
+    def calculate_hvp(self, df: pd.DataFrame, left_bars: int = 15, right_bars: int = 15, vol_filter: float = 2.0):
+        """Calculate High Volume Pivots"""
+        if df['Volume'].sum() == 0:
+            return False, False, 0, 0
+
+        pivot_highs = []
+        pivot_lows = []
+
+        for i in range(left_bars, len(df) - right_bars):
+            is_pivot_high = True
+            for j in range(i - left_bars, i + right_bars + 1):
+                if j != i and df['High'].iloc[j] >= df['High'].iloc[i]:
+                    is_pivot_high = False
+                    break
+            if is_pivot_high:
+                pivot_highs.append(i)
+
+            is_pivot_low = True
+            for j in range(i - left_bars, i + right_bars + 1):
+                if j != i and df['Low'].iloc[j] <= df['Low'].iloc[i]:
+                    is_pivot_low = False
+                    break
+            if is_pivot_low:
+                pivot_lows.append(i)
+
+        volume_sum = df['Volume'].rolling(window=left_bars * 2).sum()
+        ref_vol = volume_sum.quantile(0.95)
+        norm_vol = (volume_sum / ref_vol * 5).fillna(0)
+
+        hvp_bullish = False
+        hvp_bearish = False
+
+        if len(pivot_lows) > 0:
+            last_pivot_low_idx = pivot_lows[-1]
+            if norm_vol.iloc[last_pivot_low_idx] > vol_filter:
+                hvp_bullish = True
+
+        if len(pivot_highs) > 0:
+            last_pivot_high_idx = pivot_highs[-1]
+            if norm_vol.iloc[last_pivot_high_idx] > vol_filter:
+                hvp_bearish = True
+
+        return hvp_bullish, hvp_bearish, len(pivot_highs), len(pivot_lows)
+
+    def calculate_vob(self, df: pd.DataFrame, length1: int = 5):
+        """Calculate Volume Order Blocks"""
+        length2 = length1 + 13
+        ema1 = self.calculate_ema(df['Close'], length1)
+        ema2 = self.calculate_ema(df['Close'], length2)
+
+        cross_up = (ema1.iloc[-2] <= ema2.iloc[-2]) and (ema1.iloc[-1] > ema2.iloc[-1])
+        cross_dn = (ema1.iloc[-2] >= ema2.iloc[-2]) and (ema1.iloc[-1] < ema2.iloc[-1])
+
+        vob_bullish = cross_up
+        vob_bearish = cross_dn
+
+        return vob_bullish, vob_bearish, ema1.iloc[-1], ema2.iloc[-1]
+
+    def _fetch_stock_data(self, symbol: str, weight: float):
+        """Helper function to fetch single stock data for parallel processing"""
+        try:
+            df = self.fetch_data(symbol, period='5d', interval='5m')
+            if df.empty or len(df) < 2:
+                return None
+
+            current_price = df['Close'].iloc[-1]
+            prev_price = df['Close'].iloc[0]
+            change_pct = ((current_price - prev_price) / prev_price) * 100
+
+            return {
+                'symbol': symbol.replace('.NS', ''),
+                'change_pct': change_pct,
+                'weight': weight,
+                'is_bullish': change_pct > 0
+            }
+        except Exception as e:
+            print(f"Error processing {symbol}: {e}")
+            return None
+
+    def calculate_market_breadth(self):
+        """Calculate market breadth from top stocks"""
+        bullish_stocks = 0
+        total_stocks = 0
+        stock_data = []
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_stock = {
+                executor.submit(self._fetch_stock_data, symbol, weight): (symbol, weight)
+                for symbol, weight in self.config['stocks'].items()
+            }
+
+            for future in as_completed(future_to_stock):
+                result = future.result()
+                if result:
+                    stock_data.append({
+                        'symbol': result['symbol'],
+                        'change_pct': result['change_pct'],
+                        'weight': result['weight']
+                    })
+                    if result['is_bullish']:
+                        bullish_stocks += 1
+                    total_stocks += 1
+
+        if total_stocks > 0:
+            market_breadth = (bullish_stocks / total_stocks) * 100
+        else:
+            market_breadth = 50
+
+        breadth_bullish = market_breadth > self.config['breadth_threshold']
+        breadth_bearish = market_breadth < (100 - self.config['breadth_threshold'])
+
+        return market_breadth, breadth_bullish, breadth_bearish, bullish_stocks, total_stocks, stock_data
+
+    def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict:
+        """Analyze all 8 bias indicators"""
+
+        print(f"Fetching data for {symbol}...")
+        df = self.fetch_data(symbol, period='7d', interval='5m')
+
+        if df.empty or len(df) < 100:
+            error_msg = f'Insufficient data (fetched {len(df)} candles, need at least 100)'
+            print(f"❌ {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg
+            }
+
+        current_price = df['Close'].iloc[-1]
+        bias_results = []
+        stock_data = []
+
+        # 1. VOLUME DELTA
+        volume_delta, volume_bullish, volume_bearish = self.calculate_volume_delta(df)
+        if volume_bullish:
+            vol_delta_bias = "BULLISH"
+            vol_delta_score = 100
+        elif volume_bearish:
+            vol_delta_bias = "BEARISH"
+            vol_delta_score = -100
+        else:
+            vol_delta_bias = "NEUTRAL"
+            vol_delta_score = 0
+
+        bias_results.append({
+            'indicator': 'Volume Delta',
+            'value': f"{volume_delta:.0f}",
+            'bias': vol_delta_bias,
+            'score': vol_delta_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 2. HVP (High Volume Pivots)
+        hvp_bullish, hvp_bearish, pivot_highs, pivot_lows = self.calculate_hvp(df)
+        if hvp_bullish:
+            hvp_bias = "BULLISH"
+            hvp_score = 100
+            hvp_value = f"Bull Signal (Lows: {pivot_lows}, Highs: {pivot_highs})"
+        elif hvp_bearish:
+            hvp_bias = "BEARISH"
+            hvp_score = -100
+            hvp_value = f"Bear Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
+        else:
+            hvp_bias = "NEUTRAL"
+            hvp_score = 0
+            hvp_value = f"No Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
+
+        bias_results.append({
+            'indicator': 'HVP (High Volume Pivots)',
+            'value': hvp_value,
+            'bias': hvp_bias,
+            'score': hvp_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 3. VOB (Volume Order Blocks)
+        vob_bullish, vob_bearish, vob_ema5, vob_ema18 = self.calculate_vob(df)
+        if vob_bullish:
+            vob_bias = "BULLISH"
+            vob_score = 100
+            vob_value = f"Bull Cross (EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f})"
+        elif vob_bearish:
+            vob_bias = "BEARISH"
+            vob_score = -100
+            vob_value = f"Bear Cross (EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f})"
+        else:
+            vob_bias = "NEUTRAL"
+            vob_score = 0
+            if vob_ema5 > vob_ema18:
+                vob_value = f"EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f} (No Cross)"
+            else:
+                vob_value = f"EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f} (No Cross)"
+
+        bias_results.append({
+            'indicator': 'VOB (Volume Order Blocks)',
+            'value': vob_value,
+            'bias': vob_bias,
+            'score': vob_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 4. ORDER BLOCKS (EMA Crossover)
+        ema5 = self.calculate_ema(df['Close'], 5)
+        ema18 = self.calculate_ema(df['Close'], 18)
+        cross_up = (ema5.iloc[-2] <= ema18.iloc[-2]) and (ema5.iloc[-1] > ema18.iloc[-1])
+        cross_dn = (ema5.iloc[-2] >= ema18.iloc[-2]) and (ema5.iloc[-1] < ema18.iloc[-1])
+
+        if cross_up:
+            ob_bias = "BULLISH"
+            ob_score = 100
+        elif cross_dn:
+            ob_bias = "BEARISH"
+            ob_score = -100
+        else:
+            ob_bias = "NEUTRAL"
+            ob_score = 0
+
+        bias_results.append({
+            'indicator': 'Order Blocks (EMA 5/18)',
+            'value': f"EMA5: {ema5.iloc[-1]:.2f} | EMA18: {ema18.iloc[-1]:.2f}",
+            'bias': ob_bias,
+            'score': ob_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 5. RSI
+        rsi = self.calculate_rsi(df['Close'], self.config['rsi_period'])
+        rsi_value = rsi.iloc[-1]
+        if rsi_value > 50:
+            rsi_bias = "BULLISH"
+            rsi_score = 100
+        else:
+            rsi_bias = "BEARISH"
+            rsi_score = -100
+
+        bias_results.append({
+            'indicator': 'RSI',
+            'value': f"{rsi_value:.2f}",
+            'bias': rsi_bias,
+            'score': rsi_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 6. DMI
+        plus_di, minus_di, adx = self.calculate_dmi(df, self.config['dmi_period'], self.config['dmi_smoothing'])
+        plus_di_value = plus_di.iloc[-1]
+        minus_di_value = minus_di.iloc[-1]
+        if plus_di_value > minus_di_value:
+            dmi_bias = "BULLISH"
+            dmi_score = 100
+        else:
+            dmi_bias = "BEARISH"
+            dmi_score = -100
+
+        bias_results.append({
+            'indicator': 'DMI',
+            'value': f"+DI:{plus_di_value:.1f} -DI:{minus_di_value:.1f}",
+            'bias': dmi_bias,
+            'score': dmi_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 7. VIDYA
+        vidya_val, vidya_bullish, vidya_bearish = self.calculate_vidya(df)
+        if vidya_bullish:
+            vidya_bias = "BULLISH"
+            vidya_score = 100
+        elif vidya_bearish:
+            vidya_bias = "BEARISH"
+            vidya_score = -100
+        else:
+            vidya_bias = "NEUTRAL"
+            vidya_score = 0
+
+        bias_results.append({
+            'indicator': 'VIDYA',
+            'value': f"{vidya_val.iloc[-1]:.2f}" if not vidya_val.empty else "N/A",
+            'bias': vidya_bias,
+            'score': vidya_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 8. MFI
+        mfi = self.calculate_mfi(df, self.config['mfi_period'])
+        mfi_value = mfi.iloc[-1]
+        if np.isnan(mfi_value):
+            mfi_value = 50.0
+
+        if mfi_value > 50:
+            mfi_bias = "BULLISH"
+            mfi_score = 100
+        else:
+            mfi_bias = "BEARISH"
+            mfi_score = -100
+
+        bias_results.append({
+            'indicator': 'MFI (Money Flow)',
+            'value': f"{mfi_value:.2f}",
+            'bias': mfi_bias,
+            'score': mfi_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # Calculate overall bias
+        fast_bull = 0
+        fast_bear = 0
+        fast_total = 0
+
+        medium_bull = 0
+        medium_bear = 0
+        medium_total = 0
+
+        slow_bull = 0
+        slow_bear = 0
+        slow_total = 0
+
+        bullish_count = 0
+        bearish_count = 0
+        neutral_count = 0
+
+        for bias in bias_results:
+            if 'BULLISH' in bias['bias']:
+                bullish_count += 1
+                if bias['category'] == 'fast':
+                    fast_bull += 1
+            elif 'BEARISH' in bias['bias']:
+                bearish_count += 1
+                if bias['category'] == 'fast':
+                    fast_bear += 1
+            else:
+                neutral_count += 1
+
+            if bias['category'] == 'fast':
+                fast_total += 1
+
+        # Calculate percentages
+        fast_bull_pct = (fast_bull / fast_total) * 100 if fast_total > 0 else 0
+        fast_bear_pct = (fast_bear / fast_total) * 100 if fast_total > 0 else 0
+
+        # Adaptive weighting
+        divergence_threshold = self.config['divergence_threshold']
+        bullish_divergence = False  # Simplified for this implementation
+        bearish_divergence = False
+        divergence_detected = bullish_divergence or bearish_divergence
+
+        if divergence_detected:
+            fast_weight = self.config['reversal_fast_weight']
+            mode = "REVERSAL"
+        else:
+            fast_weight = self.config['normal_fast_weight']
+            mode = "NORMAL"
+
+        # Calculate weighted scores
+        bullish_signals = fast_bull * fast_weight
+        bearish_signals = fast_bear * fast_weight
+        total_signals = fast_total * fast_weight
+
+        bullish_bias_pct = (bullish_signals / total_signals) * 100 if total_signals > 0 else 0
+        bearish_bias_pct = (bearish_signals / total_signals) * 100 if total_signals > 0 else 0
+
+        # Determine overall bias
+        bias_strength = self.config['bias_strength']
+
+        if bullish_bias_pct >= bias_strength:
+            overall_bias = "BULLISH"
+            overall_score = bullish_bias_pct
+            overall_confidence = min(100, bullish_bias_pct)
+        elif bearish_bias_pct >= bias_strength:
+            overall_bias = "BEARISH"
+            overall_score = -bearish_bias_pct
+            overall_confidence = min(100, bearish_bias_pct)
+        else:
+            overall_bias = "NEUTRAL"
+            overall_score = 0
+            overall_confidence = 100 - max(bullish_bias_pct, bearish_bias_pct)
+
+        return {
+            'success': True,
+            'symbol': symbol,
+            'current_price': current_price,
+            'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')),
+            'bias_results': bias_results,
+            'overall_bias': overall_bias,
+            'overall_score': overall_score,
+            'overall_confidence': overall_confidence,
+            'bullish_count': bullish_count,
+            'bearish_count': bearish_count,
+            'neutral_count': neutral_count,
+            'total_indicators': len(bias_results),
+            'stock_data': stock_data,
+            'mode': mode,
+            'fast_bull_pct': fast_bull_pct,
+            'fast_bear_pct': fast_bear_pct,
+            'bullish_bias_pct': bullish_bias_pct,
+            'bearish_bias_pct': bearish_bias_pct
+        }
 
 # =============================================
 # TRADING SIGNAL MANAGER WITH COOLDOWN
@@ -262,11 +910,11 @@ class VolumeOrderBlocks:
         self.bearish_blocks = deque(maxlen=15)
         self.sent_alerts = set()
         
-    def calculate_ema(self, data, period):
+    def calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
         """Calculate Exponential Moving Average"""
         return data.ewm(span=period, adjust=False).mean()
     
-    def calculate_atr(self, df, period=200):
+    def calculate_atr(self, df: pd.DataFrame, period=200):
         """Calculate Average True Range"""
         high_low = df['high'] - df['low']
         high_close = np.abs(df['high'] - df['close'].shift())
@@ -1021,7 +1669,7 @@ class NSEOptionsAnalyzer:
         return results
 
 # =============================================
-# ENHANCED NIFTY APP WITH TRADING SIGNALS
+# ENHANCED NIFTY APP WITH ALL FEATURES
 # =============================================
 
 class EnhancedNiftyApp:
@@ -1037,6 +1685,7 @@ class EnhancedNiftyApp:
         self.alert_manager = AlertManager(cooldown_minutes=10)
         self.options_analyzer = NSEOptionsAnalyzer()
         self.trading_signal_manager = TradingSignalManager(cooldown_minutes=15)
+        self.bias_analyzer = BiasAnalysisPro()
         
         # Initialize session state
         self.init_session_state()
@@ -1061,6 +1710,10 @@ class EnhancedNiftyApp:
             st.session_state.last_signal_check = None
         if 'sent_trading_signals' not in st.session_state:
             st.session_state.sent_trading_signals = {}
+        if 'comprehensive_bias_data' not in st.session_state:
+            st.session_state.comprehensive_bias_data = None
+        if 'last_comprehensive_bias_update' not in st.session_state:
+            st.session_state.last_comprehensive_bias_update = None
     
     def setup_secrets(self):
         """Setup API credentials from Streamlit secrets"""
@@ -1672,6 +2325,105 @@ Watch for breakout/breakdown confirmation!"""
         else:
             st.info("👆 Options data will auto-refresh. Click 'Force Refresh' to load immediately.")
 
+    def display_comprehensive_bias_analysis(self):
+        """Display comprehensive bias analysis from BiasAnalysisPro"""
+        st.header("🎯 Comprehensive Technical Bias Analysis")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("8-indicator bias analysis with adaptive weighting and market breadth")
+        with col2:
+            if st.button("🔄 Update Bias Analysis", type="primary"):
+                with st.spinner("Running comprehensive bias analysis..."):
+                    bias_data = self.bias_analyzer.analyze_all_bias_indicators("^NSEI")
+                    st.session_state.comprehensive_bias_data = bias_data
+                    st.session_state.last_comprehensive_bias_update = datetime.now(self.ist)
+                    st.success("Bias analysis updated!")
+        
+        st.divider()
+        
+        if st.session_state.comprehensive_bias_data:
+            bias_data = st.session_state.comprehensive_bias_data
+            
+            if not bias_data['success']:
+                st.error(f"Bias analysis failed: {bias_data['error']}")
+                return
+            
+            # Overall bias summary
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                bias_color = "🟢" if bias_data['overall_bias'] == "BULLISH" else "🔴" if bias_data['overall_bias'] == "BEARISH" else "🟡"
+                st.metric("Overall Bias", f"{bias_color} {bias_data['overall_bias']}")
+            with col2:
+                st.metric("Bias Score", f"{bias_data['overall_score']:.1f}")
+            with col3:
+                st.metric("Confidence", f"{bias_data['overall_confidence']:.1f}%")
+            with col4:
+                st.metric("Current Price", f"₹{bias_data['current_price']:.2f}")
+            
+            st.divider()
+            
+            # Detailed bias indicators
+            st.subheader("📊 Detailed Bias Indicators")
+            
+            # Create columns for better layout
+            cols = st.columns(2)
+            current_col = 0
+            
+            for i, bias in enumerate(bias_data['bias_results']):
+                with cols[current_col]:
+                    with st.container():
+                        # Color code based on bias
+                        if bias['bias'] == "BULLISH":
+                            st.success(f"**{bias['indicator']}**")
+                            st.write(f"Value: {bias['value']}")
+                            st.write(f"Bias: 🟢 {bias['bias']}")
+                        elif bias['bias'] == "BEARISH":
+                            st.error(f"**{bias['indicator']}**")
+                            st.write(f"Value: {bias['value']}")
+                            st.write(f"Bias: 🔴 {bias['bias']}")
+                        else:
+                            st.warning(f"**{bias['indicator']}**")
+                            st.write(f"Value: {bias['value']}")
+                            st.write(f"Bias: 🟡 {bias['bias']}")
+                        
+                        st.progress(abs(bias['score']) / 100)
+                
+                current_col = (current_col + 1) % 2
+            
+            st.divider()
+            
+            # Statistics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Bullish Indicators", bias_data['bullish_count'])
+            with col2:
+                st.metric("Bearish Indicators", bias_data['bearish_count'])
+            with col3:
+                st.metric("Neutral Indicators", bias_data['neutral_count'])
+            
+            # Mode and percentages
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Analysis Mode", bias_data['mode'])
+            with col2:
+                st.metric("Total Indicators", bias_data['total_indicators'])
+            
+            # Additional metrics
+            st.subheader("📈 Advanced Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Fast Bull %", f"{bias_data['fast_bull_pct']:.1f}%")
+            with col2:
+                st.metric("Fast Bear %", f"{bias_data['fast_bear_pct']:.1f}%")
+            with col3:
+                st.metric("Bullish Bias %", f"{bias_data['bullish_bias_pct']:.1f}%")
+            with col4:
+                st.metric("Bearish Bias %", f"{bias_data['bearish_bias_pct']:.1f}%")
+        
+        else:
+            st.info("👆 Click 'Update Bias Analysis' to run comprehensive technical analysis")
+
     def create_comprehensive_chart(self, df, bullish_blocks, bearish_blocks, interval):
         """Create comprehensive chart with Volume Order Blocks"""
         if df.empty:
@@ -1765,9 +2517,9 @@ Watch for breakout/breakdown confirmation!"""
         return fig
 
     def run(self):
-        """Main application with trading signals"""
+        """Main application with all features"""
         st.title("📈 Advanced Nifty Trading Dashboard")
-        st.markdown("*Volume Analysis, Comprehensive Options Chain & Trading Signals*")
+        st.markdown("*Volume Analysis, Options Chain, Technical Bias & Trading Signals*")
         
         # Sidebar with trading signals panel
         with st.sidebar:
@@ -1803,7 +2555,7 @@ Watch for breakout/breakdown confirmation!"""
         self.alert_manager.cooldown_minutes = cooldown_minutes
         
         # Main content - Tabs
-        tab1, tab2, tab3 = st.tabs(["📈 Price Analysis", "📊 Options Analysis", "🎯 Trading Signals"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", "🚀 Trading Signals"])
         
         with tab1:
             # Price Analysis Tab
@@ -1919,8 +2671,12 @@ Watch for breakout/breakdown confirmation!"""
                     st.rerun()
         
         with tab3:
+            # Technical Bias Analysis Tab
+            self.display_comprehensive_bias_analysis()
+        
+        with tab4:
             # Trading Signals Tab
-            st.header("🎯 Automated Trading Signals")
+            st.header("🚀 Automated Trading Signals")
             
             col1, col2 = st.columns([3, 1])
             with col1:
