@@ -29,6 +29,587 @@ st.set_page_config(
 )
 
 # =============================================
+# ENHANCED MARKET DATA FETCHER INTEGRATION
+# =============================================
+
+class EnhancedMarketData:
+    """
+    Comprehensive market data fetcher from multiple sources:
+    1. Dhan API: India VIX, Sector Indices, Futures Data
+    2. Yahoo Finance: Global Markets, Intermarket Data
+    3. NSE: FII/DII Data (optional)
+    """
+
+    def __init__(self):
+        """Initialize enhanced market data fetcher"""
+        self.ist = pytz.timezone('Asia/Kolkata')
+        self.dhan_fetcher = None
+
+    def get_current_time_ist(self):
+        """Get current time in IST"""
+        return datetime.now(self.ist)
+
+    def fetch_india_vix(self) -> Dict[str, Any]:
+        """Fetch India VIX from Yahoo Finance"""
+        try:
+            ticker = yf.Ticker("^INDIAVIX")
+            hist = ticker.history(period="1d", interval="1m")
+
+            if not hist.empty:
+                vix_value = hist['Close'].iloc[-1]
+
+                # VIX Interpretation
+                if vix_value > 25:
+                    vix_sentiment = "HIGH FEAR"
+                    vix_bias = "BEARISH"
+                    vix_score = -75
+                elif vix_value > 20:
+                    vix_sentiment = "ELEVATED FEAR"
+                    vix_bias = "BEARISH"
+                    vix_score = -50
+                elif vix_value > 15:
+                    vix_sentiment = "MODERATE"
+                    vix_bias = "NEUTRAL"
+                    vix_score = 0
+                elif vix_value > 12:
+                    vix_sentiment = "LOW VOLATILITY"
+                    vix_bias = "BULLISH"
+                    vix_score = 40
+                else:
+                    vix_sentiment = "COMPLACENCY"
+                    vix_bias = "NEUTRAL"
+                    vix_score = 0
+
+                return {
+                    'success': True,
+                    'source': 'Yahoo Finance',
+                    'value': vix_value,
+                    'sentiment': vix_sentiment,
+                    'bias': vix_bias,
+                    'score': vix_score,
+                    'timestamp': self.get_current_time_ist()
+                }
+        except Exception as e:
+            pass
+
+        return {'success': False, 'error': 'India VIX data not available'}
+
+    def fetch_sector_indices(self) -> List[Dict[str, Any]]:
+        """Fetch sector indices from Yahoo Finance"""
+        sectors_map = {
+            '^CNXIT': 'NIFTY IT',
+            '^CNXAUTO': 'NIFTY AUTO',
+            '^CNXPHARMA': 'NIFTY PHARMA',
+            '^CNXMETAL': 'NIFTY METAL',
+            '^CNXREALTY': 'NIFTY REALTY',
+            '^CNXFMCG': 'NIFTY FMCG',
+            '^CNXBANK': 'NIFTY BANK'
+        }
+
+        sector_data = []
+
+        for symbol, name in sectors_map.items():
+            try:
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="1d", interval="1m")
+
+                if not hist.empty:
+                    last_price = hist['Close'].iloc[-1]
+                    open_price = hist['Open'].iloc[0]
+                    high_price = hist['High'].max()
+                    low_price = hist['Low'].min()
+
+                    change_pct = ((last_price - open_price) / open_price) * 100
+
+                    # Determine bias
+                    if change_pct > 1.5:
+                        bias = "STRONG BULLISH"
+                        score = 75
+                    elif change_pct > 0.5:
+                        bias = "BULLISH"
+                        score = 50
+                    elif change_pct < -1.5:
+                        bias = "STRONG BEARISH"
+                        score = -75
+                    elif change_pct < -0.5:
+                        bias = "BEARISH"
+                        score = -50
+                    else:
+                        bias = "NEUTRAL"
+                        score = 0
+
+                    sector_data.append({
+                        'sector': name,
+                        'last_price': last_price,
+                        'open': open_price,
+                        'high': high_price,
+                        'low': low_price,
+                        'change_pct': change_pct,
+                        'bias': bias,
+                        'score': score,
+                        'source': 'Yahoo Finance'
+                    })
+            except Exception as e:
+                print(f"Error fetching {name}: {e}")
+
+        return sector_data
+
+    def fetch_global_markets(self) -> List[Dict[str, Any]]:
+        """Fetch global market indices from Yahoo Finance"""
+        global_markets = {
+            '^GSPC': 'S&P 500',
+            '^IXIC': 'NASDAQ',
+            '^DJI': 'DOW JONES',
+            '^N225': 'NIKKEI 225',
+            '^HSI': 'HANG SENG',
+            '^FTSE': 'FTSE 100',
+            '^GDAXI': 'DAX',
+            '000001.SS': 'SHANGHAI'
+        }
+
+        market_data = []
+
+        for symbol, name in global_markets.items():
+            try:
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="2d")
+
+                if len(hist) >= 2:
+                    current_close = hist['Close'].iloc[-1]
+                    prev_close = hist['Close'].iloc[-2]
+
+                    change_pct = ((current_close - prev_close) / prev_close) * 100
+
+                    # Determine bias
+                    if change_pct > 1.5:
+                        bias = "STRONG BULLISH"
+                        score = 75
+                    elif change_pct > 0.5:
+                        bias = "BULLISH"
+                        score = 50
+                    elif change_pct < -1.5:
+                        bias = "STRONG BEARISH"
+                        score = -75
+                    elif change_pct < -0.5:
+                        bias = "BEARISH"
+                        score = -50
+                    else:
+                        bias = "NEUTRAL"
+                        score = 0
+
+                    market_data.append({
+                        'market': name,
+                        'symbol': symbol,
+                        'last_price': current_close,
+                        'prev_close': prev_close,
+                        'change_pct': change_pct,
+                        'bias': bias,
+                        'score': score
+                    })
+            except Exception as e:
+                print(f"Error fetching {name}: {e}")
+
+        return market_data
+
+    def fetch_intermarket_data(self) -> List[Dict[str, Any]]:
+        """Fetch intermarket data (commodities, currencies, bonds)"""
+        intermarket_assets = {
+            'DX-Y.NYB': 'US DOLLAR INDEX',
+            'CL=F': 'CRUDE OIL',
+            'GC=F': 'GOLD',
+            'INR=X': 'USD/INR',
+            '^TNX': 'US 10Y TREASURY',
+            'BTC-USD': 'BITCOIN'
+        }
+
+        intermarket_data = []
+
+        for symbol, name in intermarket_assets.items():
+            try:
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="2d")
+
+                if len(hist) >= 2:
+                    current_close = hist['Close'].iloc[-1]
+                    prev_close = hist['Close'].iloc[-2]
+
+                    change_pct = ((current_close - prev_close) / prev_close) * 100
+
+                    # Specific interpretations for each asset
+                    if 'DOLLAR' in name:
+                        if change_pct > 0.5:
+                            bias = "BEARISH (for India)"
+                            score = -40
+                        elif change_pct < -0.5:
+                            bias = "BULLISH (for India)"
+                            score = 40
+                        else:
+                            bias = "NEUTRAL"
+                            score = 0
+                    elif 'OIL' in name:
+                        if change_pct > 2:
+                            bias = "BEARISH (for India)"
+                            score = -50
+                        elif change_pct < -2:
+                            bias = "BULLISH (for India)"
+                            score = 50
+                        else:
+                            bias = "NEUTRAL"
+                            score = 0
+                    elif 'GOLD' in name:
+                        if change_pct > 1:
+                            bias = "RISK OFF"
+                            score = -40
+                        elif change_pct < -1:
+                            bias = "RISK ON"
+                            score = 40
+                        else:
+                            bias = "NEUTRAL"
+                            score = 0
+                    elif 'INR' in name:
+                        if change_pct > 0.5:
+                            bias = "BEARISH (INR Weak)"
+                            score = -40
+                        elif change_pct < -0.5:
+                            bias = "BULLISH (INR Strong)"
+                            score = 40
+                        else:
+                            bias = "NEUTRAL"
+                            score = 0
+                    elif 'TREASURY' in name:
+                        if change_pct > 2:
+                            bias = "RISK OFF"
+                            score = -40
+                        elif change_pct < -2:
+                            bias = "RISK ON"
+                            score = 40
+                        else:
+                            bias = "NEUTRAL"
+                            score = 0
+                    else:
+                        if change_pct > 1:
+                            bias = "BULLISH"
+                            score = 40
+                        elif change_pct < -1:
+                            bias = "BEARISH"
+                            score = -40
+                        else:
+                            bias = "NEUTRAL"
+                            score = 0
+
+                    intermarket_data.append({
+                        'asset': name,
+                        'symbol': symbol,
+                        'last_price': current_close,
+                        'prev_close': prev_close,
+                        'change_pct': change_pct,
+                        'bias': bias,
+                        'score': score
+                    })
+            except Exception as e:
+                print(f"Error fetching {name}: {e}")
+
+        return intermarket_data
+
+    def analyze_sector_rotation(self) -> Dict[str, Any]:
+        """Analyze sector rotation to identify market leadership changes"""
+        sectors = self.fetch_sector_indices()
+
+        if not sectors:
+            return {'success': False, 'error': 'No sector data available'}
+
+        # Sort sectors by performance
+        sectors_sorted = sorted(sectors, key=lambda x: x['change_pct'], reverse=True)
+
+        # Identify leaders and laggards
+        leaders = sectors_sorted[:3]
+        laggards = sectors_sorted[-3:]
+
+        # Calculate sector strength score
+        bullish_sectors = [s for s in sectors if s['change_pct'] > 0.5]
+        bearish_sectors = [s for s in sectors if s['change_pct'] < -0.5]
+        neutral_sectors = [s for s in sectors if -0.5 <= s['change_pct'] <= 0.5]
+
+        # Market breadth from sectors
+        if len(sectors) > 0:
+            sector_breadth = (len(bullish_sectors) / len(sectors)) * 100
+        else:
+            sector_breadth = 50
+
+        # Determine rotation pattern
+        if len(leaders) > 0 and leaders[0]['change_pct'] > 2:
+            rotation_pattern = "STRONG ROTATION"
+            if 'IT' in leaders[0]['sector'] or 'PHARMA' in leaders[0]['sector']:
+                rotation_type = "DEFENSIVE ROTATION (Risk-off)"
+                rotation_bias = "BEARISH"
+                rotation_score = -40
+            elif 'METAL' in leaders[0]['sector'] or 'ENERGY' in leaders[0]['sector']:
+                rotation_type = "CYCLICAL ROTATION (Risk-on)"
+                rotation_bias = "BULLISH"
+                rotation_score = 60
+            elif 'BANK' in leaders[0]['sector'] or 'AUTO' in leaders[0]['sector']:
+                rotation_type = "GROWTH ROTATION (Risk-on)"
+                rotation_bias = "BULLISH"
+                rotation_score = 70
+            else:
+                rotation_type = "MIXED ROTATION"
+                rotation_bias = "NEUTRAL"
+                rotation_score = 0
+        else:
+            rotation_pattern = "NO CLEAR ROTATION"
+            rotation_type = "CONSOLIDATION"
+            rotation_bias = "NEUTRAL"
+            rotation_score = 0
+
+        # Overall sector sentiment
+        if sector_breadth > 70:
+            sector_sentiment = "STRONG BULLISH"
+            sector_score = 75
+        elif sector_breadth > 55:
+            sector_sentiment = "BULLISH"
+            sector_score = 50
+        elif sector_breadth < 30:
+            sector_sentiment = "STRONG BEARISH"
+            sector_score = -75
+        elif sector_breadth < 45:
+            sector_sentiment = "BEARISH"
+            sector_score = -50
+        else:
+            sector_sentiment = "NEUTRAL"
+            sector_score = 0
+
+        return {
+            'success': True,
+            'leaders': leaders,
+            'laggards': laggards,
+            'bullish_sectors_count': len(bullish_sectors),
+            'bearish_sectors_count': len(bearish_sectors),
+            'neutral_sectors_count': len(neutral_sectors),
+            'sector_breadth': sector_breadth,
+            'rotation_pattern': rotation_pattern,
+            'rotation_type': rotation_type,
+            'rotation_bias': rotation_bias,
+            'rotation_score': rotation_score,
+            'sector_sentiment': sector_sentiment,
+            'sector_score': sector_score,
+            'all_sectors': sectors,
+            'timestamp': self.get_current_time_ist()
+        }
+
+    def analyze_intraday_seasonality(self) -> Dict[str, Any]:
+        """Analyze intraday time-based patterns"""
+        now = self.get_current_time_ist()
+        current_time = now.time()
+
+        # Market hours: 9:15 AM to 3:30 PM IST
+        market_open = datetime.strptime("09:15", "%H:%M").time()
+        market_close = datetime.strptime("15:30", "%H:%M").time()
+
+        # Determine current market session
+        if current_time < market_open:
+            session = "PRE-MARKET"
+            session_bias = "NEUTRAL"
+            session_score = 0
+            session_characteristics = "Low volume, wide spreads. Wait for market open."
+            trading_recommendation = "AVOID - Wait for market open"
+        elif current_time < datetime.strptime("09:30", "%H:%M").time():
+            session = "OPENING RANGE (9:15-9:30)"
+            session_bias = "HIGH VOLATILITY"
+            session_score = 0
+            session_characteristics = "High volatility, gap movements, institutional orders"
+            trading_recommendation = "CAUTIOUS - Wait for range breakout or use tight stops"
+        elif current_time < datetime.strptime("10:00", "%H:%M").time():
+            session = "POST-OPENING (9:30-10:00)"
+            session_bias = "TREND FORMATION"
+            session_score = 40
+            session_characteristics = "Trend develops, direction becomes clear"
+            trading_recommendation = "ACTIVE - Trade in direction of trend"
+        elif current_time < datetime.strptime("11:30", "%H:%M").time():
+            session = "MID-MORNING (10:00-11:30)"
+            session_bias = "TRENDING"
+            session_score = 50
+            session_characteristics = "Best trending period, follow momentum"
+            trading_recommendation = "VERY ACTIVE - Best time for trend following"
+        elif current_time < datetime.strptime("14:30", "%H:%M").time():
+            session = "LUNCHTIME (11:30-14:30)"
+            session_bias = "CONSOLIDATION"
+            session_score = -20
+            session_characteristics = "Low volume, choppy, range-bound"
+            trading_recommendation = "REDUCE ACTIVITY - Scalping only or stay out"
+        elif current_time < datetime.strptime("15:15", "%H:%M").time():
+            session = "AFTERNOON SESSION (14:30-15:15)"
+            session_bias = "MOMENTUM"
+            session_score = 45
+            session_characteristics = "Volume picks up, trends resume"
+            trading_recommendation = "ACTIVE - Trade breakouts and momentum"
+        elif current_time < market_close:
+            session = "CLOSING RANGE (15:15-15:30)"
+            session_bias = "HIGH VOLATILITY"
+            session_score = 0
+            session_characteristics = "High volume, squaring off positions, volatile"
+            trading_recommendation = "CAUTIOUS - Close positions or use wide stops"
+        else:
+            session = "POST-MARKET"
+            session_bias = "NEUTRAL"
+            session_score = 0
+            session_characteristics = "Market closed"
+            trading_recommendation = "NO TRADING - Market closed"
+
+        # Day of week patterns
+        weekday = now.strftime("%A")
+
+        if weekday == "Monday":
+            day_bias = "GAP TENDENCY"
+            day_characteristics = "Weekend news gaps, follow-through from Friday"
+        elif weekday == "Tuesday" or weekday == "Wednesday":
+            day_bias = "TRENDING"
+            day_characteristics = "Best trending days, institutional activity high"
+        elif weekday == "Thursday":
+            day_bias = "CONSOLIDATION"
+            day_characteristics = "Pre-Friday profit booking, consolidation"
+        elif weekday == "Friday":
+            day_bias = "PROFIT BOOKING"
+            day_characteristics = "Week-end squaring off, typically weak close"
+        else:
+            day_bias = "WEEKEND"
+            day_characteristics = "Market closed"
+
+        return {
+            'success': True,
+            'current_time': now.strftime("%H:%M:%S"),
+            'session': session,
+            'session_bias': session_bias,
+            'session_score': session_score,
+            'session_characteristics': session_characteristics,
+            'trading_recommendation': trading_recommendation,
+            'weekday': weekday,
+            'day_bias': day_bias,
+            'day_characteristics': day_characteristics,
+            'timestamp': now
+        }
+
+    def fetch_all_enhanced_data(self) -> Dict[str, Any]:
+        """Fetch all enhanced market data from all sources"""
+        print("Fetching enhanced market data...")
+
+        result = {
+            'timestamp': self.get_current_time_ist(),
+            'india_vix': {},
+            'sector_indices': [],
+            'global_markets': [],
+            'intermarket': [],
+            'sector_rotation': {},
+            'intraday_seasonality': {},
+            'summary': {}
+        }
+
+        # 1. Fetch India VIX
+        print("  - Fetching India VIX...")
+        result['india_vix'] = self.fetch_india_vix()
+
+        # 2. Fetch Sector Indices
+        print("  - Fetching sector indices...")
+        result['sector_indices'] = self.fetch_sector_indices()
+
+        # 3. Fetch Global Markets
+        print("  - Fetching global markets...")
+        result['global_markets'] = self.fetch_global_markets()
+
+        # 4. Fetch Intermarket Data
+        print("  - Fetching intermarket data...")
+        result['intermarket'] = self.fetch_intermarket_data()
+
+        # 5. Analyze Sector Rotation
+        print("  - Analyzing Sector Rotation...")
+        result['sector_rotation'] = self.analyze_sector_rotation()
+
+        # 6. Analyze Intraday Seasonality
+        print("  - Analyzing Intraday Seasonality...")
+        result['intraday_seasonality'] = self.analyze_intraday_seasonality()
+
+        # 7. Calculate summary statistics
+        result['summary'] = self._calculate_summary(result)
+
+        print("✓ Enhanced market data fetch completed!")
+
+        return result
+
+    def _calculate_summary(self, data: Dict) -> Dict[str, Any]:
+        """Calculate summary statistics from all data"""
+        summary = {
+            'total_data_points': 0,
+            'bullish_count': 0,
+            'bearish_count': 0,
+            'neutral_count': 0,
+            'avg_score': 0,
+            'overall_sentiment': 'NEUTRAL'
+        }
+
+        all_scores = []
+
+        # Count India VIX
+        if data['india_vix'].get('success'):
+            summary['total_data_points'] += 1
+            all_scores.append(data['india_vix']['score'])
+            bias = data['india_vix']['bias']
+            if 'BULLISH' in bias:
+                summary['bullish_count'] += 1
+            elif 'BEARISH' in bias:
+                summary['bearish_count'] += 1
+            else:
+                summary['neutral_count'] += 1
+
+        # Count sectors
+        for sector in data['sector_indices']:
+            summary['total_data_points'] += 1
+            all_scores.append(sector['score'])
+            bias = sector['bias']
+            if 'BULLISH' in bias:
+                summary['bullish_count'] += 1
+            elif 'BEARISH' in bias:
+                summary['bearish_count'] += 1
+            else:
+                summary['neutral_count'] += 1
+
+        # Count global markets
+        for market in data['global_markets']:
+            summary['total_data_points'] += 1
+            all_scores.append(market['score'])
+            bias = market['bias']
+            if 'BULLISH' in bias:
+                summary['bullish_count'] += 1
+            elif 'BEARISH' in bias:
+                summary['bearish_count'] += 1
+            else:
+                summary['neutral_count'] += 1
+
+        # Count intermarket
+        for asset in data['intermarket']:
+            summary['total_data_points'] += 1
+            all_scores.append(asset['score'])
+            bias = asset['bias']
+            if 'BULLISH' in bias or 'RISK ON' in bias:
+                summary['bullish_count'] += 1
+            elif 'BEARISH' in bias or 'RISK OFF' in bias:
+                summary['bearish_count'] += 1
+            else:
+                summary['neutral_count'] += 1
+
+        # Calculate average score
+        if all_scores:
+            summary['avg_score'] = np.mean(all_scores)
+
+            # Determine overall sentiment
+            if summary['avg_score'] > 25:
+                summary['overall_sentiment'] = 'BULLISH'
+            elif summary['avg_score'] < -25:
+                summary['overall_sentiment'] = 'BEARISH'
+            else:
+                summary['overall_sentiment'] = 'NEUTRAL'
+
+        return summary
+
+# =============================================
 # COMPREHENSIVE BIAS ANALYSIS MODULE
 # =============================================
 
@@ -1700,6 +2281,7 @@ class EnhancedNiftyApp:
         self.options_analyzer = NSEOptionsAnalyzer()
         self.trading_signal_manager = TradingSignalManager(cooldown_minutes=15)
         self.bias_analyzer = BiasAnalysisPro()
+        self.market_data_fetcher = EnhancedMarketData()  # NEW: Enhanced market data
         
         # Initialize session state
         self.init_session_state()
@@ -1728,6 +2310,10 @@ class EnhancedNiftyApp:
             st.session_state.comprehensive_bias_data = None
         if 'last_comprehensive_bias_update' not in st.session_state:
             st.session_state.last_comprehensive_bias_update = None
+        if 'enhanced_market_data' not in st.session_state:  # NEW: Enhanced market data
+            st.session_state.enhanced_market_data = None
+        if 'last_market_data_update' not in st.session_state:  # NEW: Enhanced market data
+            st.session_state.last_market_data_update = None
     
     def setup_secrets(self):
         """Setup API credentials from Streamlit secrets"""
@@ -1864,6 +2450,267 @@ class EnhancedNiftyApp:
         except Exception as e:
             st.error(f"Telegram error: {e}")
             return False
+
+    # NEW: Enhanced Market Data Display Methods
+    def display_enhanced_market_data(self):
+        """Display comprehensive enhanced market data"""
+        st.header("🌍 Enhanced Market Data Analysis")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("Comprehensive market analysis from multiple sources including India VIX, global markets, sector rotation, and intermarket analysis")
+        with col2:
+            if st.button("🔄 Update Market Data", type="primary"):
+                with st.spinner("Fetching comprehensive market data..."):
+                    try:
+                        market_data = self.market_data_fetcher.fetch_all_enhanced_data()
+                        st.session_state.enhanced_market_data = market_data
+                        st.session_state.last_market_data_update = datetime.now(self.ist)
+                        st.success("Market data updated successfully!")
+                    except Exception as e:
+                        st.error(f"Error fetching market data: {str(e)}")
+        
+        st.divider()
+        
+        if st.session_state.last_market_data_update:
+            st.write(f"Last update: {st.session_state.last_market_data_update.strftime('%H:%M:%S')} IST")
+        
+        if st.session_state.enhanced_market_data:
+            market_data = st.session_state.enhanced_market_data
+            
+            # Overall Summary
+            st.subheader("📊 Market Summary")
+            summary = market_data['summary']
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Overall Sentiment", summary['overall_sentiment'])
+            with col2:
+                st.metric("Average Score", f"{summary['avg_score']:.1f}")
+            with col3:
+                st.metric("Bullish Signals", summary['bullish_count'])
+            with col4:
+                st.metric("Total Data Points", summary['total_data_points'])
+            
+            st.divider()
+            
+            # Create tabs for different market data categories
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                "🇮🇳 India VIX", "📈 Sector Analysis", "🌍 Global Markets", 
+                "🔄 Intermarket", "📊 Sector Rotation", "⏰ Intraday Timing"
+            ])
+            
+            with tab1:
+                self.display_india_vix_data(market_data['india_vix'])
+            
+            with tab2:
+                self.display_sector_data(market_data['sector_indices'])
+            
+            with tab3:
+                self.display_global_markets(market_data['global_markets'])
+            
+            with tab4:
+                self.display_intermarket_data(market_data['intermarket'])
+            
+            with tab5:
+                self.display_sector_rotation(market_data['sector_rotation'])
+            
+            with tab6:
+                self.display_intraday_seasonality(market_data['intraday_seasonality'])
+            
+        else:
+            st.info("👆 Click 'Update Market Data' to load comprehensive market analysis")
+            st.write("""
+            **Data Sources Included:**
+            - **India VIX**: Market volatility and fear index
+            - **Sector Indices**: Nifty sector performance and rotation
+            - **Global Markets**: International market performance
+            - **Intermarket Analysis**: Commodities, currencies, bonds
+            - **Sector Rotation**: Market leadership analysis
+            - **Intraday Seasonality**: Time-based market patterns
+            """)
+
+    def display_india_vix_data(self, vix_data: Dict[str, Any]):
+        """Display India VIX data"""
+        if not vix_data.get('success'):
+            st.error("India VIX data not available")
+            return
+        
+        st.subheader("🇮🇳 India VIX - Fear Index")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("VIX Value", f"{vix_data['value']:.2f}")
+        with col2:
+            st.metric("Sentiment", vix_data['sentiment'])
+        with col3:
+            st.metric("Bias", vix_data['bias'])
+        with col4:
+            st.metric("Score", vix_data['score'])
+        
+        # VIX Interpretation
+        st.info(f"**Interpretation**: {vix_data['sentiment']} - {self.get_vix_interpretation(vix_data['value'])}")
+        st.write(f"**Source**: {vix_data['source']} | **Timestamp**: {vix_data['timestamp'].strftime('%H:%M:%S')}")
+
+    def get_vix_interpretation(self, vix_value: float) -> str:
+        """Get VIX interpretation text"""
+        if vix_value > 25:
+            return "Extreme fear, potential market bottom"
+        elif vix_value > 20:
+            return "Elevated fear, high volatility expected"
+        elif vix_value > 15:
+            return "Moderate volatility, normal market conditions"
+        elif vix_value > 12:
+            return "Low volatility, complacency setting in"
+        else:
+            return "Very low volatility, potential for spike"
+
+    def display_sector_data(self, sectors: List[Dict[str, Any]]):
+        """Display sector indices data"""
+        st.subheader("📈 Nifty Sector Performance")
+        
+        if not sectors:
+            st.info("No sector data available")
+            return
+        
+        # Create sector performance table
+        sector_df = pd.DataFrame(sectors)
+        sector_df = sector_df.sort_values('change_pct', ascending=False)
+        
+        # Display as metrics
+        cols = st.columns(4)
+        for idx, sector in enumerate(sector_df.head(8).itertuples()):
+            with cols[idx % 4]:
+                color = "🟢" if sector.change_pct > 0 else "🔴"
+                st.metric(
+                    f"{color} {sector.sector}",
+                    f"₹{sector.last_price:.0f}",
+                    f"{sector.change_pct:+.2f}%"
+                )
+        
+        # Detailed table
+        st.subheader("Detailed Sector Analysis")
+        display_df = sector_df[['sector', 'last_price', 'change_pct', 'bias', 'score', 'source']].copy()
+        st.dataframe(display_df, use_container_width=True)
+
+    def display_global_markets(self, global_markets: List[Dict[str, Any]]):
+        """Display global markets data"""
+        st.subheader("🌍 Global Market Performance")
+        
+        if not global_markets:
+            st.info("No global market data available")
+            return
+        
+        # Create metrics for major markets
+        major_markets = ['S&P 500', 'NASDAQ', 'NIKKEI 225', 'HANG SENG']
+        filtered_markets = [m for m in global_markets if m['market'] in major_markets]
+        
+        cols = st.columns(4)
+        for idx, market in enumerate(filtered_markets):
+            with cols[idx]:
+                color = "🟢" if market['change_pct'] > 0 else "🔴"
+                st.metric(
+                    f"{color} {market['market']}",
+                    f"{market['last_price']:.0f}",
+                    f"{market['change_pct']:+.2f}%"
+                )
+        
+        # Detailed table
+        st.subheader("All Global Markets")
+        market_df = pd.DataFrame(global_markets)
+        market_df = market_df.sort_values('change_pct', ascending=False)
+        display_df = market_df[['market', 'last_price', 'change_pct', 'bias', 'score']].copy()
+        st.dataframe(display_df, use_container_width=True)
+
+    def display_intermarket_data(self, intermarket: List[Dict[str, Any]]):
+        """Display intermarket analysis data"""
+        st.subheader("🔄 Intermarket Analysis")
+        
+        if not intermarket:
+            st.info("No intermarket data available")
+            return
+        
+        # Create metrics for key intermarket assets
+        cols = st.columns(4)
+        for idx, asset in enumerate(intermarket):
+            with cols[idx % 4]:
+                color = "🟢" if "BULLISH" in asset['bias'] or "RISK ON" in asset['bias'] else "🔴"
+                st.metric(
+                    f"{color} {asset['asset']}",
+                    f"{asset['last_price']:.2f}",
+                    f"{asset['change_pct']:+.2f}%"
+                )
+                st.caption(f"Bias: {asset['bias']}")
+        
+        # Interpretation
+        st.subheader("Intermarket Interpretation")
+        bullish_count = len([a for a in intermarket if "BULLISH" in a['bias'] or "RISK ON" in a['bias']])
+        bearish_count = len([a for a in intermarket if "BEARISH" in a['bias'] or "RISK OFF" in a['bias']])
+        
+        if bullish_count > bearish_count:
+            st.success("Overall intermarket sentiment: **RISK-ON**")
+        elif bearish_count > bullish_count:
+            st.error("Overall intermarket sentiment: **RISK-OFF**")
+        else:
+            st.warning("Overall intermarket sentiment: **MIXED**")
+
+    def display_sector_rotation(self, rotation_data: Dict[str, Any]):
+        """Display sector rotation analysis"""
+        if not rotation_data.get('success'):
+            st.info("Sector rotation analysis not available")
+            return
+        
+        st.subheader("📊 Sector Rotation Analysis")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Sector Breadth", f"{rotation_data['sector_breadth']:.1f}%")
+        with col2:
+            st.metric("Rotation Pattern", rotation_data['rotation_pattern'])
+        with col3:
+            st.metric("Sector Sentiment", rotation_data['sector_sentiment'])
+        
+        # Leaders and Laggards
+        st.subheader("🏆 Sector Leaders")
+        leaders_df = pd.DataFrame(rotation_data['leaders'])
+        if not leaders_df.empty:
+            st.dataframe(leaders_df[['sector', 'change_pct', 'bias']], use_container_width=True)
+        
+        st.subheader("📉 Sector Laggards")
+        laggards_df = pd.DataFrame(rotation_data['laggards'])
+        if not laggards_df.empty:
+            st.dataframe(laggards_df[['sector', 'change_pct', 'bias']], use_container_width=True)
+        
+        # Rotation Interpretation
+        st.info(f"**Rotation Type**: {rotation_data['rotation_type']}")
+        st.write(f"**Bullish Sectors**: {rotation_data['bullish_sectors_count']} | "
+                f"**Bearish Sectors**: {rotation_data['bearish_sectors_count']} | "
+                f"**Neutral Sectors**: {rotation_data['neutral_sectors_count']}")
+
+    def display_intraday_seasonality(self, seasonality_data: Dict[str, Any]):
+        """Display intraday seasonality analysis"""
+        if not seasonality_data.get('success'):
+            st.info("Intraday seasonality analysis not available")
+            return
+        
+        st.subheader("⏰ Intraday Market Timing")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Current Session", seasonality_data['session'])
+        with col2:
+            st.metric("Session Bias", seasonality_data['session_bias'])
+        with col3:
+            st.metric("Day of Week", seasonality_data['weekday'])
+        
+        # Session characteristics
+        st.subheader("📋 Session Analysis")
+        st.info(f"**Current Time**: {seasonality_data['current_time']}")
+        st.write(f"**Session Characteristics**: {seasonality_data['session_characteristics']}")
+        st.write(f"**Trading Recommendation**: {seasonality_data['trading_recommendation']}")
+        
+        # Day patterns
+        st.write(f"**Day Pattern**: {seasonality_data['day_bias']} - {seasonality_data['day_characteristics']}")
 
     def check_trading_signals(self):
         """Check for trading signals and send notifications"""
@@ -2897,9 +3744,9 @@ Watch for breakout/breakdown confirmation!"""
         self.alert_manager.cooldown_minutes = cooldown_minutes
         
         # Main content - Tabs
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([  # NEW: Added tab6 for Enhanced Market Data
             "📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", 
-            "📋 Bias Tabulation", "🚀 Trading Signals"
+            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data"  # NEW: Enhanced Market Data tab
         ])
         
         with tab1:
@@ -3098,6 +3945,9 @@ Watch for breakout/breakdown confirmation!"""
                     display_df = display_df.sort_values('timestamp', ascending=False)
                     
                     st.dataframe(display_df, use_container_width=True)
+        
+        with tab6:  # NEW: Enhanced Market Data Tab
+            self.display_enhanced_market_data()
         
         # Check for trading signals automatically
         if enable_trading_signals and telegram_enabled:
