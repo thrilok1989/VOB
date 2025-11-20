@@ -16,6 +16,7 @@ from scipy.stats import norm
 import io
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Optional, Tuple, Any  # Added missing imports
 warnings.filterwarnings('ignore')
 
 # Streamlit configuration
@@ -45,7 +46,7 @@ class BiasAnalysisPro:
         self.overall_bias = "NEUTRAL"
         self.overall_score = 0
 
-    def _default_config(self) -> Dict:
+    def _default_config(self) -> Dict[str, Any]:
         """Default configuration from Pine Script"""
         return {
             # Timeframes
@@ -165,7 +166,7 @@ class BiasAnalysisPro:
         mfi = 100 - (100 / (1 + mfi_ratio))
         return mfi.fillna(50)
 
-    def calculate_dmi(self, df: pd.DataFrame, period: int = 13, smoothing: int = 8):
+    def calculate_dmi(self, df: pd.DataFrame, period: int = 13, smoothing: int = 8) -> Tuple[pd.Series, pd.Series, pd.Series]:
         """Calculate DMI indicators"""
         high = df['High']
         low = df['Low']
@@ -219,7 +220,7 @@ class BiasAnalysisPro:
         """Calculate EMA"""
         return data.ewm(span=period, adjust=False).mean()
 
-    def calculate_vidya(self, df: pd.DataFrame, length: int = 10, momentum: int = 20, band_distance: float = 2.0):
+    def calculate_vidya(self, df: pd.DataFrame, length: int = 10, momentum: int = 20, band_distance: float = 2.0) -> Tuple[pd.Series, bool, bool]:
         """Calculate VIDYA (Variable Index Dynamic Average)"""
         close = df['Close']
 
@@ -253,7 +254,7 @@ class BiasAnalysisPro:
 
         return vidya_smoothed, vidya_bullish, vidya_bearish
 
-    def calculate_volume_delta(self, df: pd.DataFrame):
+    def calculate_volume_delta(self, df: pd.DataFrame) -> Tuple[float, bool, bool]:
         """Calculate Volume Delta (up_vol - down_vol)"""
         if df['Volume'].sum() == 0:
             return 0, False, False
@@ -267,7 +268,7 @@ class BiasAnalysisPro:
 
         return volume_delta, volume_bullish, volume_bearish
 
-    def calculate_hvp(self, df: pd.DataFrame, left_bars: int = 15, right_bars: int = 15, vol_filter: float = 2.0):
+    def calculate_hvp(self, df: pd.DataFrame, left_bars: int = 15, right_bars: int = 15, vol_filter: float = 2.0) -> Tuple[bool, bool, int, int]:
         """Calculate High Volume Pivots"""
         if df['Volume'].sum() == 0:
             return False, False, 0, 0
@@ -311,7 +312,7 @@ class BiasAnalysisPro:
 
         return hvp_bullish, hvp_bearish, len(pivot_highs), len(pivot_lows)
 
-    def calculate_vob(self, df: pd.DataFrame, length1: int = 5):
+    def calculate_vob(self, df: pd.DataFrame, length1: int = 5) -> Tuple[bool, bool, float, float]:
         """Calculate Volume Order Blocks"""
         length2 = length1 + 13
         ema1 = self.calculate_ema(df['Close'], length1)
@@ -325,7 +326,7 @@ class BiasAnalysisPro:
 
         return vob_bullish, vob_bearish, ema1.iloc[-1], ema2.iloc[-1]
 
-    def _fetch_stock_data(self, symbol: str, weight: float):
+    def _fetch_stock_data(self, symbol: str, weight: float) -> Optional[Dict[str, Any]]:
         """Helper function to fetch single stock data for parallel processing"""
         try:
             df = self.fetch_data(symbol, period='5d', interval='5m')
@@ -346,7 +347,7 @@ class BiasAnalysisPro:
             print(f"Error processing {symbol}: {e}")
             return None
 
-    def calculate_market_breadth(self):
+    def calculate_market_breadth(self) -> Tuple[float, bool, bool, int, int, List[Dict[str, Any]]]:
         """Calculate market breadth from top stocks"""
         bullish_stocks = 0
         total_stocks = 0
@@ -380,7 +381,7 @@ class BiasAnalysisPro:
 
         return market_breadth, breadth_bullish, breadth_bearish, bullish_stocks, total_stocks, stock_data
 
-    def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict:
+    def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict[str, Any]:
         """Analyze all 8 bias indicators"""
 
         print(f"Fetching data for {symbol}...")
@@ -683,7 +684,7 @@ class TradingSignalManager:
         self.last_signal_time = {}
         self.sent_signals = set()
         
-    def can_send_signal(self, signal_type, instrument):
+    def can_send_signal(self, signal_type: str, instrument: str) -> Tuple[bool, int]:
         """Check if signal can be sent based on cooldown"""
         key = f"{signal_type}_{instrument}"
         current_time = datetime.now()
@@ -697,7 +698,7 @@ class TradingSignalManager:
         self.last_signal_time[key] = current_time
         return True, 0
     
-    def generate_trading_recommendation(self, instrument_data):
+    def generate_trading_recommendation(self, instrument_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Generate trading recommendation based on comprehensive analysis"""
         try:
             overall_bias = instrument_data['overall_bias']
@@ -779,7 +780,7 @@ class TradingSignalManager:
             print(f"Error generating recommendation: {e}")
             return None
     
-    def calculate_confidence_score(self, instrument_data, comp_metrics):
+    def calculate_confidence_score(self, instrument_data: Dict[str, Any], comp_metrics: Dict[str, Any]) -> float:
         """Calculate confidence score for trading signal"""
         confidence = 50  # Base confidence
         
@@ -824,7 +825,7 @@ class TradingSignalManager:
         
         return min(confidence, 95)  # Cap at 95%
     
-    def format_signal_message(self, recommendation):
+    def format_signal_message(self, recommendation: Dict[str, Any]) -> str:
         """Format trading signal for Telegram notification"""
         emoji = "🟢" if recommendation['direction'] == "BULLISH" else "🔴"
         strength_emoji = "🔥" if recommendation['strength'] == "HIGH" else "⚡"
@@ -875,7 +876,7 @@ class VolumeSpikeDetector:
         self.volume_history = deque(maxlen=lookback_period)
         self.sent_alerts = set()
         
-    def detect_volume_spike(self, current_volume, timestamp):
+    def detect_volume_spike(self, current_volume: float, timestamp: datetime) -> Tuple[bool, float]:
         """Detect if current volume is a spike compared to historical average"""
         if len(self.volume_history) < 5:
             self.volume_history.append(current_volume)
@@ -914,7 +915,7 @@ class VolumeOrderBlocks:
         """Calculate Exponential Moving Average"""
         return data.ewm(span=period, adjust=False).mean()
     
-    def calculate_atr(self, df: pd.DataFrame, period=200):
+    def calculate_atr(self, df: pd.DataFrame, period=200) -> pd.Series:
         """Calculate Average True Range"""
         high_low = df['high'] - df['low']
         high_close = np.abs(df['high'] - df['close'].shift())
@@ -924,7 +925,7 @@ class VolumeOrderBlocks:
         atr = true_range.rolling(window=period).mean()
         return atr * 3
     
-    def detect_volume_order_blocks(self, df):
+    def detect_volume_order_blocks(self, df: pd.DataFrame) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Detect Volume Order Blocks based on the Pine Script logic"""
         if len(df) < self.length2:
             return [], []
@@ -1003,7 +1004,7 @@ class VolumeOrderBlocks:
         
         return bullish_blocks, bearish_blocks
     
-    def filter_overlapping_blocks(self, blocks, atr_value):
+    def filter_overlapping_blocks(self, blocks: List[Dict[str, Any]], atr_value: float) -> List[Dict[str, Any]]:
         if not blocks:
             return []
         
@@ -1019,7 +1020,7 @@ class VolumeOrderBlocks:
         
         return filtered_blocks
     
-    def check_price_near_blocks(self, current_price, blocks, threshold=5):
+    def check_price_near_blocks(self, current_price: float, blocks: List[Dict[str, Any]], threshold: float = 5) -> List[Dict[str, Any]]:
         nearby_blocks = []
         for block in blocks:
             distance_to_upper = abs(current_price - block['upper'])
@@ -1044,7 +1045,7 @@ class AlertManager:
         self.cooldown_minutes = cooldown_minutes
         self.alert_timestamps = {}
         
-    def can_send_alert(self, alert_type, alert_id):
+    def can_send_alert(self, alert_type: str, alert_id: str) -> bool:
         """Check if alert can be sent (cooldown period passed)"""
         key = f"{alert_type}_{alert_id}"
         current_time = datetime.now()
@@ -1095,11 +1096,11 @@ class NSEOptionsAnalyzer:
         self.refresh_interval = 2  # 2 minutes default refresh
         self.cached_bias_data = {}
         
-    def set_refresh_interval(self, minutes):
+    def set_refresh_interval(self, minutes: int):
         """Set auto-refresh interval"""
         self.refresh_interval = minutes
     
-    def should_refresh_data(self, instrument):
+    def should_refresh_data(self, instrument: str) -> bool:
         """Check if data should be refreshed based on last refresh time"""
         current_time = datetime.now(self.ist)
         
@@ -1116,7 +1117,7 @@ class NSEOptionsAnalyzer:
         
         return False
         
-    def calculate_greeks(self, option_type, S, K, T, r, sigma):
+    def calculate_greeks(self, option_type: str, S: float, K: float, T: float, r: float, sigma: float) -> Tuple[float, float, float, float, float]:
         """Calculate option Greeks"""
         try:
             d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
@@ -1136,7 +1137,7 @@ class NSEOptionsAnalyzer:
         except:
             return 0, 0, 0, 0, 0
 
-    def fetch_option_chain_data(self, instrument):
+    def fetch_option_chain_data(self, instrument: str) -> Dict[str, Any]:
         """Fetch option chain data from NSE"""
         try:
             headers = {"User-Agent": "Mozilla/5.0"}
@@ -1179,7 +1180,7 @@ class NSEOptionsAnalyzer:
                 'error': str(e)
             }
 
-    def delta_volume_bias(self, price, volume, chg_oi):
+    def delta_volume_bias(self, price: float, volume: float, chg_oi: float) -> str:
         """Calculate delta volume bias"""
         if price > 0 and volume > 0 and chg_oi > 0:
             return "Bullish"
@@ -1192,7 +1193,7 @@ class NSEOptionsAnalyzer:
         else:
             return "Neutral"
 
-    def final_verdict(self, score):
+    def final_verdict(self, score: float) -> str:
         """Determine final verdict based on score"""
         if score >= 4:
             return "Strong Bullish"
@@ -1205,7 +1206,7 @@ class NSEOptionsAnalyzer:
         else:
             return "Neutral"
 
-    def determine_level(self, row):
+    def determine_level(self, row: pd.Series) -> str:
         """Determine support/resistance level based on OI"""
         ce_oi = row['openInterest_CE']
         pe_oi = row['openInterest_PE']
@@ -1220,7 +1221,7 @@ class NSEOptionsAnalyzer:
         else:
             return "Neutral"
 
-    def calculate_max_pain(self, df_full_chain):
+    def calculate_max_pain(self, df_full_chain: pd.DataFrame) -> Optional[float]:
         """Calculate Max Pain strike"""
         try:
             strikes = df_full_chain['strikePrice'].unique()
@@ -1251,7 +1252,7 @@ class NSEOptionsAnalyzer:
         except:
             return None
 
-    def calculate_synthetic_future_bias(self, atm_ce_price, atm_pe_price, atm_strike, spot_price):
+    def calculate_synthetic_future_bias(self, atm_ce_price: float, atm_pe_price: float, atm_strike: float, spot_price: float) -> Tuple[str, float, float]:
         """Calculate Synthetic Future Bias at ATM"""
         try:
             synthetic_future = atm_strike + atm_ce_price - atm_pe_price
@@ -1266,7 +1267,7 @@ class NSEOptionsAnalyzer:
         except:
             return "Neutral", 0, 0
 
-    def calculate_atm_buildup_pattern(self, atm_ce_oi, atm_pe_oi, atm_ce_change, atm_pe_change):
+    def calculate_atm_buildup_pattern(self, atm_ce_oi: float, atm_pe_oi: float, atm_ce_change: float, atm_pe_change: float) -> str:
         """Determine ATM buildup pattern based on OI changes"""
         try:
             # Classify based on OI changes
@@ -1289,7 +1290,7 @@ class NSEOptionsAnalyzer:
         except:
             return "Neutral"
 
-    def calculate_atm_vega_bias(self, atm_ce_vega, atm_pe_vega, atm_ce_oi, atm_pe_oi):
+    def calculate_atm_vega_bias(self, atm_ce_vega: float, atm_pe_vega: float, atm_ce_oi: float, atm_pe_oi: float) -> Tuple[str, float]:
         """Calculate ATM Vega exposure bias"""
         try:
             ce_vega_exposure = atm_ce_vega * atm_ce_oi
@@ -1306,7 +1307,7 @@ class NSEOptionsAnalyzer:
         except:
             return "Neutral", 0
 
-    def find_call_resistance_put_support(self, df_full_chain, spot_price):
+    def find_call_resistance_put_support(self, df_full_chain: pd.DataFrame, spot_price: float) -> Tuple[Optional[float], Optional[float]]:
         """Find key resistance (from Call OI) and support (from Put OI) strikes"""
         try:
             # Find strikes above spot with highest Call OI (Resistance)
@@ -1327,7 +1328,7 @@ class NSEOptionsAnalyzer:
         except:
             return None, None
 
-    def calculate_total_vega_bias(self, df_full_chain):
+    def calculate_total_vega_bias(self, df_full_chain: pd.DataFrame) -> Tuple[str, float, float, float]:
         """Calculate total Vega bias across all strikes"""
         try:
             total_ce_vega = (df_full_chain['Vega_CE'] * df_full_chain['openInterest_CE']).sum()
@@ -1344,7 +1345,7 @@ class NSEOptionsAnalyzer:
         except:
             return "Neutral", 0, 0, 0
 
-    def detect_unusual_activity(self, df_full_chain, spot_price):
+    def detect_unusual_activity(self, df_full_chain: pd.DataFrame, spot_price: float) -> List[Dict[str, Any]]:
         """Detect strikes with unusual activity (high volume relative to OI)"""
         try:
             unusual_strikes = []
@@ -1382,7 +1383,7 @@ class NSEOptionsAnalyzer:
         except:
             return []
 
-    def calculate_overall_buildup_pattern(self, df_full_chain, spot_price):
+    def calculate_overall_buildup_pattern(self, df_full_chain: pd.DataFrame, spot_price: float) -> str:
         """Calculate overall buildup pattern across ITM, ATM, and OTM strikes"""
         try:
             # Separate into ITM, ATM, OTM
@@ -1423,7 +1424,7 @@ class NSEOptionsAnalyzer:
         except:
             return "Neutral"
 
-    def analyze_comprehensive_atm_bias(self, instrument):
+    def analyze_comprehensive_atm_bias(self, instrument: str) -> Optional[Dict[str, Any]]:
         """Comprehensive ATM bias analysis with all metrics"""
         try:
             data = self.fetch_option_chain_data(instrument)
@@ -1577,7 +1578,7 @@ class NSEOptionsAnalyzer:
             print(f"Error in ATM bias analysis: {e}")
             return None
 
-    def calculate_detailed_atm_bias(self, df_atm, atm_strike, spot_price):
+    def calculate_detailed_atm_bias(self, df_atm: pd.DataFrame, atm_strike: float, spot_price: float) -> Dict[str, Any]:
         """Calculate detailed ATM bias breakdown for all metrics"""
         try:
             detailed_bias = {}
@@ -1643,7 +1644,7 @@ class NSEOptionsAnalyzer:
             print(f"Error in detailed ATM bias: {e}")
             return {}
 
-    def get_overall_market_bias(self, force_refresh=False):
+    def get_overall_market_bias(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Get comprehensive market bias across all instruments with auto-refresh"""
         instruments = list(self.NSE_INSTRUMENTS['indices'].keys())
         results = []
@@ -1740,7 +1741,7 @@ class EnhancedNiftyApp:
             st.warning(f"Supabase connection error: {str(e)}")
             self.supabase = None
     
-    def get_dhan_headers(self):
+    def get_dhan_headers(self) -> Dict[str, str]:
         """Get headers for DhanHQ API calls"""
         return {
             'Accept': 'application/json',
@@ -1749,7 +1750,7 @@ class EnhancedNiftyApp:
             'client-id': self.dhan_client_id
         }
     
-    def test_api_connection(self):
+    def test_api_connection(self) -> bool:
         """Test DhanHQ API connection"""
         st.info("🔍 Testing API connection...")
         test_payload = {"IDX_I": [self.nifty_security_id]}
@@ -1774,7 +1775,7 @@ class EnhancedNiftyApp:
             st.error(f"❌ API Test Failed: {str(e)}")
             return False
 
-    def fetch_intraday_data(self, interval="5", days_back=5):
+    def fetch_intraday_data(self, interval: str = "5", days_back: int = 5) -> Optional[Dict[str, Any]]:
         """Fetch intraday data from DhanHQ API"""
         try:
             end_date = datetime.now(self.ist)
@@ -1814,7 +1815,7 @@ class EnhancedNiftyApp:
             st.error(f"❌ Data fetch error: {str(e)}")
             return None
 
-    def process_data(self, api_data):
+    def process_data(self, api_data: Dict[str, Any]) -> pd.DataFrame:
         """Process API data into DataFrame"""
         if not api_data or 'open' not in api_data:
             return pd.DataFrame()
@@ -1834,7 +1835,7 @@ class EnhancedNiftyApp:
         
         return df
 
-    def send_telegram_message(self, message):
+    def send_telegram_message(self, message: str) -> bool:
         """Send message to Telegram"""
         if not self.telegram_bot_token or not self.telegram_chat_id:
             return False
@@ -1896,7 +1897,7 @@ class EnhancedNiftyApp:
         if signals_sent:
             st.rerun()
     
-    def display_trading_signals_panel(self):
+    def display_trading_signals_panel(self) -> bool:
         """Display panel for trading signals and settings"""
         st.sidebar.header("🎯 Trading Signals")
         
@@ -1943,7 +1944,7 @@ class EnhancedNiftyApp:
         
         return enable_trading_signals
 
-    def format_market_bias_for_alerts(self):
+    def format_market_bias_for_alerts(self) -> str:
         """Format market bias data for Telegram alerts"""
         try:
             bias_data = st.session_state.market_bias_data
@@ -1974,7 +1975,7 @@ class EnhancedNiftyApp:
         except Exception as e:
             return f"Market bias analysis temporarily unavailable"
 
-    def check_volume_block_alerts(self, current_price, bullish_blocks, bearish_blocks, threshold=5):
+    def check_volume_block_alerts(self, current_price: float, bullish_blocks: List[Dict[str, Any]], bearish_blocks: List[Dict[str, Any]], threshold: float = 5) -> bool:
         """Check if price is near volume order blocks and send alerts with comprehensive ATM bias"""
         if not bullish_blocks and not bearish_blocks:
             return False
@@ -2055,7 +2056,7 @@ Consider SHORT positions with stop above resistance
         
         return alert_sent
 
-    def check_volume_spike_alerts(self, df):
+    def check_volume_spike_alerts(self, df: pd.DataFrame) -> bool:
         """Check for sudden volume spikes and send alerts with comprehensive ATM bias"""
         if df.empty or len(df) < 2:
             return False
@@ -2112,7 +2113,7 @@ Watch for breakout/breakdown confirmation!"""
         
         return False
 
-    def get_bias_color(self, bias_text):
+    def get_bias_color(self, bias_text: str) -> str:
         """Get color for bias text"""
         if 'Bullish' in str(bias_text):
             return 'bullish'
@@ -2121,7 +2122,7 @@ Watch for breakout/breakdown confirmation!"""
         else:
             return 'neutral'
 
-    def get_score_color(self, score):
+    def get_score_color(self, score: float) -> str:
         """Get color for bias score"""
         if score >= 2:
             return 'bullish'
@@ -2130,7 +2131,7 @@ Watch for breakout/breakdown confirmation!"""
         else:
             return 'neutral'
 
-    def get_pcr_color(self, pcr_value):
+    def get_pcr_color(self, pcr_value: float) -> str:
         """Get color for PCR value"""
         if pcr_value > 1.2:
             return 'bullish'
@@ -2139,7 +2140,7 @@ Watch for breakout/breakdown confirmation!"""
         else:
             return 'neutral'
 
-    def get_diff_color(self, diff_value):
+    def get_diff_color(self, diff_value: float) -> str:
         """Get color for difference values"""
         if diff_value > 0:
             return 'bullish'
@@ -2148,7 +2149,7 @@ Watch for breakout/breakdown confirmation!"""
         else:
             return 'neutral'
 
-    def get_change_color(self, change_value):
+    def get_change_color(self, change_value: float) -> str:
         """Get color for change values"""
         if change_value > 0:
             return 'bullish'
@@ -2157,7 +2158,7 @@ Watch for breakout/breakdown confirmation!"""
         else:
             return 'neutral'
 
-    def get_color_code(self, color_type):
+    def get_color_code(self, color_type: str) -> str:
         """Get hex color code for color type"""
         color_map = {
             'bullish': '#90EE90',  # Light Green
@@ -2167,7 +2168,7 @@ Watch for breakout/breakdown confirmation!"""
         }
         return color_map.get(color_type, '#FFFFFF')
 
-    def calculate_confidence_score(self, instrument_data, comp_metrics):
+    def calculate_confidence_score(self, instrument_data: Dict[str, Any], comp_metrics: Dict[str, Any]) -> float:
         """Calculate confidence score based on multiple factors"""
         confidence = 50  # Base confidence
         
@@ -2424,7 +2425,7 @@ Watch for breakout/breakdown confirmation!"""
         else:
             st.info("👆 Click 'Update Bias Analysis' to run comprehensive technical analysis")
 
-    def create_comprehensive_chart(self, df, bullish_blocks, bearish_blocks, interval):
+    def create_comprehensive_chart(self, df: pd.DataFrame, bullish_blocks: List[Dict[str, Any]], bearish_blocks: List[Dict[str, Any]], interval: str) -> Optional[go.Figure]:
         """Create comprehensive chart with Volume Order Blocks"""
         if df.empty:
             return None
