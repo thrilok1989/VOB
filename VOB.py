@@ -18,6 +18,7 @@ import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple, Any
 import plotly.express as px
+import hashlib
 
 warnings.filterwarnings('ignore')
 
@@ -38,17 +39,21 @@ class RobustDataFetcher:
     def __init__(self):
         self.ist = pytz.timezone('Asia/Kolkata')
         
-    def fetch_nifty_data_with_fallback(self, symbol: str = "^NSEI", period: str = "7d", interval: str = "5m") -> pd.DataFrame:
-        """Fetch Nifty data with multiple fallback methods"""
+    def fetch_nifty_data_with_fallback(self, symbol: str = "^NSEI", period: str = "1d", interval: str = "5m") -> pd.DataFrame:
+        """Fetch Nifty data with multiple fallback methods - Focus on today's data"""
         df = pd.DataFrame()
         
-        # Method 1: Try Yahoo Finance first
+        # Method 1: Try Yahoo Finance first with today's data
         try:
             ticker = yf.Ticker(symbol)
             df = ticker.history(period=period, interval=interval)
-            if not df.empty and len(df) >= 50:
+            if not df.empty and len(df) >= 10:
                 print(f"✓ Yahoo Finance data: {len(df)} candles")
-                return self._process_yahoo_data(df)
+                df = self._process_yahoo_data(df)
+                # Filter for today's data only
+                today = datetime.now(self.ist).date()
+                df = df[df.index.date == today]
+                return df
         except Exception as e:
             print(f"Yahoo Finance failed: {e}")
         
@@ -60,13 +65,17 @@ class RobustDataFetcher:
             try:
                 ticker = yf.Ticker(alt_symbol)
                 df = ticker.history(period=period, interval=interval)
-                if not df.empty and len(df) >= 50:
+                if not df.empty and len(df) >= 10:
                     print(f"✓ Alternate symbol {alt_symbol}: {len(df)} candles")
-                    return self._process_yahoo_data(df)
+                    df = self._process_yahoo_data(df)
+                    # Filter for today's data only
+                    today = datetime.now(self.ist).date()
+                    df = df[df.index.date == today]
+                    return df
             except:
                 continue
         
-        # Method 3: Generate synthetic data for demo purposes
+        # Method 3: Generate synthetic data for demo purposes with today's date
         if df.empty:
             print("⚠️ Using synthetic data for demonstration")
             df = self._generate_synthetic_data()
@@ -97,26 +106,36 @@ class RobustDataFetcher:
         return df
     
     def _generate_synthetic_data(self) -> pd.DataFrame:
-        """Generate synthetic Nifty data for demonstration"""
+        """Generate synthetic Nifty data for demonstration with today's date"""
+        today = datetime.now(self.ist).date()
+        
+        # Generate data for today's market hours only
         dates = pd.date_range(
-            start=datetime.now() - timedelta(days=7),
-            end=datetime.now(),
+            start=datetime.combine(today, datetime.strptime("09:15", "%H:%M").time()),
+            end=datetime.combine(today, datetime.strptime("15:30", "%H:%M").time()),
             freq='5min',
             tz=self.ist
         )
         
-        # Remove non-market hours (9:15 AM to 3:30 PM IST)
-        dates = [d for d in dates if self._is_market_hour(d)]
-        
         n_points = len(dates)
         
-        # Generate realistic price data starting around 22,000
-        base_price = 22000
-        returns = np.random.normal(0, 0.001, n_points)  # Small random returns
+        if n_points == 0:
+            # Fallback: generate some data anyway
+            dates = pd.date_range(
+                start=datetime.now(self.ist) - timedelta(hours=6),
+                end=datetime.now(self.ist),
+                freq='5min',
+                tz=self.ist
+            )
+            n_points = len(dates)
+        
+        # Generate realistic price data starting around current levels
+        base_price = 22150
+        returns = np.random.normal(0, 0.0005, n_points)  # Smaller random returns for intraday
         prices = base_price * (1 + np.cumsum(returns))
         
-        # Add some trends and volatility
-        trend = np.linspace(0, 500, n_points)  # Upward trend
+        # Add intraday trend
+        trend = np.linspace(0, 100, n_points)  # Smaller trend for intraday
         prices += trend
         
         # Generate OHLC data
@@ -128,14 +147,14 @@ class RobustDataFetcher:
                 open_price = data[i-1]['close']
             
             close_price = prices[i]
-            high_price = max(open_price, close_price) + abs(np.random.normal(0, 10))
-            low_price = min(open_price, close_price) - abs(np.random.normal(0, 10))
+            high_price = max(open_price, close_price) + abs(np.random.normal(0, 5))  # Smaller range
+            low_price = min(open_price, close_price) - abs(np.random.normal(0, 5))   # Smaller range
             
             # Ensure high >= open,close >= low
             high_price = max(high_price, open_price, close_price)
             low_price = min(low_price, open_price, close_price)
             
-            volume = max(1000000, int(abs(np.random.normal(2000000, 1000000))))
+            volume = max(500000, int(abs(np.random.normal(1000000, 500000))))  # Realistic intraday volume
             
             data.append({
                 'datetime': date,
@@ -148,7 +167,7 @@ class RobustDataFetcher:
         
         df = pd.DataFrame(data)
         df.set_index('datetime', inplace=True)
-        print(f"✓ Synthetic data generated: {len(df)} candles")
+        print(f"✓ Synthetic data generated for today: {len(df)} candles")
         return df
     
     def _is_market_hour(self, dt: datetime) -> bool:
@@ -1287,6 +1306,11 @@ class OptionsBiasTabulation:
         # Visual Analysis
         self._create_visual_analysis(instrument_data, bias_metrics)
     
+    def _generate_unique_id(self, base_name: str, instrument: str) -> str:
+        """Generate unique ID for charts to avoid duplicate element errors"""
+        unique_str = f"{base_name}_{instrument}_{datetime.now().timestamp()}"
+        return hashlib.md5(unique_str.encode()).hexdigest()[:10]
+    
     def _create_visual_analysis(self, instrument_data: Dict, bias_metrics: Dict) -> None:
         """Create visual analysis components"""
         
@@ -1297,6 +1321,7 @@ class OptionsBiasTabulation:
         with col1:
             # Bias Score Gauge
             bias_score = instrument_data.get('bias_score', 0)
+            unique_id = self._generate_unique_id("bias_gauge", instrument_data['instrument'])
             fig_gauge = go.Figure(go.Indicator(
                 mode = "gauge+number+delta",
                 value = bias_score,
@@ -1317,11 +1342,12 @@ class OptionsBiasTabulation:
                         'value': bias_score}}
             ))
             fig_gauge.update_layout(height=300, margin=dict(l=10, r=10, t=50, b=10))
-            st.plotly_chart(fig_gauge, use_container_width=True)
+            st.plotly_chart(fig_gauge, use_container_width=True, key=f"gauge_{unique_id}")
         
         with col2:
             # PCR Analysis
             pcr_oi = instrument_data.get('pcr_oi', 1.0)
+            unique_id = self._generate_unique_id("pcr_gauge", instrument_data['instrument'])
             fig_pcr = go.Figure(go.Indicator(
                 mode = "number+gauge",
                 value = pcr_oi,
@@ -1344,11 +1370,12 @@ class OptionsBiasTabulation:
                     'bar': {'color': "black"}}
             ))
             fig_pcr.update_layout(height=300, margin=dict(l=10, r=10, t=50, b=10))
-            st.plotly_chart(fig_pcr, use_container_width=True)
+            st.plotly_chart(fig_pcr, use_container_width=True, key=f"pcr_{unique_id}")
         
         with col3:
             # Confidence Meter
             confidence = int(bias_metrics['signal_strength']['Confidence Score'].replace('%', ''))
+            unique_id = self._generate_unique_id("confidence_gauge", instrument_data['instrument'])
             fig_confidence = go.Figure(go.Indicator(
                 mode = "gauge+number",
                 value = confidence,
@@ -1368,7 +1395,7 @@ class OptionsBiasTabulation:
                         'value': confidence}}
             ))
             fig_confidence.update_layout(height=300, margin=dict(l=10, r=10, t=50, b=10))
-            st.plotly_chart(fig_confidence, use_container_width=True)
+            st.plotly_chart(fig_confidence, use_container_width=True, key=f"confidence_{unique_id}")
         
         # OI Change Visualization
         st.subheader("📊 OI Change Analysis")
@@ -1379,6 +1406,7 @@ class OptionsBiasTabulation:
             # CE vs PE OI Change
             ce_change = instrument_data.get('total_ce_change', 0)
             pe_change = instrument_data.get('total_pe_change', 0)
+            unique_id = self._generate_unique_id("oi_change", instrument_data['instrument'])
             
             fig_oi_change = go.Figure(data=[
                 go.Bar(name='CE OI Change', x=['Call OI'], y=[ce_change], marker_color='red'),
@@ -1389,12 +1417,13 @@ class OptionsBiasTabulation:
                 yaxis_title='OI Change',
                 showlegend=True
             )
-            st.plotly_chart(fig_oi_change, use_container_width=True)
+            st.plotly_chart(fig_oi_change, use_container_width=True, key=f"oi_change_{unique_id}")
         
         with col2:
             # PCR Trend
             pcr_trend = instrument_data.get('pcr_trend', 'NEUTRAL')
             pcr_momentum = instrument_data.get('comprehensive_metrics', {}).get('pcr_momentum', 'STABLE')
+            unique_id = self._generate_unique_id("pcr_trend", instrument_data['instrument'])
             
             trend_value = 2 if 'STRONG BULLISH' in pcr_trend else 1 if 'BULLISH' in pcr_trend else -1 if 'BEARISH' in pcr_trend else -2 if 'STRONG BEARISH' in pcr_trend else 0
             
@@ -1420,7 +1449,7 @@ class OptionsBiasTabulation:
                     'bar': {'color': "black"}}
             ))
             fig_trend.update_layout(height=300, margin=dict(l=10, r=10, t=50, b=10))
-            st.plotly_chart(fig_trend, use_container_width=True)
+            st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{unique_id}")
         
         # Trading Recommendation Box
         recommendation = bias_metrics['signal_strength']['Recommendation']
@@ -1571,6 +1600,7 @@ class OptionsBiasTabulation:
             bearish_count = len([i for i in market_bias_data if 'Bearish' in i['overall_bias']])
             neutral_count = len([i for i in market_bias_data if 'Neutral' in i['overall_bias']])
             
+            unique_id = self._generate_unique_id("sentiment_pie", "all")
             fig_sentiment = px.pie(
                 values=[bullish_count, bearish_count, neutral_count],
                 names=['Bullish', 'Bearish', 'Neutral'],
@@ -1578,7 +1608,7 @@ class OptionsBiasTabulation:
                 color=['Bullish', 'Bearish', 'Neutral'],
                 color_discrete_map={'Bullish': 'green', 'Bearish': 'red', 'Neutral': 'gray'}
             )
-            st.plotly_chart(fig_sentiment, use_container_width=True)
+            st.plotly_chart(fig_sentiment, use_container_width=True, key=f"sentiment_{unique_id}")
         
         with col2:
             # Average bias scores
@@ -1671,11 +1701,11 @@ class EnhancedNiftyApp:
             self.supabase = None
 
     def fetch_price_data(self) -> pd.DataFrame:
-        """Fetch price data with robust error handling"""
+        """Fetch price data with robust error handling - Focus on today's data"""
         if st.session_state.price_data is not None:
             return st.session_state.price_data
             
-        with st.spinner("📊 Fetching market data..."):
+        with st.spinner("📊 Fetching today's market data..."):
             try:
                 df = self.data_fetcher.fetch_nifty_data_with_fallback()
                 st.session_state.price_data = df
@@ -1890,6 +1920,7 @@ class EnhancedNiftyApp:
                     'Neutral': bias_data['neutral_count']
                 }
                 
+                unique_id = self.tabulation_analyzer._generate_unique_id("bias_pie", "technical")
                 fig_pie = px.pie(
                     values=list(bias_counts.values()),
                     names=list(bias_counts.keys()),
@@ -1901,10 +1932,11 @@ class EnhancedNiftyApp:
                         'Neutral': 'gray'
                     }
                 )
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, use_container_width=True, key=f"bias_pie_{unique_id}")
             
             with col2:
                 # Indicator scores bar chart
+                unique_id = self.tabulation_analyzer._generate_unique_id("bias_bar", "technical")
                 fig_bar = px.bar(
                     bias_df,
                     x='indicator',
@@ -1918,7 +1950,7 @@ class EnhancedNiftyApp:
                     }
                 )
                 fig_bar.update_layout(xaxis_tickangle=-45)
-                st.plotly_chart(fig_bar, use_container_width=True)
+                st.plotly_chart(fig_bar, use_container_width=True, key=f"bias_bar_{unique_id}")
             
             if bias_data.get('note'):
                 st.info(f"**Note**: {bias_data['note']}")
@@ -2104,10 +2136,18 @@ class EnhancedNiftyApp:
         if df.empty:
             return None
         
+        # Filter for today's data only
+        today = datetime.now(self.ist).date()
+        df_today = df[df.index.date == today]
+        
+        if df_today.empty:
+            # If no today's data, use the available data
+            df_today = df
+        
         fig = make_subplots(
             rows=2, cols=1,
             row_heights=[0.7, 0.3],
-            subplot_titles=('Nifty 50 Price with Volume Order Blocks', 'Volume'),
+            subplot_titles=(f'Nifty 50 Price - {today.strftime("%Y-%m-%d")}', 'Volume'),
             vertical_spacing=0.05,
             shared_xaxes=True
         )
@@ -2115,11 +2155,11 @@ class EnhancedNiftyApp:
         # Candlestick chart
         fig.add_trace(
             go.Candlestick(
-                x=df.index,
-                open=df['open'],
-                high=df['high'],
-                low=df['low'],
-                close=df['close'],
+                x=df_today.index,
+                open=df_today['open'],
+                high=df_today['high'],
+                low=df_today['low'],
+                close=df_today['close'],
                 name='Nifty 50',
                 increasing_line_color='#00ff88',
                 decreasing_line_color='#ff4444'
@@ -2159,12 +2199,12 @@ class EnhancedNiftyApp:
         
         # Volume bars
         bar_colors = ['#00ff88' if close >= open else '#ff4444' 
-                     for close, open in zip(df['close'], df['open'])]
+                     for close, open in zip(df_today['close'], df_today['open'])]
         
         fig.add_trace(
             go.Bar(
-                x=df.index,
-                y=df['volume'],
+                x=df_today.index,
+                y=df_today['volume'],
                 name='Volume',
                 marker_color=bar_colors,
                 opacity=0.7
@@ -2270,6 +2310,7 @@ class EnhancedNiftyApp:
                             st.write(f"- ₹{block['price_level']:.2f} (Vol: {block['volume']:,})")
                 
                 # Data info
+                today = datetime.now(self.ist).date()
                 st.info(f"Data period: {df.index[0].strftime('%Y-%m-%d %H:%M')} to {df.index[-1].strftime('%Y-%m-%d %H:%M')}")
                 
             else:
