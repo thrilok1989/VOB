@@ -29,375 +29,6 @@ st.set_page_config(
 )
 
 # =============================================
-# ENHANCED SAFETY CHECK MODULE
-# =============================================
-
-class TradingSafetyManager:
-    """Comprehensive safety checks for trading signal reliability"""
-    
-    def __init__(self):
-        self.ist = pytz.timezone('Asia/Kolkata')
-        
-    def should_trust_signals(self, df: pd.DataFrame = None) -> Tuple[bool, str, Dict]:
-        """
-        Comprehensive signal reliability check
-        Returns: (is_trustworthy, reason, detailed_report)
-        """
-        detailed_report = {}
-        
-        # 1. BASIC MARKET CONDITIONS
-        basic_checks = {
-            'market_hours': self.is_regular_market_hours(),
-            'normal_volume': self.is_volume_normal(df),
-            'vix_normal': self.is_vix_between(12, 30),
-            'no_large_gaps': not self.has_large_gap(df, 1.0),
-            'data_fresh': self.is_data_timestamp_recent(df, minutes=2),
-            'sufficient_data': self.has_minimum_candles(df, 50)
-        }
-        
-        # 2. ADVANCED CHECKS
-        advanced_checks = {
-            'indicators_aligned': self.are_indicators_aligned(),
-            'market_regime_ok': self.is_market_regime_suitable(df),
-            'options_data_reliable': self.is_options_data_trustworthy(),
-            'volume_profile_healthy': self.is_volume_profile_normal(df),
-            'no_earnings_events': not self.is_earnings_day(),
-            'technical_quality': self.has_good_technical_quality(df)
-        }
-        
-        # 3. FAIL-SAFE CHECKS
-        fail_safe_checks = {
-            'not_extreme_volatility': self.get_volatility_ratio(df) < 3.0,
-            'not_abnormal_spreads': self.are_bid_ask_spreads_normal(),
-            'not_manipulation_signs': not self.detect_abnormal_trading(df),
-            'multiple_timeframe_confirm': self.multiple_timeframe_alignment()
-        }
-        
-        # Combine all checks
-        all_checks = {**basic_checks, **advanced_checks, **fail_safe_checks}
-        detailed_report = all_checks.copy()
-        
-        passed_checks = sum(all_checks.values())
-        total_checks = len(all_checks)
-        
-        # Calculate confidence score
-        confidence = (passed_checks / total_checks) * 100 if total_checks > 0 else 0
-        
-        # Determine reliability
-        if confidence >= 80:
-            return True, f"High reliability ({confidence:.1f}%)", detailed_report
-        elif confidence >= 60:
-            return True, f"Moderate reliability ({confidence:.1f}%)", detailed_report
-        else:
-            failed = [k for k, v in all_checks.items() if not v]
-            reason = f"Low reliability ({confidence:.1f}%): {', '.join(failed[:3])}"
-            return False, reason, detailed_report
-
-    def is_regular_market_hours(self) -> bool:
-        """Check if current time is within regular market hours"""
-        try:
-            now = datetime.now(self.ist)
-            current_time = now.time()
-            
-            # Market hours: 9:15 AM to 3:30 PM IST
-            market_open = datetime.strptime("09:15", "%H:%M").time()
-            market_close = datetime.strptime("15:30", "%H:%M").time()
-            
-            # Check if weekday (Monday to Friday)
-            is_weekday = now.weekday() < 5
-            
-            return (is_weekday and 
-                   market_open <= current_time <= market_close)
-        except:
-            return False
-
-    def is_volume_normal(self, df: pd.DataFrame) -> bool:
-        """Check if volume is within normal range"""
-        try:
-            if df is None or len(df) < 20:
-                return False
-            
-            current_volume = df['volume'].iloc[-1]
-            avg_volume = df['volume'].rolling(20).mean().iloc[-1]
-            
-            if avg_volume == 0:
-                return False
-            
-            volume_ratio = current_volume / avg_volume
-            # Volume between 0.3x and 3x of average
-            return 0.3 <= volume_ratio <= 3.0
-        except:
-            return False
-
-    def is_vix_between(self, lower: float, upper: float) -> bool:
-        """Check if India VIX is within reasonable range"""
-        try:
-            # Try to get current VIX value
-            ticker = yf.Ticker("^INDIAVIX")
-            hist = ticker.history(period="1d", interval="1m")
-            
-            if not hist.empty:
-                vix_value = hist['Close'].iloc[-1]
-                return lower <= vix_value <= upper
-            return True  # If can't fetch VIX, assume normal
-        except:
-            return True  # If VIX fetch fails, don't block signals
-
-    def has_large_gap(self, df: pd.DataFrame, threshold_pct: float = 1.0) -> bool:
-        """Check for large gap openings that invalidate previous analysis"""
-        try:
-            if df is None or len(df) < 2:
-                return False
-            
-            current_open = df['open'].iloc[-1]
-            prev_close = df['close'].iloc[-2]
-            
-            if prev_close == 0:
-                return False
-                
-            gap_pct = abs(current_open - prev_close) / prev_close * 100
-            return gap_pct > threshold_pct
-        except:
-            return False
-
-    def is_data_timestamp_recent(self, df: pd.DataFrame, minutes: int = 2) -> bool:
-        """Check if data is recent enough"""
-        try:
-            if df is None or df.empty:
-                return False
-                
-            last_timestamp = df.index[-1]
-            current_time = datetime.now(self.ist)
-            
-            if last_timestamp.tzinfo is None:
-                last_timestamp = self.ist.localize(last_timestamp)
-                
-            time_diff = (current_time - last_timestamp).total_seconds() / 60
-            return time_diff <= minutes
-        except:
-            return False
-
-    def has_minimum_candles(self, df: pd.DataFrame, min_candles: int = 50) -> bool:
-        """Check if we have sufficient historical data"""
-        return df is not None and len(df) >= min_candles
-
-    def are_indicators_aligned(self) -> bool:
-        """Check if multiple indicators confirm each other"""
-        try:
-            bias_data = st.session_state.get('comprehensive_bias_data')
-            
-            if not bias_data or not bias_data.get('success'):
-                return False
-            
-            bullish_count = bias_data.get('bullish_count', 0)
-            bearish_count = bias_data.get('bearish_count', 0)
-            total_indicators = bias_data.get('total_indicators', 0)
-            
-            if total_indicators == 0:
-                return False
-            
-            # Require clear majority (at least 60% agreement)
-            min_agreement = total_indicators * 0.6
-            return (bullish_count >= min_agreement or 
-                    bearish_count >= min_agreement)
-        except:
-            return False
-
-    def is_market_regime_suitable(self, df: pd.DataFrame) -> bool:
-        """Check if current market regime works with our strategies"""
-        try:
-            if df is None or len(df) < 20:
-                return False
-                
-            conditions = {
-                'not_choppy': not self.is_choppy_market(df),
-                'not_trend_exhaustion': not self.is_trend_exhausted(df),
-                'reasonable_volatility': self.get_volatility_ratio(df) < 2.5,
-            }
-            return all(conditions.values())
-        except:
-            return False
-
-    def is_options_data_trustworthy(self) -> bool:
-        """Check if options chain data is reliable"""
-        try:
-            market_bias_data = st.session_state.get('market_bias_data')
-            if not market_bias_data:
-                return False
-            
-            for instrument_data in market_bias_data:
-                # Check for abnormal OI patterns
-                total_oi = instrument_data.get('total_ce_oi', 0) + instrument_data.get('total_pe_oi', 0)
-                if total_oi < 1000000:  # Too low OI
-                    return False
-                    
-                # Check PCR sanity
-                pcr_oi = instrument_data.get('pcr_oi', 1.0)
-                if pcr_oi > 3.0 or pcr_oi < 0.2:  # Extreme PCR values
-                    return False
-                    
-                # Check if max pain is reasonable
-                spot = instrument_data.get('spot_price', 0)
-                comp_metrics = instrument_data.get('comprehensive_metrics', {})
-                max_pain = comp_metrics.get('max_pain_strike', spot)
-                
-                if spot == 0:
-                    return False
-                    
-                if abs(spot - max_pain) / spot > 0.05:  # >5% difference
-                    return False
-            
-            return True
-        except:
-            return False
-
-    def is_volume_profile_normal(self, df: pd.DataFrame) -> bool:
-        """Check if volume profile is healthy"""
-        try:
-            if df is None or len(df) < 10:
-                return False
-                
-            # Check for zero volume candles
-            zero_volume_candles = (df['volume'] == 0).sum()
-            zero_volume_ratio = zero_volume_candles / len(df)
-            
-            # Check volume consistency
-            volume_std = df['volume'].tail(10).std()
-            volume_mean = df['volume'].tail(10).mean()
-            
-            volume_consistency = volume_std / volume_mean if volume_mean > 0 else 1.0
-            
-            return (zero_volume_ratio < 0.1 and    # Less than 10% zero volume
-                    volume_consistency < 1.0)      # Reasonable volume consistency
-        except:
-            return False
-
-    def is_earnings_day(self) -> bool:
-        """Check if today is a major earnings day (simplified)"""
-        try:
-            # This would typically check an earnings calendar
-            # For now, return False (no earnings detection)
-            return False
-        except:
-            return False
-
-    def has_good_technical_quality(self, df: pd.DataFrame) -> bool:
-        """Check if technical analysis conditions are favorable"""
-        try:
-            if df is None or len(df) < 20:
-                return False
-            
-            # Check for clean price action (no extreme wicks)
-            recent_candles = df.tail(5)
-            candle_ranges = recent_candles['high'] - recent_candles['low']
-            body_sizes = abs(recent_candles['close'] - recent_candles['open'])
-            
-            # Avoid division by zero
-            valid_ranges = candle_ranges > 0
-            if not valid_ranges.any():
-                return False
-                
-            wick_ratios = (candle_ranges[valid_ranges] - body_sizes[valid_ranges]) / candle_ranges[valid_ranges]
-            avg_wick_ratio = wick_ratios.mean()
-            
-            # Check for consistent volume
-            recent_volume = df['volume'].tail(20)
-            if recent_volume.mean() == 0:
-                return False
-                
-            volume_consistency = recent_volume.std() / recent_volume.mean()
-            
-            # Check for reasonable price movement
-            price_volatility = df['close'].pct_change().tail(10).std()
-            
-            return all([
-                avg_wick_ratio < 0.6,           # Reasonable wick sizes
-                volume_consistency < 1.0,       # Consistent volume
-                price_volatility < 0.03,        # Not extreme volatility
-                not self.is_choppy_market(df)   # Not stuck in tight range
-            ])
-        except:
-            return False
-
-    def get_volatility_ratio(self, df: pd.DataFrame) -> float:
-        """Calculate current volatility relative to historical average"""
-        try:
-            if df is None or len(df) < 20:
-                return 1.0
-                
-            current_volatility = df['close'].pct_change().tail(5).std()
-            historical_volatility = df['close'].pct_change().rolling(20).std().iloc[-1]
-            
-            if historical_volatility == 0:
-                return 1.0
-                
-            return current_volatility / historical_volatility
-        except:
-            return 1.0
-
-    def are_bid_ask_spreads_normal(self) -> bool:
-        """Check if bid-ask spreads are normal (simplified)"""
-        # In a real implementation, this would check actual bid-ask data
-        # For now, assume normal
-        return True
-
-    def detect_abnormal_trading(self, df: pd.DataFrame) -> bool:
-        """Detect signs of market manipulation or abnormal trading"""
-        try:
-            if df is None or len(df) < 10:
-                return False
-                
-            # Check for extreme volume spikes without price movement
-            recent_data = df.tail(10)
-            volume_spikes = (recent_data['volume'] > recent_data['volume'].rolling(5).mean() * 3).sum()
-            price_changes = abs(recent_data['close'].pct_change()).mean()
-            
-            # If multiple volume spikes with little price movement
-            if volume_spikes >= 3 and price_changes < 0.001:
-                return True
-                
-            return False
-        except:
-            return False
-
-    def multiple_timeframe_alignment(self) -> bool:
-        """Check if signals align across multiple timeframes"""
-        try:
-            # This would require fetching data for multiple timeframes
-            # For now, return True (alignment check disabled)
-            return True
-        except:
-            return False
-
-    def is_choppy_market(self, df: pd.DataFrame, lookback: int = 20) -> bool:
-        """Detect choppy/sideways market conditions"""
-        try:
-            if df is None or len(df) < lookback:
-                return False
-                
-            recent_data = df.tail(lookback)
-            price_range = (recent_data['high'].max() - recent_data['low'].min()) / recent_data['close'].iloc[0]
-            
-            # If price range is less than 1% over the lookback period, consider it choppy
-            return price_range < 0.01
-        except:
-            return False
-
-    def is_trend_exhausted(self, df: pd.DataFrame, lookback: int = 10) -> bool:
-        """Detect if current trend might be exhausted"""
-        try:
-            if df is None or len(df) < lookback:
-                return False
-                
-            recent_data = df.tail(lookback)
-            price_change = (recent_data['close'].iloc[-1] - recent_data['close'].iloc[0]) / recent_data['close'].iloc[0]
-            
-            # If significant move (>3%) in short period, might be exhausted
-            return abs(price_change) > 0.03
-        except:
-            return False
-
-# =============================================
 # ENHANCED MARKET DATA FETCHER INTEGRATION
 # =============================================
 
@@ -1636,17 +1267,16 @@ class BiasAnalysisPro:
             }
 
 # =============================================
-# TRADING SIGNAL MANAGER WITH COOLDOWN & SAFETY
+# TRADING SIGNAL MANAGER WITH COOLDOWN
 # =============================================
 
 class TradingSignalManager:
-    """Manage trading signals with cooldown periods and safety checks"""
+    """Manage trading signals with cooldown periods"""
     
     def __init__(self, cooldown_minutes=15):
         self.cooldown_minutes = cooldown_minutes
         self.last_signal_time = {}
         self.sent_signals = set()
-        self.safety_manager = TradingSafetyManager()
         
     def can_send_signal(self, signal_type: str, instrument: str) -> Tuple[bool, int]:
         """Check if signal can be sent based on cooldown"""
@@ -1662,24 +1292,9 @@ class TradingSignalManager:
         self.last_signal_time[key] = current_time
         return True, 0
     
-    def generate_trading_recommendation(self, instrument_data: Dict[str, Any], df: pd.DataFrame = None) -> Optional[Dict[str, Any]]:
-        """Generate trading recommendation with safety checks"""
+    def generate_trading_recommendation(self, instrument_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate trading recommendation based on comprehensive analysis"""
         try:
-            # Safety check first
-            is_trustworthy, reason, report = self.safety_manager.should_trust_signals(df)
-            
-            if not is_trustworthy:
-                return {
-                    'instrument': instrument_data['instrument'],
-                    'signal_type': "BLOCKED",
-                    'direction': "NEUTRAL",
-                    'strength': "LOW",
-                    'confidence': 0,
-                    'timestamp': datetime.now(),
-                    'blocked_reason': reason,
-                    'safety_report': report
-                }
-            
             overall_bias = instrument_data['overall_bias']
             bias_score = instrument_data['bias_score']
             spot_price = instrument_data['spot_price']
@@ -1750,9 +1365,7 @@ class TradingSignalManager:
                     'synthetic_bias': comp_metrics.get('synthetic_bias', 'N/A'),
                     'atm_buildup': comp_metrics.get('atm_buildup', 'N/A'),
                     'vega_bias': comp_metrics.get('atm_vega_bias', 'N/A')
-                },
-                'safety_checked': True,
-                'safety_reason': reason
+                }
             }
             
             return recommendation
@@ -1808,17 +1421,6 @@ class TradingSignalManager:
     
     def format_signal_message(self, recommendation: Dict[str, Any]) -> str:
         """Format trading signal for Telegram notification"""
-        if recommendation.get('signal_type') == "BLOCKED":
-            return f"""🚫 SIGNAL BLOCKED - SAFETY CHECK FAILED
-
-📊 {recommendation['instrument']}
-⏰ Time: {recommendation['timestamp'].strftime('%H:%M:%S')} IST
-
-❌ Reason: {recommendation['blocked_reason']}
-
-⚠️ Trading conditions not favorable
-💡 Wait for better market conditions"""
-
         emoji = "🟢" if recommendation['direction'] == "BULLISH" else "🔴"
         strength_emoji = "🔥" if recommendation['strength'] == "HIGH" else "⚡"
         
@@ -1828,7 +1430,6 @@ class TradingSignalManager:
 🎯 *{recommendation['instrument']} - {recommendation['signal_type']}*
 ⏰ Time: {recommendation['timestamp'].strftime('%H:%M:%S')} IST
 📊 Confidence: {recommendation['confidence']}%
-🛡️ Safety: ✅ PASSED
 
 💰 Current Price: ₹{recommendation['spot_price']:.2f}
 📈 Bias Score: {recommendation['bias_score']:.2f}
@@ -2663,7 +2264,7 @@ class NSEOptionsAnalyzer:
         return results
 
 # =============================================
-# ENHANCED NIFTY APP WITH ALL FEATURES & SAFETY
+# ENHANCED NIFTY APP WITH ALL FEATURES
 # =============================================
 
 class EnhancedNiftyApp:
@@ -2680,8 +2281,7 @@ class EnhancedNiftyApp:
         self.options_analyzer = NSEOptionsAnalyzer()
         self.trading_signal_manager = TradingSignalManager(cooldown_minutes=15)
         self.bias_analyzer = BiasAnalysisPro()
-        self.market_data_fetcher = EnhancedMarketData()
-        self.safety_manager = TradingSafetyManager()  # NEW: Safety manager
+        self.market_data_fetcher = EnhancedMarketData()  # NEW: Enhanced market data
         
         # Initialize session state
         self.init_session_state()
@@ -2710,15 +2310,11 @@ class EnhancedNiftyApp:
             st.session_state.comprehensive_bias_data = None
         if 'last_comprehensive_bias_update' not in st.session_state:
             st.session_state.last_comprehensive_bias_update = None
-        if 'enhanced_market_data' not in st.session_state:
+        if 'enhanced_market_data' not in st.session_state:  # NEW: Enhanced market data
             st.session_state.enhanced_market_data = None
-        if 'last_market_data_update' not in st.session_state:
+        if 'last_market_data_update' not in st.session_state:  # NEW: Enhanced market data
             st.session_state.last_market_data_update = None
-        if 'debug_mode' not in st.session_state:  # NEW: Debug mode
-            st.session_state.debug_mode = False
-        if 'safety_reports' not in st.session_state:  # NEW: Safety reports
-            st.session_state.safety_reports = {}
-        
+    
     def setup_secrets(self):
         """Setup API credentials from Streamlit secrets"""
         try:
@@ -2855,36 +2451,7 @@ class EnhancedNiftyApp:
             st.error(f"Telegram error: {e}")
             return False
 
-    # NEW: Enhanced Safety Display
-    def display_safety_status(self, df: pd.DataFrame = None):
-        """Display comprehensive safety status"""
-        st.sidebar.header("🛡️ Safety Status")
-        
-        if df is not None and not df.empty:
-            is_trustworthy, reason, report = self.safety_manager.should_trust_signals(df)
-            
-            if is_trustworthy:
-                st.sidebar.success(f"✅ {reason}")
-            else:
-                st.sidebar.error(f"❌ {reason}")
-            
-            # Store report for debugging
-            st.session_state.safety_reports['latest'] = report
-            
-            # Show detailed report in debug mode
-            if st.session_state.debug_mode:
-                with st.sidebar.expander("🔍 Safety Report Details"):
-                    st.json(report)
-        
-        # Debug mode toggle
-        st.session_state.debug_mode = st.sidebar.checkbox("Debug Mode", value=False)
-        
-        # Safety settings
-        st.sidebar.subheader("Safety Settings")
-        min_confidence = st.sidebar.slider("Min Confidence %", 50, 90, 70)
-        return min_confidence
-
-    # Enhanced Market Data Display Methods
+    # NEW: Enhanced Market Data Display Methods
     def display_enhanced_market_data(self):
         """Display comprehensive enhanced market data"""
         st.header("🌍 Enhanced Market Data Analysis")
@@ -3145,8 +2712,8 @@ class EnhancedNiftyApp:
         # Day patterns
         st.write(f"**Day Pattern**: {seasonality_data['day_bias']} - {seasonality_data['day_characteristics']}")
 
-    def check_trading_signals(self, df: pd.DataFrame = None):
-        """Check for trading signals with safety checks"""
+    def check_trading_signals(self):
+        """Check for trading signals and send notifications"""
         if not st.session_state.market_bias_data:
             return
         
@@ -3162,17 +2729,12 @@ class EnhancedNiftyApp:
         signals_sent = []
         
         for instrument_data in st.session_state.market_bias_data:
-            # Generate trading recommendation with safety check
-            recommendation = self.trading_signal_manager.generate_trading_recommendation(instrument_data, df)
+            # Generate trading recommendation
+            recommendation = self.trading_signal_manager.generate_trading_recommendation(instrument_data)
             
             if recommendation:
                 instrument = recommendation['instrument']
                 signal_type = recommendation['signal_type']
-                
-                # Skip blocked signals
-                if signal_type == "BLOCKED":
-                    st.warning(f"Signal blocked for {instrument}: {recommendation['blocked_reason']}")
-                    continue
                 
                 # Check cooldown
                 can_send, minutes_remaining = self.trading_signal_manager.can_send_signal(signal_type, instrument)
@@ -3231,22 +2793,13 @@ class EnhancedNiftyApp:
             recent_signals = list(st.session_state.sent_trading_signals.values())[-5:]  # Last 5 signals
             
             for signal in reversed(recent_signals):
-                if signal.get('signal_type') == "BLOCKED":
-                    emoji = "🚫"
-                    signal_text = f"{emoji} {signal['instrument']} BLOCKED"
-                else:
-                    emoji = "🟢" if signal['direction'] == "BULLISH" else "🔴"
-                    signal_text = f"{emoji} {signal['instrument']} {signal['signal_type']}"
-                
-                with st.sidebar.expander(signal_text, expanded=False):
+                emoji = "🟢" if signal['direction'] == "BULLISH" else "🔴"
+                with st.sidebar.expander(f"{emoji} {signal['instrument']} {signal['signal_type']}", expanded=False):
                     st.write(f"Time: {signal['timestamp'].strftime('%H:%M:%S')}")
-                    if signal.get('signal_type') == "BLOCKED":
-                        st.write(f"Reason: {signal['blocked_reason']}")
-                    else:
-                        st.write(f"Confidence: {signal['confidence']}%")
-                        st.write(f"Entry: ₹{signal['entry_zone']}")
-                        st.write(f"Targets: ₹{signal['targets'][0]}, ₹{signal['targets'][1]}")
-                        st.write(f"SL: ₹{signal['stop_loss']}")
+                    st.write(f"Confidence: {signal['confidence']}%")
+                    st.write(f"Entry: ₹{signal['entry_zone']}")
+                    st.write(f"Targets: ₹{signal['targets'][0]}, ₹{signal['targets'][1]}")
+                    st.write(f"SL: ₹{signal['stop_loss']}")
         
         return enable_trading_signals
 
@@ -4191,9 +3744,9 @@ Watch for breakout/breakdown confirmation!"""
         self.alert_manager.cooldown_minutes = cooldown_minutes
         
         # Main content - Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([  # NEW: Added tab6 for Enhanced Market Data
             "📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", 
-            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data"
+            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data"  # NEW: Enhanced Market Data tab
         ])
         
         with tab1:
@@ -4210,9 +3763,6 @@ Watch for breakout/breakdown confirmation!"""
                 api_data = self.fetch_intraday_data(interval=timeframe)
                 if api_data:
                     df = self.process_data(api_data)
-            
-            # Display safety status
-            min_confidence = self.display_safety_status(df)
             
             if not df.empty:
                 latest = df.iloc[-1]
@@ -4329,7 +3879,7 @@ Watch for breakout/breakdown confirmation!"""
                 st.info("Trading signals generated from comprehensive options chain analysis")
             with col2:
                 if st.button("Check Signals Now", type="primary"):
-                    self.check_trading_signals(df if 'df' in locals() else None)
+                    self.check_trading_signals()
             
             st.divider()
             
@@ -4355,33 +3905,30 @@ Watch for breakout/breakdown confirmation!"""
                             st.metric("Signal Confidence", f"{confidence}%")
                         
                         # Generate and display potential signal
-                        recommendation = self.trading_signal_manager.generate_trading_recommendation(instrument_data, df if 'df' in locals() else None)
+                        recommendation = self.trading_signal_manager.generate_trading_recommendation(instrument_data)
                         if recommendation:
-                            if recommendation.get('signal_type') == "BLOCKED":
-                                st.error(f"❌ **Signal Blocked**: {recommendation['blocked_reason']}")
-                            else:
-                                st.success(f"✅ **{recommendation['signal_type']} Signal Ready**")
-                                st.write(f"Strength: {recommendation['strength']} | Confidence: {recommendation['confidence']}%")
-                                
-                                if enable_trading_signals and telegram_enabled:
-                                    can_send, minutes_remaining = self.trading_signal_manager.can_send_signal(
-                                        recommendation['signal_type'], 
-                                        recommendation['instrument']
-                                    )
-                                    if can_send:
-                                        if st.button(
-                                            f"Send {recommendation['instrument']} {recommendation['signal_type']} Signal",
-                                            key=f"send_{recommendation['instrument']}"
-                                        ):
-                                            message = self.trading_signal_manager.format_signal_message(recommendation)
-                                            if self.send_telegram_message(message):
-                                                st.success(f"Signal sent for {recommendation['instrument']}!")
-                                                # Store in session state
-                                                current_time = datetime.now(self.ist)
-                                                signal_key = f"{recommendation['instrument']}_{recommendation['signal_type']}_{current_time.strftime('%Y%m%d_%H%M%S')}"
-                                                st.session_state.sent_trading_signals[signal_key] = recommendation
-                                    else:
-                                        st.warning(f"Cooldown active: {minutes_remaining} minutes remaining")
+                            st.success(f"✅ **{recommendation['signal_type']} Signal Ready**")
+                            st.write(f"Strength: {recommendation['strength']} | Confidence: {recommendation['confidence']}%")
+                            
+                            if enable_trading_signals and telegram_enabled:
+                                can_send, minutes_remaining = self.trading_signal_manager.can_send_signal(
+                                    recommendation['signal_type'], 
+                                    recommendation['instrument']
+                                )
+                                if can_send:
+                                    if st.button(
+                                        f"Send {recommendation['instrument']} {recommendation['signal_type']} Signal",
+                                        key=f"send_{recommendation['instrument']}"
+                                    ):
+                                        message = self.trading_signal_manager.format_signal_message(recommendation)
+                                        if self.send_telegram_message(message):
+                                            st.success(f"Signal sent for {recommendation['instrument']}!")
+                                            # Store in session state
+                                            current_time = datetime.now(self.ist)
+                                            signal_key = f"{recommendation['instrument']}_{recommendation['signal_type']}_{current_time.strftime('%Y%m%d_%H%M%S')}"
+                                            st.session_state.sent_trading_signals[signal_key] = recommendation
+                                else:
+                                    st.warning(f"Cooldown active: {minutes_remaining} minutes remaining")
                         else:
                             st.info("📊 Monitoring market conditions...")
             
@@ -4399,12 +3946,12 @@ Watch for breakout/breakdown confirmation!"""
                     
                     st.dataframe(display_df, use_container_width=True)
         
-        with tab6:
+        with tab6:  # NEW: Enhanced Market Data Tab
             self.display_enhanced_market_data()
         
         # Check for trading signals automatically
         if enable_trading_signals and telegram_enabled:
-            self.check_trading_signals(df if 'df' in locals() else None)
+            self.check_trading_signals()
         
         # Cleanup and auto refresh
         self.alert_manager.cleanup_old_alerts()
