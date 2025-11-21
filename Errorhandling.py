@@ -1,4 +1,4 @@
-the app is working perfectly and giving good bais datas now when does this app does not work can't give correct signal import streamlit as st
+import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
