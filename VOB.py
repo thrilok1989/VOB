@@ -10,6 +10,7 @@ import warnings
 from dhanhq import dhanhq
 import yfinance as yf
 from typing import Dict, List, Optional, Any
+import numpy as np
 
 warnings.filterwarnings('ignore')
 
@@ -21,7 +22,7 @@ st.set_page_config(
 )
 
 # =============================================
-# HELPER: YAHOO SESSION (For Global Markets)
+# HELPER: NETWORK UTILS
 # =============================================
 
 def get_yfinance_session():
@@ -97,7 +98,9 @@ class DhanAdapter:
                 })
                 
                 # Convert Timestamp
-                df['datetime'] = pd.to_datetime(df['timestamp'], unit='s' if data['start_Time'][0] < 10000000000 else 'ms')
+                # Dhan returns epoch seconds usually, sometimes ms. Auto-detect:
+                is_ms = data['start_Time'][0] > 10000000000
+                df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms' if is_ms else 's')
                 df['datetime'] = df['datetime'].dt.tz_localize('UTC').dt.tz_convert(self.ist)
                 df.set_index('datetime', inplace=True)
                 return df
@@ -111,7 +114,7 @@ class DhanAdapter:
         try:
             security_id = self.SECURITY_IDS.get(symbol, '13')
             
-            # 1. If expiry not provided, fetch list and pick earliest
+            # 1. If expiry not provided, fetch list and pick earliest active one
             if not expiry_date:
                 exp_list = self.dhan.option_chain_expiry_list(
                     security_id=security_id,
@@ -120,9 +123,17 @@ class DhanAdapter:
                 if exp_list.get('status') == 'success' and exp_list['data']:
                     # Filter for future dates
                     today = datetime.now().date()
-                    valid_exopiries = [d for d in exp_list['data'] if datetime.strptime(d, "%Y-%m-%d").date() >= today]
-                    if valid_exopiries:
-                        expiry_date = valid_exopiries[0]
+                    valid_expiries = []
+                    for d in exp_list['data']:
+                        try:
+                            date_obj = datetime.strptime(d, "%Y-%m-%d").date()
+                            if date_obj >= today:
+                                valid_expiries.append(d)
+                        except: continue
+                    
+                    valid_expiries.sort()
+                    if valid_expiries:
+                        expiry_date = valid_expiries[0]
             
             if not expiry_date:
                 return {'success': False, 'error': "Could not determine expiry"}
@@ -182,26 +193,64 @@ class BiasAnalyzer:
         self.adapter = adapter
 
     def analyze(self, symbol: str):
+        # Fetch 15m data for reliable trend
         df = self.adapter.get_intraday_data(symbol, days=5, interval_min=15)
         if df.empty: return None
 
-        # Indicators
-        df['RSI'] = self.calculate_rsi(df['Close'])
-        df['EMA9'] = df['Close'].ewm(span=9).mean()
-        df['EMA21'] = df['Close'].ewm(span=21).mean()
+        # --- Calculate Indicators ---
         
+        # 1. RSI (14)
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # 2. EMAs
+        df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
+        df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
+        
+        # 3. VWAP (Approximate for intraday)
+        df['Typical'] = (df['High'] + df['Low'] + df['Close']) / 3
+        df['VWAP'] = (df['Typical'] * df['Volume']).cumsum() / df['Volume'].cumsum()
+
         last = df.iloc[-1]
         
-        # Scoring
+        # --- Bias Scoring System ---
         score = 0
-        if last['RSI'] > 55: score += 1
-        elif last['RSI'] < 45: score -= 1
+        reasons = []
         
-        if last['EMA9'] > last['EMA21']: score += 1
-        else: score -= 1
+        # RSI Check
+        if last['RSI'] > 55: 
+            score += 1
+            reasons.append("RSI Bullish (>55)")
+        elif last['RSI'] < 45: 
+            score -= 1
+            reasons.append("RSI Bearish (<45)")
         
-        if last['Close'] > last['Open']: score += 1 # Price Action
+        # Trend Check (EMA Crossover)
+        if last['EMA9'] > last['EMA21']: 
+            score += 1
+            reasons.append("EMA Trend Bullish")
+        else: 
+            score -= 1
+            reasons.append("EMA Trend Bearish")
         
+        # Price vs VWAP
+        if last['Close'] > last['VWAP']: 
+            score += 1
+            reasons.append("Price > VWAP")
+        else: 
+            score -= 1
+            reasons.append("Price < VWAP")
+            
+        # Price Action (Close > Open)
+        if last['Close'] > last['Open']: 
+            score += 0.5
+        else: 
+            score -= 0.5
+        
+        # Final Verdict
         bias = "NEUTRAL"
         if score >= 2: bias = "BULLISH"
         elif score <= -2: bias = "BEARISH"
@@ -211,15 +260,10 @@ class BiasAnalyzer:
             'score': score,
             'rsi': last['RSI'],
             'price': last['Close'],
-            'df': df
+            'ema_bull': last['EMA9'] > last['EMA21'],
+            'df': df,
+            'reasons': reasons
         }
-
-    def calculate_rsi(self, series, period=14):
-        delta = series.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        return 100 - (100 / (1 + rs))
 
 class OptionChainAnalyzer:
     """Analyzes Dhan Option Chain JSON"""
@@ -249,29 +293,33 @@ class OptionChainAnalyzer:
                 'PE_LTP': pe.get('last_price', 0),
                 'CE_IV': ce.get('implied_volatility', 0),
                 'PE_IV': pe.get('implied_volatility', 0),
-                'CE_Delta': ce_greeks.get('delta', 0),
-                'PE_Delta': pe_greeks.get('delta', 0),
                 'CE_Gamma': ce_greeks.get('gamma', 0),
                 'PE_Gamma': pe_greeks.get('gamma', 0),
-                'CE_Vega': ce_greeks.get('vega', 0),
-                'PE_Vega': pe_greeks.get('vega', 0)
             })
             
         df = pd.DataFrame(strikes_data)
         
+        if df.empty: return None
+
         # Analysis
         total_ce_oi = df['CE_OI'].sum()
         total_pe_oi = df['PE_OI'].sum()
         pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
         
-        # Max Pain
+        # Max Pain Calculation
         df['Total_Pain'] = df.apply(lambda row: self._calculate_pain(row, spot), axis=1)
         max_pain = df.loc[df['Total_Pain'].idxmin()]['Strike'] if not df.empty else spot
+        
+        # Synthetic Future (ATM)
+        atm_strike = df.iloc[(df['Strike'] - spot).abs().argsort()[:1]]['Strike'].values[0]
+        atm_row = df[df['Strike'] == atm_strike].iloc[0]
+        synthetic_fut = atm_strike + atm_row['CE_LTP'] - atm_row['PE_LTP']
         
         return {
             'pcr': pcr,
             'max_pain': max_pain,
             'spot': spot,
+            'synthetic_fut': synthetic_fut,
             'expiry': chain_response['expiry'],
             'df': df,
             'total_ce_oi': total_ce_oi,
@@ -291,23 +339,22 @@ class VolumeOrderBlocks:
     def detect(self, df: pd.DataFrame):
         if df.empty: return [], []
         
-        # Logic: High Volume Candles + Price Rejection
+        # Logic: Candles with 1.5x average volume imply institutional interest
         avg_vol = df['Volume'].rolling(20).mean()
         high_vol_candles = df[df['Volume'] > avg_vol * 1.5]
         
         bullish, bearish = [], []
+        
         for idx, row in high_vol_candles.iterrows():
-            body = abs(row['Close'] - row['Open'])
-            range_len = row['High'] - row['Low']
-            
-            # Bullish: Green candle or Hammer
+            # If Close > Open, it's a bullish high volume zone (Demand)
             if row['Close'] > row['Open']:
                 bullish.append({'time': idx, 'price': row['Low'], 'vol': row['Volume']})
-            # Bearish: Red candle or Shooting Star
+            # If Close < Open, it's a bearish high volume zone (Supply)
             else:
                 bearish.append({'time': idx, 'price': row['High'], 'vol': row['Volume']})
                 
-        return bullish[-3:], bearish[-3:] # Return last 3
+        # Return only the most recent 3 blocks to avoid clutter
+        return bullish[-3:], bearish[-3:] 
 
 # =============================================
 # 5. MAIN APPLICATION
@@ -316,10 +363,12 @@ class VolumeOrderBlocks:
 def main():
     st.title("🚀 Pro Nifty Dashboard (Powered by DhanHQ)")
     
-    # 1. Credentials
+    # 1. Credentials Setup
     try:
         CLIENT_ID = st.secrets["dhan"]["client_id"]
         ACCESS_TOKEN = st.secrets["dhan"]["access_token"]
+        
+        # Initialize Engines
         adapter = DhanAdapter(CLIENT_ID, ACCESS_TOKEN)
         market_data = EnhancedMarketData()
         bias_engine = BiasAnalyzer(adapter)
@@ -328,12 +377,14 @@ def main():
         
         st.sidebar.success("✅ Dhan API Connected")
     except Exception as e:
-        st.error("❌ Dhan Credentials Missing in secrets.toml")
+        st.error("❌ Dhan Credentials Missing in `.streamlit/secrets.toml`")
+        st.info("Please add `[dhan]` section with `client_id` and `access_token`.")
         st.stop()
 
-    # 2. Controls
+    # 2. Sidebar Controls
+    st.sidebar.header("Controls")
     symbol = st.sidebar.selectbox("Select Instrument", ["NIFTY", "BANKNIFTY", "FINNIFTY"])
-    if st.sidebar.button("🔄 Refresh All"):
+    if st.sidebar.button("🔄 Refresh All Data"):
         st.rerun()
 
     # 3. Main Dashboard Layout
@@ -344,17 +395,24 @@ def main():
         col1, col2 = st.columns([3, 1])
         
         # A. Bias Analysis
-        analysis = bias_engine.analyze(symbol)
+        with st.spinner(f"Analyzing {symbol} Trends..."):
+            analysis = bias_engine.analyze(symbol)
         
         if analysis:
             with col2:
                 st.subheader("Market Bias")
                 bias_color = "green" if analysis['bias'] == "BULLISH" else "red" if analysis['bias'] == "BEARISH" else "gray"
                 st.markdown(f"## :{bias_color}[{analysis['bias']}]")
-                st.metric("Score", f"{analysis['score']}/3")
-                st.metric("RSI (15m)", f"{analysis['rsi']:.2f}")
+                st.metric("Tech Score", f"{analysis['score']:.1f} / 3.0")
+                
+                st.markdown("---")
                 st.metric("LTP", f"{analysis['price']:.2f}")
-            
+                st.metric("RSI (14)", f"{analysis['rsi']:.2f}")
+                
+                st.write("**Key Drivers:**")
+                for reason in analysis['reasons']:
+                    st.caption(f"• {reason}")
+
             with col1:
                 # B. Chart with VOB
                 df = analysis['df']
@@ -368,23 +426,30 @@ def main():
                     name=symbol
                 ), row=1, col=1)
                 
+                # EMAs
+                fig.add_trace(go.Scatter(x=df.index, y=df['EMA9'], line=dict(color='blue', width=1), name='EMA 9'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df['EMA21'], line=dict(color='orange', width=1), name='EMA 21'), row=1, col=1)
+                
                 # Volume
-                fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume'), row=2, col=1)
+                colors = ['green' if r['Close'] > r['Open'] else 'red' for i, r in df.iterrows()]
+                fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color=colors), row=2, col=1)
                 
                 # VOB Lines
                 for b in bull:
-                    fig.add_hline(y=b['price'], line_color="green", line_dash="dash", annotation_text="Bull Block", row=1, col=1)
+                    fig.add_hline(y=b['price'], line_color="green", line_dash="dash", row=1, col=1, annotation_text="Demand")
                 for b in bear:
-                    fig.add_hline(y=b['price'], line_color="red", line_dash="dash", annotation_text="Bear Block", row=1, col=1)
+                    fig.add_hline(y=b['price'], line_color="red", line_dash="dash", row=1, col=1, annotation_text="Supply")
                 
-                fig.update_layout(height=600, xaxis_rangeslider_visible=False, template='plotly_dark')
+                fig.update_layout(height=650, xaxis_rangeslider_visible=False, template='plotly_dark', margin=dict(l=0, r=0, t=30, b=0))
                 st.plotly_chart(fig, use_container_width=True)
+                
+                
         else:
-            st.error("Could not fetch Technical Data from Dhan.")
+            st.error("Could not fetch Technical Data from Dhan. Market might be closed or Token expired.")
 
     # --- TAB 2: OPTION CHAIN ---
     with tab2:
-        st.subheader(f"{symbol} Option Chain (Official Dhan Data)")
+        st.subheader(f"{symbol} Option Chain Analysis (Official Dhan Data)")
         
         with st.spinner("Fetching Real-time Greeks & OI..."):
             chain_res = adapter.get_option_chain(symbol)
@@ -396,28 +461,7 @@ def main():
             m1.metric("Spot Price", f"{oc_analysis['spot']}")
             m2.metric("Max Pain", f"{oc_analysis['max_pain']}")
             m3.metric("PCR (OI)", f"{oc_analysis['pcr']:.2f}")
-            m4.metric("Expiry", oc_analysis['expiry'])
-            
-            # Data Table
-            df_chain = oc_analysis['df']
-            
-            # Filter near ATM for display (Spot +/- 2%)
-            spot = oc_analysis['spot']
-            df_display = df_chain[
-                (df_chain['Strike'] > spot * 0.98) & 
-                (df_chain['Strike'] < spot * 1.02)
-            ].sort_values('Strike')
-            
-            # Formatting for Display
-            st.dataframe(
-                df_display.style.background_gradient(subset=['CE_OI', 'PE_OI'], cmap="Blues"),
-                use_container_width=True,
-                column_config={
-                    "Strike": st.column_config.NumberColumn(format="%.0f"),
-                    "CE_OI": st.column_config.NumberColumn(format="%d"),
-                    "PE_OI": st.column_config.NumberColumn(format="%d"),
-                }
-            )
+            m4.metric("Synth Future", f"{oc_analysis['synthetic_fut']:.2f}")
             
             # PCR Gauge
             fig_pcr = go.Figure(go.Indicator(
@@ -434,27 +478,52 @@ def main():
                     ]
                 }
             ))
-            fig_pcr.update_layout(height=300)
-            st.plotly_chart(fig_pcr)
+            fig_pcr.update_layout(height=250, margin=dict(l=20, r=20, t=30, b=20))
+            st.plotly_chart(fig_pcr, use_container_width=True)
             
+            # Data Table
+            df_chain = oc_analysis['df']
+            
+            # Filter near ATM for display (Spot +/- 2.5%)
+            spot = oc_analysis['spot']
+            df_display = df_chain[
+                (df_chain['Strike'] > spot * 0.975) & 
+                (df_chain['Strike'] < spot * 1.025)
+            ].sort_values('Strike')
+            
+            st.write(f"**Option Chain Data ({oc_analysis['expiry']})**")
+            st.dataframe(
+                df_display.style.background_gradient(subset=['CE_OI', 'PE_OI'], cmap="Blues"),
+                use_container_width=True,
+                column_config={
+                    "Strike": st.column_config.NumberColumn(format="%.0f"),
+                    "CE_OI": st.column_config.NumberColumn(format="%d"),
+                    "PE_OI": st.column_config.NumberColumn(format="%d"),
+                    "CE_LTP": st.column_config.NumberColumn(format="%.2f"),
+                    "PE_LTP": st.column_config.NumberColumn(format="%.2f"),
+                }
+            )
         else:
-            st.warning("Option Chain data unavailable. Market might be closed or API limit reached.")
+            st.warning("Option Chain data unavailable. Token might be expired or Market closed.")
 
     # --- TAB 3: GLOBAL MARKETS ---
     with tab3:
         st.subheader("🌍 Global Indices (Yahoo Finance)")
         if st.button("Refresh Global Data"):
-            df_global = market_data.fetch_global_markets()
-            if not df_global.empty:
-                st.dataframe(
-                    df_global.style.applymap(
-                        lambda x: 'color: green' if x > 0 else 'color: red', 
-                        subset=['Change %']
-                    ),
-                    use_container_width=True
-                )
-            else:
-                st.warning("Could not fetch global data.")
+            with st.spinner("Fetching Global Data..."):
+                df_global = market_data.fetch_global_markets()
+                if not df_global.empty:
+                    st.dataframe(
+                        df_global.style.applymap(
+                            lambda x: 'color: green' if x > 0 else 'color: red', 
+                            subset=['Change %']
+                        ),
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("Could not fetch global data. Check internet connection.")
+        else:
+            st.info("Click Refresh to load Yahoo Finance data.")
 
 if __name__ == "__main__":
     main()
