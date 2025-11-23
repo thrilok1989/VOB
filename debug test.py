@@ -152,4 +152,4 @@ st.divider()
 
 # Display current time
 st.write(f"Current Time (UTC): {datetime.utcnow()}")
-st.write(f"Current Time (Local): {datetime.now()}")
+st.write(f"Current Time (Local): {datetime.now()}") 
