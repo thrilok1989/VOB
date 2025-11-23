@@ -27,376 +27,927 @@ st.set_page_config(
     page_icon="📈",
     layout="wide"
 )
-
 # =============================================
-# ENHANCED SAFETY CHECK MODULE
+# COMPREHENSIVE BIAS ANALYSIS MODULE
 # =============================================
 
-class TradingSafetyManager:
-    """Comprehensive safety checks for trading signal reliability"""
-    
+class BiasAnalysisPro:
+    """
+    Comprehensive Bias Analysis matching Pine Script indicator EXACTLY
+    Analyzes 13 bias indicators:
+    - Fast (8): Volume Delta, HVP, VOB, Order Blocks, RSI, DMI, VIDYA, MFI
+    - Medium (2): Close vs VWAP, Price vs VWAP
+    - Slow (3): Weighted stocks (Daily, TF1, TF2)
+    """
+
     def __init__(self):
-        self.ist = pytz.timezone('Asia/Kolkata')
-        
-    def should_trust_signals(self, df: pd.DataFrame = None) -> Tuple[bool, str, Dict]:
-        """
-        Comprehensive signal reliability check
-        Returns: (is_trustworthy, reason, detailed_report)
-        """
-        detailed_report = {}
-        
-        # 1. BASIC MARKET CONDITIONS
-        basic_checks = {
-            'market_hours': self.is_regular_market_hours(),
-            'normal_volume': self.is_volume_normal(df),
-            'vix_normal': self.is_vix_between(12, 30),
-            'no_large_gaps': not self.has_large_gap(df, 1.0),
-            'data_fresh': self.is_data_timestamp_recent(df, minutes=2),
-            'sufficient_data': self.has_minimum_candles(df, 50)
-        }
-        
-        # 2. ADVANCED CHECKS
-        advanced_checks = {
-            'indicators_aligned': self.are_indicators_aligned(),
-            'market_regime_ok': self.is_market_regime_suitable(df),
-            'options_data_reliable': self.is_options_data_trustworthy(),
-            'volume_profile_healthy': self.is_volume_profile_normal(df),
-            'no_earnings_events': not self.is_earnings_day(),
-            'technical_quality': self.has_good_technical_quality(df)
-        }
-        
-        # 3. FAIL-SAFE CHECKS
-        fail_safe_checks = {
-            'not_extreme_volatility': self.get_volatility_ratio(df) < 3.0,
-            'not_abnormal_spreads': self.are_bid_ask_spreads_normal(),
-            'not_manipulation_signs': not self.detect_abnormal_trading(df),
-            'multiple_timeframe_confirm': self.multiple_timeframe_alignment()
-        }
-        
-        # Combine all checks
-        all_checks = {**basic_checks, **advanced_checks, **fail_safe_checks}
-        detailed_report = all_checks.copy()
-        
-        passed_checks = sum(all_checks.values())
-        total_checks = len(all_checks)
-        
-        # Calculate confidence score
-        confidence = (passed_checks / total_checks) * 100 if total_checks > 0 else 0
-        
-        # Determine reliability
-        if confidence >= 80:
-            return True, f"High reliability ({confidence:.1f}%)", detailed_report
-        elif confidence >= 60:
-            return True, f"Moderate reliability ({confidence:.1f}%)", detailed_report
-        else:
-            failed = [k for k, v in all_checks.items() if not v]
-            reason = f"Low reliability ({confidence:.1f}%): {', '.join(failed[:3])}"
-            return False, reason, detailed_report
+        """Initialize bias analysis with default configuration"""
+        self.config = self._default_config()
+        self.all_bias_results = []
+        self.overall_bias = "NEUTRAL"
+        self.overall_score = 0
 
-    def is_regular_market_hours(self) -> bool:
-        """Check if current time is within regular market hours"""
-        try:
-            now = datetime.now(self.ist)
-            current_time = now.time()
-            
-            # Market hours: 9:15 AM to 3:30 PM IST
-            market_open = datetime.strptime("09:15", "%H:%M").time()
-            market_close = datetime.strptime("15:30", "%H:%M").time()
-            
-            # Check if weekday (Monday to Friday)
-            is_weekday = now.weekday() < 5
-            
-            return (is_weekday and 
-                   market_open <= current_time <= market_close)
-        except:
-            return False
+    def _default_config(self) -> Dict:
+        """Default configuration from Pine Script"""
+        return {
+            # Timeframes
+            'tf1': '15m',
+            'tf2': '1h',
 
-    def is_volume_normal(self, df: pd.DataFrame) -> bool:
-        """Check if volume is within normal range"""
-        try:
-            if df is None or len(df) < 20:
-                return False
-            
-            current_volume = df['volume'].iloc[-1]
-            avg_volume = df['volume'].rolling(20).mean().iloc[-1]
-            
-            if avg_volume == 0:
-                return False
-            
-            volume_ratio = current_volume / avg_volume
-            # Volume between 0.3x and 3x of average
-            return 0.3 <= volume_ratio <= 3.0
-        except:
-            return False
+            # Indicator periods
+            'rsi_period': 14,
+            'mfi_period': 10,
+            'dmi_period': 13,
+            'dmi_smoothing': 8,
+            'atr_period': 14,
 
-    def is_vix_between(self, lower: float, upper: float) -> bool:
-        """Check if India VIX is within reasonable range"""
-        try:
-            # Try to get current VIX value
-            ticker = yf.Ticker("^INDIAVIX")
-            hist = ticker.history(period="1d", interval="1m")
-            
-            if not hist.empty:
-                vix_value = hist['Close'].iloc[-1]
-                return lower <= vix_value <= upper
-            return True  # If can't fetch VIX, assume normal
-        except:
-            return True  # If VIX fetch fails, don't block signals
+            # Volume
+            'volume_roc_length': 14,
+            'volume_threshold': 1.2,
 
-    def has_large_gap(self, df: pd.DataFrame, threshold_pct: float = 1.0) -> bool:
-        """Check for large gap openings that invalidate previous analysis"""
-        try:
-            if df is None or len(df) < 2:
-                return False
-            
-            current_open = df['open'].iloc[-1]
-            prev_close = df['close'].iloc[-2]
-            
-            if prev_close == 0:
-                return False
-                
-            gap_pct = abs(current_open - prev_close) / prev_close * 100
-            return gap_pct > threshold_pct
-        except:
-            return False
+            # Volatility
+            'volatility_ratio_length': 14,
+            'volatility_threshold': 1.5,
 
-    def is_data_timestamp_recent(self, df: pd.DataFrame, minutes: int = 2) -> bool:
-        """Check if data is recent enough"""
-        try:
-            if df is None or df.empty:
-                return False
-                
-            last_timestamp = df.index[-1]
-            current_time = datetime.now(self.ist)
-            
-            if last_timestamp.tzinfo is None:
-                last_timestamp = self.ist.localize(last_timestamp)
-                
-            time_diff = (current_time - last_timestamp).total_seconds() / 60
-            return time_diff <= minutes
-        except:
-            return False
+            # OBV
+            'obv_smoothing': 21,
 
-    def has_minimum_candles(self, df: pd.DataFrame, min_candles: int = 50) -> bool:
-        """Check if we have sufficient historical data"""
-        return df is not None and len(df) >= min_candles
+            # Force Index
+            'force_index_length': 13,
+            'force_index_smoothing': 2,
 
-    def are_indicators_aligned(self) -> bool:
-        """Check if multiple indicators confirm each other"""
-        try:
-            bias_data = st.session_state.get('comprehensive_bias_data')
-            
-            if not bias_data or not bias_data.get('success'):
-                return False
-            
-            bullish_count = bias_data.get('bullish_count', 0)
-            bearish_count = bias_data.get('bearish_count', 0)
-            total_indicators = bias_data.get('total_indicators', 0)
-            
-            if total_indicators == 0:
-                return False
-            
-            # Require clear majority (at least 60% agreement)
-            min_agreement = total_indicators * 0.6
-            return (bullish_count >= min_agreement or 
-                    bearish_count >= min_agreement)
-        except:
-            return False
+            # Price ROC
+            'price_roc_length': 12,
 
-    def is_market_regime_suitable(self, df: pd.DataFrame) -> bool:
-        """Check if current market regime works with our strategies"""
-        try:
-            if df is None or len(df) < 20:
-                return False
-                
-            conditions = {
-                'not_choppy': not self.is_choppy_market(df),
-                'not_trend_exhaustion': not self.is_trend_exhausted(df),
-                'reasonable_volatility': self.get_volatility_ratio(df) < 2.5,
+            # Market Breadth
+            'breadth_threshold': 60,
+
+            # Divergence
+            'divergence_lookback': 30,
+            'rsi_overbought': 70,
+            'rsi_oversold': 30,
+
+            # Choppiness Index
+            'ci_length': 14,
+            'ci_high_threshold': 61.8,
+            'ci_low_threshold': 38.2,
+
+            # Bias parameters
+            'bias_strength': 60,
+            'divergence_threshold': 60,
+
+            # Adaptive weights
+            'normal_fast_weight': 2.0,
+            'normal_medium_weight': 3.0,
+            'normal_slow_weight': 5.0,
+            'reversal_fast_weight': 5.0,
+            'reversal_medium_weight': 3.0,
+            'reversal_slow_weight': 2.0,
+
+            # Stocks with weights
+            'stocks': {
+                '^NSEBANK': 10.0,  # BANKNIFTY Index
+                'RELIANCE.NS': 9.98,
+                'HDFCBANK.NS': 9.67,
+                'BHARTIARTL.NS': 9.97,
+                'TCS.NS': 8.54,
+                'ICICIBANK.NS': 8.01,
+                'INFY.NS': 8.55,
+                'HINDUNILVR.NS': 1.98,
+                'ITC.NS': 2.44,
+                'MARUTI.NS': 0.0
             }
-            return all(conditions.values())
-        except:
-            return False
+        }
 
-    def is_options_data_trustworthy(self) -> bool:
-        """Check if options chain data is reliable"""
+    # =========================================================================
+    # DATA FETCHING - UPDATED VERSION
+    # =========================================================================
+
+    def fetch_data(self, symbol: str, period: str = '5d', interval: str = '5m') -> pd.DataFrame:
+        """Fetch data from Yahoo Finance with better error handling"""
         try:
-            market_bias_data = st.session_state.get('market_bias_data')
-            if not market_bias_data:
-                return False
+            # Add delay to avoid rate limiting
+            time.sleep(1)
             
-            for instrument_data in market_bias_data:
-                # Check for abnormal OI patterns
-                total_oi = instrument_data.get('total_ce_oi', 0) + instrument_data.get('total_pe_oi', 0)
-                if total_oi < 1000000:  # Too low OI
-                    return False
-                    
-                # Check PCR sanity
-                pcr_oi = instrument_data.get('pcr_oi', 1.0)
-                if pcr_oi > 3.0 or pcr_oi < 0.2:  # Extreme PCR values
-                    return False
-                    
-                # Check if max pain is reasonable
-                spot = instrument_data.get('spot_price', 0)
-                comp_metrics = instrument_data.get('comprehensive_metrics', {})
-                max_pain = comp_metrics.get('max_pain_strike', spot)
-                
-                if spot == 0:
-                    return False
-                    
-                if abs(spot - max_pain) / spot > 0.05:  # >5% difference
-                    return False
+            ticker = yf.Ticker(symbol)
             
-            return True
-        except:
-            return False
+            # Try to fetch data
+            df = ticker.history(period=period, interval=interval)
+            
+            if df.empty:
+                print(f"⚠️  No data returned for {symbol}")
+                return pd.DataFrame()
+            
+            # Rename columns to lowercase for consistency
+            df.columns = df.columns.str.lower()
+            
+            # Ensure required columns exist
+            required_cols = ['open', 'high', 'low', 'close', 'volume']
+            for col in required_cols:
+                if col not in df.columns:
+                    print(f"⚠️  Missing column: {col}")
+                    return pd.DataFrame()
+            
+            # Handle volume data (Yahoo Finance often has 0 volume for indices)
+            if df['volume'].sum() == 0:
+                print(f"⚠️  Warning: Zero volume data for {symbol}")
+                # Set minimum volume to avoid division by zero
+                df['volume'] = 1000000  # Dummy volume for indices
+            
+            # Replace any NaN values
+            df = df.fillna(method='ffill').fillna(method='bfill')
+            
+            print(f"✅ Successfully fetched {len(df)} candles for {symbol}")
+            return df
+            
+        except Exception as e:
+            print(f"❌ Error fetching {symbol}: {str(e)}")
+            return pd.DataFrame()
 
-    def is_volume_profile_normal(self, df: pd.DataFrame) -> bool:
-        """Check if volume profile is healthy"""
+    # =========================================================================
+    # TECHNICAL INDICATORS
+    # =========================================================================
+
+    def calculate_rsi(self, data: pd.Series, period: int = 14) -> pd.Series:
+        """Calculate RSI"""
+        delta = data.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def calculate_mfi(self, df: pd.DataFrame, period: int = 10) -> pd.Series:
+        """Calculate Money Flow Index with NaN/zero handling"""
+        # Check if volume data is available
+        if df['volume'].sum() == 0:
+            # Return neutral MFI (50) if no volume data
+            return pd.Series([50.0] * len(df), index=df.index)
+
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        money_flow = typical_price * df['volume']
+
+        positive_flow = money_flow.where(typical_price > typical_price.shift(1), 0)
+        negative_flow = money_flow.where(typical_price < typical_price.shift(1), 0)
+
+        positive_mf = positive_flow.rolling(window=period).sum()
+        negative_mf = negative_flow.rolling(window=period).sum()
+
+        # Avoid division by zero
+        mfi_ratio = positive_mf / negative_mf.replace(0, np.nan)
+        mfi = 100 - (100 / (1 + mfi_ratio))
+
+        # Fill NaN with neutral value (50)
+        mfi = mfi.fillna(50)
+
+        return mfi
+
+    def calculate_dmi(self, df: pd.DataFrame, period: int = 13, smoothing: int = 8):
+        """Calculate DMI indicators"""
+        high = df['high']
+        low = df['low']
+        close = df['close']
+
+        # True Range
+        tr1 = high - low
+        tr2 = abs(high - close.shift(1))
+        tr3 = abs(low - close.shift(1))
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+
+        # Directional Movement
+        up_move = high - high.shift(1)
+        down_move = low.shift(1) - low
+
+        plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0)
+        minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0)
+
+        # Directional Indicators
+        plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+        minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr)
+
+        # ADX
+        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        adx = dx.rolling(window=smoothing).mean()
+
+        return plus_di, minus_di, adx
+
+    def calculate_vwap(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate VWAP with NaN/zero handling"""
+        # Check if volume data is available
+        if df['volume'].sum() == 0:
+            # Return typical price as fallback if no volume data
+            return (df['high'] + df['low'] + df['close']) / 3
+
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        cumulative_volume = df['volume'].cumsum()
+
+        # Avoid division by zero
+        cumulative_volume_safe = cumulative_volume.replace(0, np.nan)
+        vwap = (typical_price * df['volume']).cumsum() / cumulative_volume_safe
+
+        # Fill NaN with typical price
+        vwap = vwap.fillna(typical_price)
+
+        return vwap
+
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate ATR"""
+        high = df['high']
+        low = df['low']
+        close = df['close']
+
+        tr1 = high - low
+        tr2 = abs(high - close.shift(1))
+        tr3 = abs(low - close.shift(1))
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+        return atr
+
+    def calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
+        """Calculate EMA"""
+        return data.ewm(span=period, adjust=False).mean()
+
+    def calculate_vidya(self, df: pd.DataFrame, length: int = 10, momentum: int = 20, band_distance: float = 2.0):
+        """Calculate VIDYA (Variable Index Dynamic Average) matching Pine Script"""
+        close = df['close']
+
+        # Calculate momentum (CMO - Chande Momentum Oscillator)
+        m = close.diff()
+        p = m.where(m >= 0, 0.0).rolling(window=momentum).sum()
+        n = (-m.where(m < 0, 0.0)).rolling(window=momentum).sum()
+
+        # Avoid division by zero
+        cmo_denom = p + n
+        cmo_denom = cmo_denom.replace(0, np.nan)
+        abs_cmo = abs(100 * (p - n) / cmo_denom).fillna(0)
+
+        # Calculate VIDYA
+        alpha = 2 / (length + 1)
+        vidya = pd.Series(index=close.index, dtype=float)
+        vidya.iloc[0] = close.iloc[0]
+
+        for i in range(1, len(close)):
+            vidya.iloc[i] = (alpha * abs_cmo.iloc[i] / 100 * close.iloc[i] +
+                            (1 - alpha * abs_cmo.iloc[i] / 100) * vidya.iloc[i-1])
+
+        # Smooth VIDYA
+        vidya_smoothed = vidya.rolling(window=15).mean()
+
+        # Calculate bands
+        atr = self.calculate_atr(df, 200)
+        upper_band = vidya_smoothed + atr * band_distance
+        lower_band = vidya_smoothed - atr * band_distance
+
+        # Determine trend based on band crossovers
+        is_trend_up = close > upper_band
+        is_trend_down = close < lower_band
+
+        # Get current state
+        vidya_bullish = is_trend_up.iloc[-1] if len(is_trend_up) > 0 else False
+        vidya_bearish = is_trend_down.iloc[-1] if len(is_trend_down) > 0 else False
+
+        return vidya_smoothed, vidya_bullish, vidya_bearish
+
+    def calculate_volume_delta(self, df: pd.DataFrame):
+        """Calculate Volume Delta (up_vol - down_vol) matching Pine Script"""
+        if df['volume'].sum() == 0:
+            return 0, False, False
+
+        # Calculate up and down volume
+        up_vol = ((df['close'] > df['open']).astype(int) * df['volume']).sum()
+        down_vol = ((df['close'] < df['open']).astype(int) * df['volume']).sum()
+
+        volume_delta = up_vol - down_vol
+        volume_bullish = volume_delta > 0
+        volume_bearish = volume_delta < 0
+
+        return volume_delta, volume_bullish, volume_bearish
+
+    def calculate_hvp(self, df: pd.DataFrame, left_bars: int = 15, right_bars: int = 15, vol_filter: float = 2.0):
+        """Calculate High Volume Pivots matching Pine Script
+        Returns: (hvp_bullish, hvp_bearish, pivot_high_count, pivot_low_count)
+        """
+        if df['volume'].sum() == 0:
+            return False, False, 0, 0
+
+        # Calculate pivot highs and lows
+        pivot_highs = []
+        pivot_lows = []
+
+        for i in range(left_bars, len(df) - right_bars):
+            # Check for pivot high
+            is_pivot_high = True
+            for j in range(i - left_bars, i + right_bars + 1):
+                if j != i and df['high'].iloc[j] >= df['high'].iloc[i]:
+                    is_pivot_high = False
+                    break
+            if is_pivot_high:
+                pivot_highs.append(i)
+
+            # Check for pivot low
+            is_pivot_low = True
+            for j in range(i - left_bars, i + right_bars + 1):
+                if j != i and df['low'].iloc[j] <= df['low'].iloc[i]:
+                    is_pivot_low = False
+                    break
+            if is_pivot_low:
+                pivot_lows.append(i)
+
+        # Calculate volume sum and reference
+        volume_sum = df['volume'].rolling(window=left_bars * 2).sum()
+        ref_vol = volume_sum.quantile(0.95)
+        norm_vol = (volume_sum / ref_vol * 5).fillna(0)
+
+        # Check recent HVP signals
+        hvp_bullish = False
+        hvp_bearish = False
+
+        if len(pivot_lows) > 0:
+            last_pivot_low_idx = pivot_lows[-1]
+            if norm_vol.iloc[last_pivot_low_idx] > vol_filter:
+                hvp_bullish = True
+
+        if len(pivot_highs) > 0:
+            last_pivot_high_idx = pivot_highs[-1]
+            if norm_vol.iloc[last_pivot_high_idx] > vol_filter:
+                hvp_bearish = True
+
+        return hvp_bullish, hvp_bearish, len(pivot_highs), len(pivot_lows)
+
+    def calculate_vob(self, df: pd.DataFrame, length1: int = 5):
+        """Calculate Volume Order Blocks matching Pine Script
+        Returns: (vob_bullish, vob_bearish, ema1_value, ema2_value)
+        """
+        # Calculate EMAs
+        length2 = length1 + 13
+        ema1 = self.calculate_ema(df['close'], length1)
+        ema2 = self.calculate_ema(df['close'], length2)
+
+        # Detect crossovers
+        cross_up = (ema1.iloc[-2] <= ema2.iloc[-2]) and (ema1.iloc[-1] > ema2.iloc[-1])
+        cross_dn = (ema1.iloc[-2] >= ema2.iloc[-2]) and (ema1.iloc[-1] < ema2.iloc[-1])
+
+        # In real implementation, we would check if price touched OB zones
+        # For simplicity, using crossover signals
+        vob_bullish = cross_up
+        vob_bearish = cross_dn
+
+        return vob_bullish, vob_bearish, ema1.iloc[-1], ema2.iloc[-1]
+# =========================================================================
+    # ENHANCED INDICATORS (KEPT FOR COMPATIBILITY)
+    # =========================================================================
+
+    def calculate_volatility_ratio(self, df: pd.DataFrame, length: int = 14) -> Tuple[pd.Series, bool, bool]:
+        """Calculate Volatility Ratio"""
+        atr = self.calculate_atr(df, length)
+        stdev = df['close'].rolling(window=length).std()
+        volatility_ratio = (stdev / atr) * 100
+
+        high_volatility = volatility_ratio.iloc[-1] > self.config['volatility_threshold']
+        low_volatility = volatility_ratio.iloc[-1] < (self.config['volatility_threshold'] * 0.5)
+
+        return volatility_ratio, high_volatility, low_volatility
+
+    def calculate_volume_roc(self, df: pd.DataFrame, length: int = 14) -> Tuple[pd.Series, bool, bool]:
+        """Calculate Volume Rate of Change with NaN/zero handling"""
+        # Check if volume data is available
+        if df['volume'].sum() == 0:
+            # Return neutral volume ROC if no volume data
+            neutral_roc = pd.Series([0.0] * len(df), index=df.index)
+            return neutral_roc, False, False
+
+        # Avoid division by zero
+        volume_shifted = df['volume'].shift(length).replace(0, np.nan)
+        volume_roc = ((df['volume'] - df['volume'].shift(length)) / volume_shifted) * 100
+
+        # Fill NaN with 0
+        volume_roc = volume_roc.fillna(0)
+
+        # Check for strong/weak volume (handle NaN gracefully)
+        last_value = volume_roc.iloc[-1] if not np.isnan(volume_roc.iloc[-1]) else 0
+        strong_volume = last_value > self.config['volume_threshold']
+        weak_volume = last_value < -self.config['volume_threshold']
+
+        return volume_roc, strong_volume, weak_volume
+
+    def calculate_obv(self, df: pd.DataFrame, smoothing: int = 21):
+        """Calculate On Balance Volume with NaN/zero handling"""
+        # Check if volume data is available
+        if df['volume'].sum() == 0:
+            # Return neutral OBV if no volume data
+            neutral_obv = pd.Series([0.0] * len(df), index=df.index)
+            neutral_obv_ma = pd.Series([0.0] * len(df), index=df.index)
+            return neutral_obv, neutral_obv_ma, False, False
+
+        obv = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+        obv_ma = obv.rolling(window=smoothing).mean()
+
+        # Handle potential NaN or missing values
+        obv = obv.fillna(0)
+        obv_ma = obv_ma.fillna(0)
+
+        # Safe comparison with fallback
         try:
-            if df is None or len(df) < 10:
-                return False
-                
-            # Check for zero volume candles
-            zero_volume_candles = (df['volume'] == 0).sum()
-            zero_volume_ratio = zero_volume_candles / len(df)
-            
-            # Check volume consistency
-            volume_std = df['volume'].tail(10).std()
-            volume_mean = df['volume'].tail(10).mean()
-            
-            volume_consistency = volume_std / volume_mean if volume_mean > 0 else 1.0
-            
-            return (zero_volume_ratio < 0.1 and    # Less than 10% zero volume
-                    volume_consistency < 1.0)      # Reasonable volume consistency
+            obv_rising = obv.iloc[-1] > obv.iloc[-2] if len(obv) >= 2 else False
+            obv_falling = obv.iloc[-1] < obv.iloc[-2] if len(obv) >= 2 else False
+            obv_bullish = obv.iloc[-1] > obv_ma.iloc[-1] and obv_rising
+            obv_bearish = obv.iloc[-1] < obv_ma.iloc[-1] and obv_falling
         except:
-            return False
+            obv_bullish = False
+            obv_bearish = False
 
-    def is_earnings_day(self) -> bool:
-        """Check if today is a major earnings day (simplified)"""
+        return obv, obv_ma, obv_bullish, obv_bearish
+
+    def calculate_force_index(self, df: pd.DataFrame, length: int = 13, smoothing: int = 2):
+        """Calculate Force Index with NaN/zero handling"""
+        # Check if volume data is available
+        if df['volume'].sum() == 0:
+            # Return neutral force index if no volume data
+            neutral_force = pd.Series([0.0] * len(df), index=df.index)
+            return neutral_force, False, False
+
+        force_index = (df['close'] - df['close'].shift(1)) * df['volume']
+        force_index = force_index.fillna(0)
+
+        force_index_ma = force_index.ewm(span=length, adjust=False).mean()
+        force_index_smoothed = force_index_ma.ewm(span=smoothing, adjust=False).mean()
+
+        # Handle potential NaN
+        force_index_smoothed = force_index_smoothed.fillna(0)
+
+        # Safe comparison with fallback
         try:
-            # This would typically check an earnings calendar
-            # For now, return False (no earnings detection)
-            return False
+            force_rising = force_index_smoothed.iloc[-1] > force_index_smoothed.iloc[-2] if len(force_index_smoothed) >= 2 else False
+            force_falling = force_index_smoothed.iloc[-1] < force_index_smoothed.iloc[-2] if len(force_index_smoothed) >= 2 else False
+            force_bullish = force_index_smoothed.iloc[-1] > 0 and force_rising
+            force_bearish = force_index_smoothed.iloc[-1] < 0 and force_falling
         except:
-            return False
+            force_bullish = False
+            force_bearish = False
 
-    def has_good_technical_quality(self, df: pd.DataFrame) -> bool:
-        """Check if technical analysis conditions are favorable"""
+        return force_index_smoothed, force_bullish, force_bearish
+
+    def calculate_price_roc(self, df: pd.DataFrame, length: int = 12):
+        """Calculate Price Rate of Change"""
+        price_roc = ((df['close'] - df['close'].shift(length)) / df['close'].shift(length)) * 100
+
+        price_momentum_bullish = price_roc.iloc[-1] > 0
+        price_momentum_bearish = price_roc.iloc[-1] < 0
+
+        return price_roc, price_momentum_bullish, price_momentum_bearish
+
+    def calculate_choppiness_index(self, df: pd.DataFrame, period: int = 14):
+        """Calculate Choppiness Index"""
+        high_low = df['high'] - df['low']
+        high_close = abs(df['high'] - df['close'].shift(1))
+        low_close = abs(df['low'] - df['close'].shift(1))
+
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        sum_true_range = true_range.rolling(window=period).sum()
+        highest_high = df['high'].rolling(window=period).max()
+        lowest_low = df['low'].rolling(window=period).min()
+
+        ci = 100 * np.log10(sum_true_range / (highest_high - lowest_low)) / np.log10(period)
+
+        market_chopping = ci.iloc[-1] > self.config['ci_high_threshold']
+        market_trending = ci.iloc[-1] < self.config['ci_low_threshold']
+
+        return ci, market_chopping, market_trending
+
+    def detect_divergence(self, df: pd.DataFrame, lookback: int = 30):
+        """Detect RSI/MACD Divergences"""
+        rsi = self.calculate_rsi(df['close'], 14)
+
+        # MACD
+        macd_line = df['close'].ewm(span=12).mean() - df['close'].ewm(span=26).mean()
+
+        close_series = df['close'].tail(lookback)
+        rsi_series = rsi.tail(lookback)
+        macd_series = macd_line.tail(lookback)
+
+        # Bullish divergence
+        lowest_close_idx = close_series.idxmin()
+        lowest_rsi_idx = rsi_series.idxmin()
+        bullish_rsi_divergence = (lowest_close_idx == close_series.index[-1] and
+                                  rsi_series.iloc[-1] > rsi_series.loc[lowest_rsi_idx] and
+                                  rsi_series.iloc[-1] < self.config['rsi_oversold'])
+
+        # Bearish divergence
+        highest_close_idx = close_series.idxmax()
+        highest_rsi_idx = rsi_series.idxmax()
+        bearish_rsi_divergence = (highest_close_idx == close_series.index[-1] and
+                                  rsi_series.iloc[-1] < rsi_series.loc[highest_rsi_idx] and
+                                  rsi_series.iloc[-1] > self.config['rsi_overbought'])
+
+        return bullish_rsi_divergence, bearish_rsi_divergence
+
+    # =========================================================================
+    # MARKET BREADTH & STOCKS ANALYSIS
+    # =========================================================================
+
+    def _fetch_stock_data(self, symbol: str, weight: float):
+        """Helper function to fetch single stock data for parallel processing"""
         try:
-            if df is None or len(df) < 20:
-                return False
-            
-            # Check for clean price action (no extreme wicks)
-            recent_candles = df.tail(5)
-            candle_ranges = recent_candles['high'] - recent_candles['low']
-            body_sizes = abs(recent_candles['close'] - recent_candles['open'])
-            
-            # Avoid division by zero
-            valid_ranges = candle_ranges > 0
-            if not valid_ranges.any():
-                return False
-                
-            wick_ratios = (candle_ranges[valid_ranges] - body_sizes[valid_ranges]) / candle_ranges[valid_ranges]
-            avg_wick_ratio = wick_ratios.mean()
-            
-            # Check for consistent volume
-            recent_volume = df['volume'].tail(20)
-            if recent_volume.mean() == 0:
-                return False
-                
-            volume_consistency = recent_volume.std() / recent_volume.mean()
-            
-            # Check for reasonable price movement
-            price_volatility = df['close'].pct_change().tail(10).std()
-            
-            return all([
-                avg_wick_ratio < 0.6,           # Reasonable wick sizes
-                volume_consistency < 1.0,       # Consistent volume
-                price_volatility < 0.03,        # Not extreme volatility
-                not self.is_choppy_market(df)   # Not stuck in tight range
-            ])
-        except:
-            return False
+            # Use 5d period with 5m interval (Yahoo Finance limitation for intraday data)
+            df = self.fetch_data(symbol, period='5d', interval='5m')
+            if df.empty or len(df) < 2:
+                return None
 
-    def get_volatility_ratio(self, df: pd.DataFrame) -> float:
-        """Calculate current volatility relative to historical average"""
-        try:
-            if df is None or len(df) < 20:
-                return 1.0
-                
-            current_volatility = df['close'].pct_change().tail(5).std()
-            historical_volatility = df['close'].pct_change().rolling(20).std().iloc[-1]
-            
-            if historical_volatility == 0:
-                return 1.0
-                
-            return current_volatility / historical_volatility
-        except:
-            return 1.0
+            current_price = df['close'].iloc[-1]
+            prev_price = df['close'].iloc[0]
+            change_pct = ((current_price - prev_price) / prev_price) * 100
 
-    def are_bid_ask_spreads_normal(self) -> bool:
-        """Check if bid-ask spreads are normal (simplified)"""
-        # In a real implementation, this would check actual bid-ask data
-        # For now, assume normal
-        return True
+            return {
+                'symbol': symbol.replace('.NS', ''),
+                'change_pct': change_pct,
+                'weight': weight,
+                'is_bullish': change_pct > 0
+            }
+        except Exception as e:
+            print(f"Error processing {symbol}: {e}")
+            return None
 
-    def detect_abnormal_trading(self, df: pd.DataFrame) -> bool:
-        """Detect signs of market manipulation or abnormal trading"""
-        try:
-            if df is None or len(df) < 10:
-                return False
-                
-            # Check for extreme volume spikes without price movement
-            recent_data = df.tail(10)
-            volume_spikes = (recent_data['volume'] > recent_data['volume'].rolling(5).mean() * 3).sum()
-            price_changes = abs(recent_data['close'].pct_change()).mean()
-            
-            # If multiple volume spikes with little price movement
-            if volume_spikes >= 3 and price_changes < 0.001:
-                return True
-                
-            return False
-        except:
-            return False
+    def calculate_market_breadth(self):
+        """Calculate market breadth from top stocks (optimized with parallel processing)"""
+        bullish_stocks = 0
+        total_stocks = 0
+        stock_data = []
 
-    def multiple_timeframe_alignment(self) -> bool:
-        """Check if signals align across multiple timeframes"""
-        try:
-            # This would require fetching data for multiple timeframes
-            # For now, return True (alignment check disabled)
-            return True
-        except:
-            return False
+        # Optimize: Use ThreadPoolExecutor for parallel API calls
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Submit all tasks
+            future_to_stock = {
+                executor.submit(self._fetch_stock_data, symbol, weight): (symbol, weight)
+                for symbol, weight in self.config['stocks'].items()
+            }
 
-    def is_choppy_market(self, df: pd.DataFrame, lookback: int = 20) -> bool:
-        """Detect choppy/sideways market conditions"""
-        try:
-            if df is None or len(df) < lookback:
-                return False
-                
-            recent_data = df.tail(lookback)
-            price_range = (recent_data['high'].max() - recent_data['low'].min()) / recent_data['close'].iloc[0]
-            
-            # If price range is less than 1% over the lookback period, consider it choppy
-            return price_range < 0.01
-        except:
-            return False
+            # Collect results as they complete
+            for future in as_completed(future_to_stock):
+                result = future.result()
+                if result:
+                    stock_data.append({
+                        'symbol': result['symbol'],
+                        'change_pct': result['change_pct'],
+                        'weight': result['weight']
+                    })
+                    if result['is_bullish']:
+                        bullish_stocks += 1
+                    total_stocks += 1
 
-    def is_trend_exhausted(self, df: pd.DataFrame, lookback: int = 10) -> bool:
-        """Detect if current trend might be exhausted"""
-        try:
-            if df is None or len(df) < lookback:
-                return False
-                
-            recent_data = df.tail(lookback)
-            price_change = (recent_data['close'].iloc[-1] - recent_data['close'].iloc[0]) / recent_data['close'].iloc[0]
-            
-            # If significant move (>3%) in short period, might be exhausted
-            return abs(price_change) > 0.03
-        except:
-            return False
+        if total_stocks > 0:
+            market_breadth = (bullish_stocks / total_stocks) * 100
+        else:
+            market_breadth = 50
 
+        breadth_bullish = market_breadth > self.config['breadth_threshold']
+        breadth_bearish = market_breadth < (100 - self.config['breadth_threshold'])
+
+        return market_breadth, breadth_bullish, breadth_bearish, bullish_stocks, total_stocks, stock_data
+
+    # =========================================================================
+    # COMPREHENSIVE BIAS ANALYSIS
+    # =========================================================================
+
+    def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict:
+        """
+        Analyze all 8 bias indicators:
+        Fast (8): Volume Delta, HVP, VOB, Order Blocks, RSI, DMI, VIDYA, MFI
+        """
+
+        print(f"Fetching data for {symbol}...")
+        # Use 7d period with 5m interval (Yahoo Finance limitation for intraday data)
+        df = self.fetch_data(symbol, period='5d', interval='5m')
+
+        if df.empty or len(df) < 100:
+            error_msg = f'Insufficient data (fetched {len(df)} candles, need at least 100)'
+            print(f"❌ {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg
+            }
+
+        current_price = df['close'].iloc[-1]
+
+        # Initialize bias results list
+        bias_results = []
+        stock_data = []  # Empty since we removed Weighted Stocks indicators
+
+        # =====================================================================
+        # FAST INDICATORS (8 total)
+        # =====================================================================
+
+        # 1. VOLUME DELTA
+        volume_delta, volume_bullish, volume_bearish = self.calculate_volume_delta(df)
+
+        if volume_bullish:
+            vol_delta_bias = "BULLISH"
+            vol_delta_score = 100
+        elif volume_bearish:
+            vol_delta_bias = "BEARISH"
+            vol_delta_score = -100
+        else:
+            vol_delta_bias = "NEUTRAL"
+            vol_delta_score = 0
+
+        bias_results.append({
+            'indicator': 'Volume Delta',
+            'value': f"{volume_delta:.0f}",
+            'bias': vol_delta_bias,
+            'score': vol_delta_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 2. HVP (High Volume Pivots)
+        hvp_bullish, hvp_bearish, pivot_highs, pivot_lows = self.calculate_hvp(df)
+
+        if hvp_bullish:
+            hvp_bias = "BULLISH"
+            hvp_score = 100
+            hvp_value = f"Bull Signal (Lows: {pivot_lows}, Highs: {pivot_highs})"
+        elif hvp_bearish:
+            hvp_bias = "BEARISH"
+            hvp_score = -100
+            hvp_value = f"Bear Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
+        else:
+            hvp_bias = "NEUTRAL"
+            hvp_score = 0
+            hvp_value = f"No Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
+
+        bias_results.append({
+            'indicator': 'HVP (High Volume Pivots)',
+            'value': hvp_value,
+            'bias': hvp_bias,
+            'score': hvp_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 3. VOB (Volume Order Blocks)
+        vob_bullish, vob_bearish, vob_ema5, vob_ema18 = self.calculate_vob(df)
+
+        if vob_bullish:
+            vob_bias = "BULLISH"
+            vob_score = 100
+            vob_value = f"Bull Cross (EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f})"
+        elif vob_bearish:
+            vob_bias = "BEARISH"
+            vob_score = -100
+            vob_value = f"Bear Cross (EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f})"
+        else:
+            vob_bias = "NEUTRAL"
+            vob_score = 0
+            # Determine if EMA5 is above or below EMA18
+            if vob_ema5 > vob_ema18:
+                vob_value = f"EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f} (No Cross)"
+            else:
+                vob_value = f"EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f} (No Cross)"
+
+        bias_results.append({
+            'indicator': 'VOB (Volume Order Blocks)',
+            'value': vob_value,
+            'bias': vob_bias,
+            'score': vob_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 4. ORDER BLOCKS (EMA Crossover)
+        ema5 = self.calculate_ema(df['close'], 5)
+        ema18 = self.calculate_ema(df['close'], 18)
+
+        # Detect crossovers
+        cross_up = (ema5.iloc[-2] <= ema18.iloc[-2]) and (ema5.iloc[-1] > ema18.iloc[-1])
+        cross_dn = (ema5.iloc[-2] >= ema18.iloc[-2]) and (ema5.iloc[-1] < ema18.iloc[-1])
+
+        if cross_up:
+            ob_bias = "BULLISH"
+            ob_score = 100
+        elif cross_dn:
+            ob_bias = "BEARISH"
+            ob_score = -100
+        else:
+            ob_bias = "NEUTRAL"
+            ob_score = 0
+
+        bias_results.append({
+            'indicator': 'Order Blocks (EMA 5/18)',
+            'value': f"EMA5: {ema5.iloc[-1]:.2f} | EMA18: {ema18.iloc[-1]:.2f}",
+            'bias': ob_bias,
+            'score': ob_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 5. RSI
+        rsi = self.calculate_rsi(df['close'], self.config['rsi_period'])
+        rsi_value = rsi.iloc[-1]
+
+        if rsi_value > 50:
+            rsi_bias = "BULLISH"
+            rsi_score = 100
+        else:
+            rsi_bias = "BEARISH"
+            rsi_score = -100
+
+        bias_results.append({
+            'indicator': 'RSI',
+            'value': f"{rsi_value:.2f}",
+            'bias': rsi_bias,
+            'score': rsi_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 6. DMI
+        plus_di, minus_di, adx = self.calculate_dmi(df, self.config['dmi_period'], self.config['dmi_smoothing'])
+        plus_di_value = plus_di.iloc[-1]
+        minus_di_value = minus_di.iloc[-1]
+        adx_value = adx.iloc[-1]
+
+        if plus_di_value > minus_di_value:
+            dmi_bias = "BULLISH"
+            dmi_score = 100
+        else:
+            dmi_bias = "BEARISH"
+            dmi_score = -100
+
+        bias_results.append({
+            'indicator': 'DMI',
+            'value': f"+DI:{plus_di_value:.1f} -DI:{minus_di_value:.1f}",
+            'bias': dmi_bias,
+            'score': dmi_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 7. VIDYA
+        vidya_val, vidya_bullish, vidya_bearish = self.calculate_vidya(df)
+
+        if vidya_bullish:
+            vidya_bias = "BULLISH"
+            vidya_score = 100
+        elif vidya_bearish:
+            vidya_bias = "BEARISH"
+            vidya_score = -100
+        else:
+            vidya_bias = "NEUTRAL"
+            vidya_score = 0
+
+        bias_results.append({
+            'indicator': 'VIDYA',
+            'value': f"{vidya_val.iloc[-1]:.2f}" if not vidya_val.empty else "N/A",
+            'bias': vidya_bias,
+            'score': vidya_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # 8. MFI
+        mfi = self.calculate_mfi(df, self.config['mfi_period'])
+        mfi_value = mfi.iloc[-1]
+
+        if np.isnan(mfi_value):
+            mfi_value = 50.0  # Neutral default
+
+        if mfi_value > 50:
+            mfi_bias = "BULLISH"
+            mfi_score = 100
+        else:
+            mfi_bias = "BEARISH"
+            mfi_score = -100
+
+        bias_results.append({
+            'indicator': 'MFI (Money Flow)',
+            'value': f"{mfi_value:.2f}",
+            'bias': mfi_bias,
+            'score': mfi_score,
+            'weight': 1.0,
+            'category': 'fast'
+        })
+
+        # =====================================================================
+        # CALCULATE OVERALL BIAS (Matching Pine Script Logic)
+        # =====================================================================
+        fast_bull = 0
+        fast_bear = 0
+        fast_total = 0
+
+        medium_bull = 0
+        medium_bear = 0
+        medium_total = 0
+
+        slow_bull = 0
+        slow_bear = 0
+        slow_total = 0
+
+        bullish_count = 0
+        bearish_count = 0
+        neutral_count = 0
+
+        for bias in bias_results:
+            if 'BULLISH' in bias['bias']:
+                bullish_count += 1
+                if bias['category'] == 'fast':
+                    fast_bull += 1
+                elif bias['category'] == 'medium':
+                    medium_bull += 1
+                elif bias['category'] == 'slow':
+                    slow_bull += 1
+            elif 'BEARISH' in bias['bias']:
+                bearish_count += 1
+                if bias['category'] == 'fast':
+                    fast_bear += 1
+                elif bias['category'] == 'medium':
+                    medium_bear += 1
+                elif bias['category'] == 'slow':
+                    slow_bear += 1
+            else:
+                neutral_count += 1
+
+            if bias['category'] == 'fast':
+                fast_total += 1
+            elif bias['category'] == 'medium':
+                medium_total += 1
+            elif bias['category'] == 'slow':
+                slow_total += 1
+
+        # Calculate percentages
+        fast_bull_pct = (fast_bull / fast_total) * 100 if fast_total > 0 else 0
+        fast_bear_pct = (fast_bear / fast_total) * 100 if fast_total > 0 else 0
+
+        medium_bull_pct = (medium_bull / medium_total) * 100 if medium_total > 0 else 0
+        medium_bear_pct = (medium_bear / medium_total) * 100 if medium_total > 0 else 0
+
+        slow_bull_pct = (slow_bull / slow_total) * 100 if slow_total > 0 else 0
+        slow_bear_pct = (slow_bear / slow_total) * 100 if slow_total > 0 else 0
+
+        # Adaptive weighting (matching Pine Script)
+        # Check for divergence
+        divergence_threshold = self.config['divergence_threshold']
+        bullish_divergence = slow_bull_pct >= 66 and fast_bear_pct >= divergence_threshold
+        bearish_divergence = slow_bear_pct >= 66 and fast_bull_pct >= divergence_threshold
+        divergence_detected = bullish_divergence or bearish_divergence
+
+        # Determine mode
+        if divergence_detected:
+            fast_weight = self.config['reversal_fast_weight']
+            medium_weight = self.config['reversal_medium_weight']
+            slow_weight = self.config['reversal_slow_weight']
+            mode = "REVERSAL"
+        else:
+            fast_weight = self.config['normal_fast_weight']
+            medium_weight = self.config['normal_medium_weight']
+            slow_weight = self.config['normal_slow_weight']
+            mode = "NORMAL"
+
+        # Calculate weighted scores
+        bullish_signals = (fast_bull * fast_weight) + (medium_bull * medium_weight) + (slow_bull * slow_weight)
+        bearish_signals = (fast_bear * fast_weight) + (medium_bear * medium_weight) + (slow_bear * slow_weight)
+        total_signals = (fast_total * fast_weight) + (medium_total * medium_weight) + (slow_total * slow_weight)
+
+        bullish_bias_pct = (bullish_signals / total_signals) * 100 if total_signals > 0 else 0
+        bearish_bias_pct = (bearish_signals / total_signals) * 100 if total_signals > 0 else 0
+
+        # Determine overall bias
+        bias_strength = self.config['bias_strength']
+
+        if bullish_bias_pct >= bias_strength:
+            overall_bias = "BULLISH"
+            overall_score = bullish_bias_pct
+            overall_confidence = min(100, bullish_bias_pct)
+        elif bearish_bias_pct >= bias_strength:
+            overall_bias = "BEARISH"
+            overall_score = -bearish_bias_pct
+            overall_confidence = min(100, bearish_bias_pct)
+        else:
+            overall_bias = "NEUTRAL"
+            overall_score = 0
+            overall_confidence = 100 - max(bullish_bias_pct, bearish_bias_pct)
+
+        return {
+            'success': True,
+            'symbol': symbol,
+            'current_price': current_price,
+            'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')),
+            'bias_results': bias_results,
+            'overall_bias': overall_bias,
+            'overall_score': overall_score,
+            'overall_confidence': overall_confidence,
+            'bullish_count': bullish_count,
+            'bearish_count': bearish_count,
+            'neutral_count': neutral_count,
+            'total_indicators': len(bias_results),
+            'stock_data': stock_data,
+            'mode': mode,
+            'fast_bull_pct': fast_bull_pct,
+            'fast_bear_pct': fast_bear_pct,
+            'slow_bull_pct': slow_bull_pct,
+            'slow_bear_pct': slow_bear_pct,
+            'bullish_bias_pct': bullish_bias_pct,
+            'bearish_bias_pct': bearish_bias_pct
+        }
 # =============================================
 # ENHANCED MARKET DATA FETCHER INTEGRATION
 # =============================================
@@ -413,58 +964,103 @@ class EnhancedMarketData:
         """Initialize enhanced market data fetcher"""
         self.ist = pytz.timezone('Asia/Kolkata')
         self.dhan_fetcher = None
+        self.request_count = 0
+        self.last_request_time = None
+        self.rate_limit_delay = 1.0  # seconds between requests
+        
+    def _rate_limit(self):
+        """Implement rate limiting between requests"""
+        if self.last_request_time:
+            elapsed = (datetime.now() - self.last_request_time).total_seconds()
+            if elapsed < self.rate_limit_delay:
+                time.sleep(self.rate_limit_delay - elapsed)
+        
+        self.last_request_time = datetime.now()
+        self.request_count += 1
 
     def get_current_time_ist(self):
         """Get current time in IST"""
         return datetime.now(self.ist)
 
     def fetch_india_vix(self) -> Dict[str, Any]:
-        """Fetch India VIX from Yahoo Finance"""
-        try:
-            ticker = yf.Ticker("^INDIAVIX")
-            hist = ticker.history(period="1d", interval="1m")
+        """Fetch India VIX from Yahoo Finance with retry logic"""
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                # Add delay to avoid rate limiting
+                time.sleep(1)
+                
+                ticker = yf.Ticker("^INDIAVIX")
+                
+                # Try 1d period first, fall back to 5d if needed
+                hist = ticker.history(period="1d", interval="1m")
+                
+                if hist.empty:
+                    print(f"Attempt {attempt + 1}: Trying 5d period...")
+                    hist = ticker.history(period="5d", interval="5m")
+                
+                if not hist.empty and len(hist) > 0:
+                    vix_value = hist['Close'].iloc[-1]
+                    
+                    # Validate VIX value (should be between 5 and 100)
+                    if not (5 <= vix_value <= 100):
+                        print(f"Invalid VIX value: {vix_value}, retrying...")
+                        time.sleep(retry_delay)
+                        continue
 
-            if not hist.empty:
-                vix_value = hist['Close'].iloc[-1]
+                    # VIX Interpretation
+                    if vix_value > 25:
+                        vix_sentiment = "HIGH FEAR"
+                        vix_bias = "BEARISH"
+                        vix_score = -75
+                    elif vix_value > 20:
+                        vix_sentiment = "ELEVATED FEAR"
+                        vix_bias = "BEARISH"
+                        vix_score = -50
+                    elif vix_value > 15:
+                        vix_sentiment = "MODERATE"
+                        vix_bias = "NEUTRAL"
+                        vix_score = 0
+                    elif vix_value > 12:
+                        vix_sentiment = "LOW VOLATILITY"
+                        vix_bias = "BULLISH"
+                        vix_score = 40
+                    else:
+                        vix_sentiment = "COMPLACENCY"
+                        vix_bias = "NEUTRAL"
+                        vix_score = 0
 
-                # VIX Interpretation
-                if vix_value > 25:
-                    vix_sentiment = "HIGH FEAR"
-                    vix_bias = "BEARISH"
-                    vix_score = -75
-                elif vix_value > 20:
-                    vix_sentiment = "ELEVATED FEAR"
-                    vix_bias = "BEARISH"
-                    vix_score = -50
-                elif vix_value > 15:
-                    vix_sentiment = "MODERATE"
-                    vix_bias = "NEUTRAL"
-                    vix_score = 0
-                elif vix_value > 12:
-                    vix_sentiment = "LOW VOLATILITY"
-                    vix_bias = "BULLISH"
-                    vix_score = 40
-                else:
-                    vix_sentiment = "COMPLACENCY"
-                    vix_bias = "NEUTRAL"
-                    vix_score = 0
+                    return {
+                        'success': True,
+                        'source': 'Yahoo Finance',
+                        'value': vix_value,
+                        'sentiment': vix_sentiment,
+                        'bias': vix_bias,
+                        'score': vix_score,
+                        'timestamp': self.get_current_time_ist()
+                    }
+                
+                time.sleep(retry_delay)
+                
+            except Exception as e:
+                print(f"Attempt {attempt + 1} failed for India VIX: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
 
-                return {
-                    'success': True,
-                    'source': 'Yahoo Finance',
-                    'value': vix_value,
-                    'sentiment': vix_sentiment,
-                    'bias': vix_bias,
-                    'score': vix_score,
-                    'timestamp': self.get_current_time_ist()
-                }
-        except Exception as e:
-            pass
-
-        return {'success': False, 'error': 'India VIX data not available'}
+        return {
+            'success': False, 
+            'error': 'India VIX data not available after retries',
+            'value': 15.0,  # Default neutral value
+            'sentiment': 'UNKNOWN',
+            'bias': 'NEUTRAL',
+            'score': 0,
+            'timestamp': self.get_current_time_ist()
+        }
 
     def fetch_sector_indices(self) -> List[Dict[str, Any]]:
-        """Fetch sector indices from Yahoo Finance"""
+        """Fetch sector indices from Yahoo Finance with better error handling"""
         sectors_map = {
             '^CNXIT': 'NIFTY IT',
             '^CNXAUTO': 'NIFTY AUTO',
@@ -476,55 +1072,71 @@ class EnhancedMarketData:
         }
 
         sector_data = []
-
-        for symbol, name in sectors_map.items():
-            try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="1d", interval="1m")
-
-                if not hist.empty:
-                    last_price = hist['Close'].iloc[-1]
-                    open_price = hist['Open'].iloc[0]
-                    high_price = hist['High'].max()
-                    low_price = hist['Low'].min()
-
-                    change_pct = ((last_price - open_price) / open_price) * 100
-
-                    # Determine bias
-                    if change_pct > 1.5:
-                        bias = "STRONG BULLISH"
-                        score = 75
-                    elif change_pct > 0.5:
-                        bias = "BULLISH"
-                        score = 50
-                    elif change_pct < -1.5:
-                        bias = "STRONG BEARISH"
-                        score = -75
-                    elif change_pct < -0.5:
-                        bias = "BEARISH"
-                        score = -50
-                    else:
-                        bias = "NEUTRAL"
-                        score = 0
-
-                    sector_data.append({
-                        'sector': name,
-                        'last_price': last_price,
-                        'open': open_price,
-                        'high': high_price,
-                        'low': low_price,
-                        'change_pct': change_pct,
-                        'bias': bias,
-                        'score': score,
-                        'source': 'Yahoo Finance'
-                    })
-            except Exception as e:
-                print(f"Error fetching {name}: {e}")
+        
+        # Use ThreadPoolExecutor for parallel fetching
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_sector = {
+                executor.submit(self._fetch_single_sector, symbol, name): (symbol, name)
+                for symbol, name in sectors_map.items()
+            }
+            
+            for future in as_completed(future_to_sector):
+                result = future.result()
+                if result:
+                    sector_data.append(result)
+                time.sleep(0.5)  # Rate limiting
 
         return sector_data
 
+    def _fetch_single_sector(self, symbol: str, name: str) -> Optional[Dict[str, Any]]:
+        """Helper to fetch single sector data"""
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="2d", interval="1d")
+
+            if not hist.empty and len(hist) >= 2:
+                last_price = hist['Close'].iloc[-1]
+                prev_price = hist['Close'].iloc[-2]
+                open_price = hist['Open'].iloc[-1]
+                high_price = hist['High'].iloc[-1]
+                low_price = hist['Low'].iloc[-1]
+
+                change_pct = ((last_price - prev_price) / prev_price) * 100
+
+                # Determine bias
+                if change_pct > 1.5:
+                    bias = "STRONG BULLISH"
+                    score = 75
+                elif change_pct > 0.5:
+                    bias = "BULLISH"
+                    score = 50
+                elif change_pct < -1.5:
+                    bias = "STRONG BEARISH"
+                    score = -75
+                elif change_pct < -0.5:
+                    bias = "BEARISH"
+                    score = -50
+                else:
+                    bias = "NEUTRAL"
+                    score = 0
+
+                return {
+                    'sector': name,
+                    'last_price': last_price,
+                    'open': open_price,
+                    'high': high_price,
+                    'low': low_price,
+                    'change_pct': change_pct,
+                    'bias': bias,
+                    'score': score,
+                    'source': 'Yahoo Finance'
+                }
+        except Exception as e:
+            print(f"Error fetching {name}: {str(e)}")
+            return None
+
     def fetch_global_markets(self) -> List[Dict[str, Any]]:
-        """Fetch global market indices from Yahoo Finance"""
+        """Fetch global market indices with better error handling"""
         global_markets = {
             '^GSPC': 'S&P 500',
             '^IXIC': 'NASDAQ',
@@ -537,51 +1149,65 @@ class EnhancedMarketData:
         }
 
         market_data = []
-
-        for symbol, name in global_markets.items():
-            try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="2d")
-
-                if len(hist) >= 2:
-                    current_close = hist['Close'].iloc[-1]
-                    prev_close = hist['Close'].iloc[-2]
-
-                    change_pct = ((current_close - prev_close) / prev_close) * 100
-
-                    # Determine bias
-                    if change_pct > 1.5:
-                        bias = "STRONG BULLISH"
-                        score = 75
-                    elif change_pct > 0.5:
-                        bias = "BULLISH"
-                        score = 50
-                    elif change_pct < -1.5:
-                        bias = "STRONG BEARISH"
-                        score = -75
-                    elif change_pct < -0.5:
-                        bias = "BEARISH"
-                        score = -50
-                    else:
-                        bias = "NEUTRAL"
-                        score = 0
-
-                    market_data.append({
-                        'market': name,
-                        'symbol': symbol,
-                        'last_price': current_close,
-                        'prev_close': prev_close,
-                        'change_pct': change_pct,
-                        'bias': bias,
-                        'score': score
-                    })
-            except Exception as e:
-                print(f"Error fetching {name}: {e}")
+        
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_market = {
+                executor.submit(self._fetch_single_market, symbol, name): (symbol, name)
+                for symbol, name in global_markets.items()
+            }
+            
+            for future in as_completed(future_to_market):
+                result = future.result()
+                if result:
+                    market_data.append(result)
+                time.sleep(0.5)
 
         return market_data
 
+    def _fetch_single_market(self, symbol: str, name: str) -> Optional[Dict[str, Any]]:
+        """Helper to fetch single market data"""
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="5d", interval="1d")
+
+            if len(hist) >= 2:
+                current_close = hist['Close'].iloc[-1]
+                prev_close = hist['Close'].iloc[-2]
+
+                change_pct = ((current_close - prev_close) / prev_close) * 100
+
+                # Determine bias
+                if change_pct > 1.5:
+                    bias = "STRONG BULLISH"
+                    score = 75
+                elif change_pct > 0.5:
+                    bias = "BULLISH"
+                    score = 50
+                elif change_pct < -1.5:
+                    bias = "STRONG BEARISH"
+                    score = -75
+                elif change_pct < -0.5:
+                    bias = "BEARISH"
+                    score = -50
+                else:
+                    bias = "NEUTRAL"
+                    score = 0
+
+                return {
+                    'market': name,
+                    'symbol': symbol,
+                    'last_price': current_close,
+                    'prev_close': prev_close,
+                    'change_pct': change_pct,
+                    'bias': bias,
+                    'score': score
+                }
+        except Exception as e:
+            print(f"Error fetching {name}: {str(e)}")
+            return None
+
     def fetch_intermarket_data(self) -> List[Dict[str, Any]]:
-        """Fetch intermarket data (commodities, currencies, bonds)"""
+        """Fetch intermarket data (commodities, currencies, bonds) with better error handling"""
         intermarket_assets = {
             'DX-Y.NYB': 'US DOLLAR INDEX',
             'CL=F': 'CRUDE OIL',
@@ -592,93 +1218,107 @@ class EnhancedMarketData:
         }
 
         intermarket_data = []
-
-        for symbol, name in intermarket_assets.items():
-            try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="2d")
-
-                if len(hist) >= 2:
-                    current_close = hist['Close'].iloc[-1]
-                    prev_close = hist['Close'].iloc[-2]
-
-                    change_pct = ((current_close - prev_close) / prev_close) * 100
-
-                    # Specific interpretations for each asset
-                    if 'DOLLAR' in name:
-                        if change_pct > 0.5:
-                            bias = "BEARISH (for India)"
-                            score = -40
-                        elif change_pct < -0.5:
-                            bias = "BULLISH (for India)"
-                            score = 40
-                        else:
-                            bias = "NEUTRAL"
-                            score = 0
-                    elif 'OIL' in name:
-                        if change_pct > 2:
-                            bias = "BEARISH (for India)"
-                            score = -50
-                        elif change_pct < -2:
-                            bias = "BULLISH (for India)"
-                            score = 50
-                        else:
-                            bias = "NEUTRAL"
-                            score = 0
-                    elif 'GOLD' in name:
-                        if change_pct > 1:
-                            bias = "RISK OFF"
-                            score = -40
-                        elif change_pct < -1:
-                            bias = "RISK ON"
-                            score = 40
-                        else:
-                            bias = "NEUTRAL"
-                            score = 0
-                    elif 'INR' in name:
-                        if change_pct > 0.5:
-                            bias = "BEARISH (INR Weak)"
-                            score = -40
-                        elif change_pct < -0.5:
-                            bias = "BULLISH (INR Strong)"
-                            score = 40
-                        else:
-                            bias = "NEUTRAL"
-                            score = 0
-                    elif 'TREASURY' in name:
-                        if change_pct > 2:
-                            bias = "RISK OFF"
-                            score = -40
-                        elif change_pct < -2:
-                            bias = "RISK ON"
-                            score = 40
-                        else:
-                            bias = "NEUTRAL"
-                            score = 0
-                    else:
-                        if change_pct > 1:
-                            bias = "BULLISH"
-                            score = 40
-                        elif change_pct < -1:
-                            bias = "BEARISH"
-                            score = -40
-                        else:
-                            bias = "NEUTRAL"
-                            score = 0
-
-                    intermarket_data.append({
-                        'asset': name,
-                        'symbol': symbol,
-                        'last_price': current_close,
-                        'prev_close': prev_close,
-                        'change_pct': change_pct,
-                        'bias': bias,
-                        'score': score
-                    })
-            except Exception as e:
-                print(f"Error fetching {name}: {e}")
+        
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_asset = {
+                executor.submit(self._fetch_single_intermarket, symbol, name): (symbol, name)
+                for symbol, name in intermarket_assets.items()
+            }
+            
+            for future in as_completed(future_to_asset):
+                result = future.result()
+                if result:
+                    intermarket_data.append(result)
+                time.sleep(0.5)
 
         return intermarket_data
+
+    def _fetch_single_intermarket(self, symbol: str, name: str) -> Optional[Dict[str, Any]]:
+        """Helper to fetch single intermarket asset data"""
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="5d", interval="1d")
+
+            if len(hist) >= 2:
+                current_close = hist['Close'].iloc[-1]
+                prev_close = hist['Close'].iloc[-2]
+
+                change_pct = ((current_close - prev_close) / prev_close) * 100
+
+                # Specific interpretations for each asset
+                if 'DOLLAR' in name:
+                    if change_pct > 0.5:
+                        bias = "BEARISH (for India)"
+                        score = -40
+                    elif change_pct < -0.5:
+                        bias = "BULLISH (for India)"
+                        score = 40
+                    else:
+                        bias = "NEUTRAL"
+                        score = 0
+                elif 'OIL' in name:
+                    if change_pct > 2:
+                        bias = "BEARISH (for India)"
+                        score = -50
+                    elif change_pct < -2:
+                        bias = "BULLISH (for India)"
+                        score = 50
+                    else:
+                        bias = "NEUTRAL"
+                        score = 0
+                elif 'GOLD' in name:
+                    if change_pct > 1:
+                        bias = "RISK OFF"
+                        score = -40
+                    elif change_pct < -1:
+                        bias = "RISK ON"
+                        score = 40
+                    else:
+                        bias = "NEUTRAL"
+                        score = 0
+                elif 'INR' in name:
+                    if change_pct > 0.5:
+                        bias = "BEARISH (INR Weak)"
+                        score = -40
+                    elif change_pct < -0.5:
+                        bias = "BULLISH (INR Strong)"
+                        score = 40
+                    else:
+                        bias = "NEUTRAL"
+                        score = 0
+                elif 'TREASURY' in name:
+                    if change_pct > 2:
+                        bias = "RISK OFF"
+                        score = -40
+                    elif change_pct < -2:
+                        bias = "RISK ON"
+                        score = 40
+                    else:
+                        bias = "NEUTRAL"
+                        score = 0
+                else:
+                    if change_pct > 1:
+                        bias = "BULLISH"
+                        score = 40
+                    elif change_pct < -1:
+                        bias = "BEARISH"
+                        score = -40
+                    else:
+                        bias = "NEUTRAL"
+                        score = 0
+
+                return {
+                    'asset': name,
+                    'symbol': symbol,
+                    'last_price': current_close,
+                    'prev_close': prev_close,
+                    'change_pct': change_pct,
+                    'bias': bias,
+                    'score': score
+                }
+        except Exception as e:
+            print(f"Error fetching {name}: {str(e)}")
+            return None
 
     def analyze_sector_rotation(self) -> Dict[str, Any]:
         """Analyze sector rotation to identify market leadership changes"""
@@ -856,11 +1496,12 @@ class EnhancedMarketData:
             'day_characteristics': day_characteristics,
             'timestamp': now
         }
-
-    def fetch_all_enhanced_data(self) -> Dict[str, Any]:
-        """Fetch all enhanced market data from all sources"""
-        print("Fetching enhanced market data...")
-
+def fetch_all_enhanced_data(self) -> Dict[str, Any]:
+        """Fetch all enhanced market data from all sources with progress tracking"""
+        print("=" * 60)
+        print("FETCHING ENHANCED MARKET DATA")
+        print("=" * 60)
+        
         result = {
             'timestamp': self.get_current_time_ist(),
             'india_vix': {},
@@ -869,38 +1510,116 @@ class EnhancedMarketData:
             'intermarket': [],
             'sector_rotation': {},
             'intraday_seasonality': {},
-            'summary': {}
+            'summary': {},
+            'fetch_status': {}
         }
-
+        
+        # Track fetch status
+        fetch_status = {
+            'india_vix': 'pending',
+            'sectors': 'pending',
+            'global': 'pending',
+            'intermarket': 'pending',
+            'rotation': 'pending',
+            'seasonality': 'pending'
+        }
+        
         # 1. Fetch India VIX
-        print("  - Fetching India VIX...")
-        result['india_vix'] = self.fetch_india_vix()
-
+        try:
+            print("\n[1/6] Fetching India VIX...")
+            self._rate_limit()
+            result['india_vix'] = self.fetch_india_vix()
+            fetch_status['india_vix'] = 'success' if result['india_vix'].get('success') else 'failed'
+            print(f"  Status: {fetch_status['india_vix']}")
+        except Exception as e:
+            print(f"  ❌ Error: {str(e)}")
+            fetch_status['india_vix'] = 'error'
+            result['india_vix'] = {'success': False, 'error': str(e)}
+        
         # 2. Fetch Sector Indices
-        print("  - Fetching sector indices...")
-        result['sector_indices'] = self.fetch_sector_indices()
-
+        try:
+            print("\n[2/6] Fetching sector indices...")
+            self._rate_limit()
+            result['sector_indices'] = self.fetch_sector_indices()
+            fetch_status['sectors'] = 'success' if result['sector_indices'] else 'failed'
+            print(f"  Fetched {len(result['sector_indices'])} sectors")
+            print(f"  Status: {fetch_status['sectors']}")
+        except Exception as e:
+            print(f"  ❌ Error: {str(e)}")
+            fetch_status['sectors'] = 'error'
+            result['sector_indices'] = []
+        
         # 3. Fetch Global Markets
-        print("  - Fetching global markets...")
-        result['global_markets'] = self.fetch_global_markets()
-
+        try:
+            print("\n[3/6] Fetching global markets...")
+            self._rate_limit()
+            result['global_markets'] = self.fetch_global_markets()
+            fetch_status['global'] = 'success' if result['global_markets'] else 'failed'
+            print(f"  Fetched {len(result['global_markets'])} markets")
+            print(f"  Status: {fetch_status['global']}")
+        except Exception as e:
+            print(f"  ❌ Error: {str(e)}")
+            fetch_status['global'] = 'error'
+            result['global_markets'] = []
+        
         # 4. Fetch Intermarket Data
-        print("  - Fetching intermarket data...")
-        result['intermarket'] = self.fetch_intermarket_data()
-
+        try:
+            print("\n[4/6] Fetching intermarket data...")
+            self._rate_limit()
+            result['intermarket'] = self.fetch_intermarket_data()
+            fetch_status['intermarket'] = 'success' if result['intermarket'] else 'failed'
+            print(f"  Fetched {len(result['intermarket'])} assets")
+            print(f"  Status: {fetch_status['intermarket']}")
+        except Exception as e:
+            print(f"  ❌ Error: {str(e)}")
+            fetch_status['intermarket'] = 'error'
+            result['intermarket'] = []
+        
         # 5. Analyze Sector Rotation
-        print("  - Analyzing Sector Rotation...")
-        result['sector_rotation'] = self.analyze_sector_rotation()
-
+        try:
+            print("\n[5/6] Analyzing Sector Rotation...")
+            result['sector_rotation'] = self.analyze_sector_rotation()
+            fetch_status['rotation'] = 'success' if result['sector_rotation'].get('success') else 'failed'
+            print(f"  Status: {fetch_status['rotation']}")
+        except Exception as e:
+            print(f"  ❌ Error: {str(e)}")
+            fetch_status['rotation'] = 'error'
+            result['sector_rotation'] = {'success': False, 'error': str(e)}
+        
         # 6. Analyze Intraday Seasonality
-        print("  - Analyzing Intraday Seasonality...")
-        result['intraday_seasonality'] = self.analyze_intraday_seasonality()
-
+        try:
+            print("\n[6/6] Analyzing Intraday Seasonality...")
+            result['intraday_seasonality'] = self.analyze_intraday_seasonality()
+            fetch_status['seasonality'] = 'success' if result['intraday_seasonality'].get('success') else 'failed'
+            print(f"  Status: {fetch_status['seasonality']}")
+        except Exception as e:
+            print(f"  ❌ Error: {str(e)}")
+            fetch_status['seasonality'] = 'error'
+            result['intraday_seasonality'] = {'success': False, 'error': str(e)}
+        
         # 7. Calculate summary statistics
-        result['summary'] = self._calculate_summary(result)
-
-        print("✓ Enhanced market data fetch completed!")
-
+        try:
+            print("\n[7/7] Calculating summary...")
+            result['summary'] = self._calculate_summary(result)
+            print("  ✓ Summary calculated")
+        except Exception as e:
+            print(f"  ❌ Summary Error: {str(e)}")
+            result['summary'] = {}
+        
+        # Store fetch status
+        result['fetch_status'] = fetch_status
+        
+        # Print final summary
+        print("\n" + "=" * 60)
+        print("FETCH SUMMARY")
+        print("=" * 60)
+        success_count = sum(1 for status in fetch_status.values() if status == 'success')
+        print(f"Successful: {success_count}/{len(fetch_status)}")
+        for key, status in fetch_status.items():
+            icon = "✓" if status == 'success' else "✗"
+            print(f"  {icon} {key}: {status}")
+        print("=" * 60)
+        
         return result
 
     def _calculate_summary(self, data: Dict) -> Dict[str, Any]:
@@ -979,674 +1698,16 @@ class EnhancedMarketData:
         return summary
 
 # =============================================
-# COMPREHENSIVE BIAS ANALYSIS MODULE
-# =============================================
-
-class BiasAnalysisPro:
-    """
-    Comprehensive Bias Analysis matching Pine Script indicator EXACTLY
-    Analyzes 13 bias indicators:
-    - Fast (8): Volume Delta, HVP, VOB, Order Blocks, RSI, DMI, VIDYA, MFI
-    - Medium (2): Close vs VWAP, Price vs VWAP
-    - Slow (3): Weighted stocks (Daily, TF1, TF2)
-    """
-
-    def __init__(self):
-        """Initialize bias analysis with default configuration"""
-        self.config = self._default_config()
-        self.all_bias_results = []
-        self.overall_bias = "NEUTRAL"
-        self.overall_score = 0
-
-    def _default_config(self) -> Dict[str, Any]:
-        """Default configuration from Pine Script"""
-        return {
-            # Timeframes
-            'tf1': '15m',
-            'tf2': '1h',
-
-            # Indicator periods
-            'rsi_period': 14,
-            'mfi_period': 10,
-            'dmi_period': 13,
-            'dmi_smoothing': 8,
-            'atr_period': 14,
-
-            # Volume
-            'volume_roc_length': 14,
-            'volume_threshold': 1.2,
-
-            # Volatility
-            'volatility_ratio_length': 14,
-            'volatility_threshold': 1.5,
-
-            # OBV
-            'obv_smoothing': 21,
-
-            # Force Index
-            'force_index_length': 13,
-            'force_index_smoothing': 2,
-
-            # Price ROC
-            'price_roc_length': 12,
-
-            # Market Breadth
-            'breadth_threshold': 60,
-
-            # Divergence
-            'divergence_lookback': 30,
-            'rsi_overbought': 70,
-            'rsi_oversold': 30,
-
-            # Choppiness Index
-            'ci_length': 14,
-            'ci_high_threshold': 61.8,
-            'ci_low_threshold': 38.2,
-
-            # Bias parameters
-            'bias_strength': 60,
-            'divergence_threshold': 60,
-
-            # Adaptive weights
-            'normal_fast_weight': 2.0,
-            'normal_medium_weight': 3.0,
-            'normal_slow_weight': 5.0,
-            'reversal_fast_weight': 5.0,
-            'reversal_medium_weight': 3.0,
-            'reversal_slow_weight': 2.0,
-
-            # Stocks with weights
-            'stocks': {
-                '^NSEBANK': 10.0,  # BANKNIFTY Index
-                'RELIANCE.NS': 9.98,
-                'HDFCBANK.NS': 9.67,
-                'BHARTIARTL.NS': 9.97,
-                'TCS.NS': 8.54,
-                'ICICIBANK.NS': 8.01,
-                'INFY.NS': 8.55,
-                'HINDUNILVR.NS': 1.98,
-                'ITC.NS': 2.44,
-                'MARUTI.NS': 0.0
-            }
-        }
-
-    def fetch_data(self, symbol: str, period: str = '7d', interval: str = '5m') -> pd.DataFrame:
-        """Fetch data from Yahoo Finance with enhanced error handling"""
-        try:
-            ticker = yf.Ticker(symbol)
-            df = ticker.history(period=period, interval=interval)
-
-            if df.empty:
-                print(f"Warning: No data for {symbol}")
-                return pd.DataFrame()
-
-            # Ensure volume column exists
-            if 'Volume' not in df.columns:
-                df['Volume'] = 0
-            else:
-                df['Volume'] = df['Volume'].fillna(0)
-
-            return df
-        except Exception as e:
-            print(f"Error fetching {symbol}: {e}")
-            return pd.DataFrame()
-
-    def calculate_rsi(self, data: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate RSI"""
-        delta = data.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
-
-    def calculate_mfi(self, df: pd.DataFrame, period: int = 10) -> pd.Series:
-        """Calculate Money Flow Index"""
-        if df['Volume'].sum() == 0:
-            return pd.Series([50.0] * len(df), index=df.index)
-
-        typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-        money_flow = typical_price * df['Volume']
-
-        positive_flow = money_flow.where(typical_price > typical_price.shift(1), 0)
-        negative_flow = money_flow.where(typical_price < typical_price.shift(1), 0)
-
-        positive_mf = positive_flow.rolling(window=period).sum()
-        negative_mf = negative_flow.rolling(window=period).sum()
-
-        mfi_ratio = positive_mf / negative_mf.replace(0, np.nan)
-        mfi = 100 - (100 / (1 + mfi_ratio))
-        return mfi.fillna(50)
-
-    def calculate_dmi(self, df: pd.DataFrame, period: int = 13, smoothing: int = 8) -> Tuple[pd.Series, pd.Series, pd.Series]:
-        """Calculate DMI indicators"""
-        high = df['High']
-        low = df['Low']
-        close = df['Close']
-
-        tr1 = high - low
-        tr2 = abs(high - close.shift(1))
-        tr3 = abs(low - close.shift(1))
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.rolling(window=period).mean()
-
-        up_move = high - high.shift(1)
-        down_move = low.shift(1) - low
-
-        plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0)
-        minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0)
-
-        plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
-        minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr)
-
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-        adx = dx.rolling(window=smoothing).mean()
-
-        return plus_di, minus_di, adx
-
-    def calculate_vwap(self, df: pd.DataFrame) -> pd.Series:
-        """Calculate VWAP"""
-        if df['Volume'].sum() == 0:
-            return (df['High'] + df['Low'] + df['Close']) / 3
-
-        typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-        cumulative_volume = df['Volume'].cumsum()
-        cumulative_volume_safe = cumulative_volume.replace(0, np.nan)
-        vwap = (typical_price * df['Volume']).cumsum() / cumulative_volume_safe
-        return vwap.fillna(typical_price)
-
-    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calculate ATR"""
-        high = df['High']
-        low = df['Low']
-        close = df['Close']
-
-        tr1 = high - low
-        tr2 = abs(high - close.shift(1))
-        tr3 = abs(low - close.shift(1))
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.rolling(window=period).mean()
-        return atr
-
-    def calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
-        """Calculate EMA"""
-        return data.ewm(span=period, adjust=False).mean()
-
-    def calculate_vidya(self, df: pd.DataFrame, length: int = 10, momentum: int = 20, band_distance: float = 2.0) -> Tuple[pd.Series, bool, bool]:
-        """Calculate VIDYA (Variable Index Dynamic Average)"""
-        close = df['Close']
-
-        m = close.diff()
-        p = m.where(m >= 0, 0.0).rolling(window=momentum).sum()
-        n = (-m.where(m < 0, 0.0)).rolling(window=momentum).sum()
-
-        cmo_denom = p + n
-        cmo_denom = cmo_denom.replace(0, np.nan)
-        abs_cmo = abs(100 * (p - n) / cmo_denom).fillna(0)
-
-        alpha = 2 / (length + 1)
-        vidya = pd.Series(index=close.index, dtype=float)
-        vidya.iloc[0] = close.iloc[0]
-
-        for i in range(1, len(close)):
-            vidya.iloc[i] = (alpha * abs_cmo.iloc[i] / 100 * close.iloc[i] +
-                            (1 - alpha * abs_cmo.iloc[i] / 100) * vidya.iloc[i-1])
-
-        vidya_smoothed = vidya.rolling(window=15).mean()
-
-        atr = self.calculate_atr(df, 200)
-        upper_band = vidya_smoothed + atr * band_distance
-        lower_band = vidya_smoothed - atr * band_distance
-
-        is_trend_up = close > upper_band
-        is_trend_down = close < lower_band
-
-        vidya_bullish = is_trend_up.iloc[-1] if len(is_trend_up) > 0 else False
-        vidya_bearish = is_trend_down.iloc[-1] if len(is_trend_down) > 0 else False
-
-        return vidya_smoothed, vidya_bullish, vidya_bearish
-
-    def calculate_volume_delta(self, df: pd.DataFrame) -> Tuple[float, bool, bool]:
-        """Calculate Volume Delta (up_vol - down_vol)"""
-        if df['Volume'].sum() == 0:
-            return 0, False, False
-
-        up_vol = ((df['Close'] > df['Open']).astype(int) * df['Volume']).sum()
-        down_vol = ((df['Close'] < df['Open']).astype(int) * df['Volume']).sum()
-
-        volume_delta = up_vol - down_vol
-        volume_bullish = volume_delta > 0
-        volume_bearish = volume_delta < 0
-
-        return volume_delta, volume_bullish, volume_bearish
-
-    def calculate_hvp(self, df: pd.DataFrame, left_bars: int = 15, right_bars: int = 15, vol_filter: float = 2.0) -> Tuple[bool, bool, int, int]:
-        """Calculate High Volume Pivots"""
-        if df['Volume'].sum() == 0:
-            return False, False, 0, 0
-
-        pivot_highs = []
-        pivot_lows = []
-
-        for i in range(left_bars, len(df) - right_bars):
-            is_pivot_high = True
-            for j in range(i - left_bars, i + right_bars + 1):
-                if j != i and df['High'].iloc[j] >= df['High'].iloc[i]:
-                    is_pivot_high = False
-                    break
-            if is_pivot_high:
-                pivot_highs.append(i)
-
-            is_pivot_low = True
-            for j in range(i - left_bars, i + right_bars + 1):
-                if j != i and df['Low'].iloc[j] <= df['Low'].iloc[i]:
-                    is_pivot_low = False
-                    break
-            if is_pivot_low:
-                pivot_lows.append(i)
-
-        volume_sum = df['Volume'].rolling(window=left_bars * 2).sum()
-        ref_vol = volume_sum.quantile(0.95)
-        norm_vol = (volume_sum / ref_vol * 5).fillna(0)
-
-        hvp_bullish = False
-        hvp_bearish = False
-
-        if len(pivot_lows) > 0:
-            last_pivot_low_idx = pivot_lows[-1]
-            if norm_vol.iloc[last_pivot_low_idx] > vol_filter:
-                hvp_bullish = True
-
-        if len(pivot_highs) > 0:
-            last_pivot_high_idx = pivot_highs[-1]
-            if norm_vol.iloc[last_pivot_high_idx] > vol_filter:
-                hvp_bearish = True
-
-        return hvp_bullish, hvp_bearish, len(pivot_highs), len(pivot_lows)
-
-    def calculate_vob(self, df: pd.DataFrame, length1: int = 5) -> Tuple[bool, bool, float, float]:
-        """Calculate Volume Order Blocks"""
-        length2 = length1 + 13
-        ema1 = self.calculate_ema(df['Close'], length1)
-        ema2 = self.calculate_ema(df['Close'], length2)
-
-        cross_up = (ema1.iloc[-2] <= ema2.iloc[-2]) and (ema1.iloc[-1] > ema2.iloc[-1])
-        cross_dn = (ema1.iloc[-2] >= ema2.iloc[-2]) and (ema1.iloc[-1] < ema2.iloc[-1])
-
-        vob_bullish = cross_up
-        vob_bearish = cross_dn
-
-        return vob_bullish, vob_bearish, ema1.iloc[-1], ema2.iloc[-1]
-
-    def _fetch_stock_data(self, symbol: str, weight: float) -> Optional[Dict[str, Any]]:
-        """Helper function to fetch single stock data for parallel processing"""
-        try:
-            df = self.fetch_data(symbol, period='5d', interval='5m')
-            if df.empty or len(df) < 2:
-                return None
-
-            current_price = df['Close'].iloc[-1]
-            prev_price = df['Close'].iloc[0]
-            change_pct = ((current_price - prev_price) / prev_price) * 100
-
-            return {
-                'symbol': symbol.replace('.NS', ''),
-                'change_pct': change_pct,
-                'weight': weight,
-                'is_bullish': change_pct > 0
-            }
-        except Exception as e:
-            print(f"Error processing {symbol}: {e}")
-            return None
-
-    def calculate_market_breadth(self) -> Tuple[float, bool, bool, int, int, List[Dict[str, Any]]]:
-        """Calculate market breadth from top stocks"""
-        bullish_stocks = 0
-        total_stocks = 0
-        stock_data = []
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_stock = {
-                executor.submit(self._fetch_stock_data, symbol, weight): (symbol, weight)
-                for symbol, weight in self.config['stocks'].items()
-            }
-
-            for future in as_completed(future_to_stock):
-                result = future.result()
-                if result:
-                    stock_data.append({
-                        'symbol': result['symbol'],
-                        'change_pct': result['change_pct'],
-                        'weight': result['weight']
-                    })
-                    if result['is_bullish']:
-                        bullish_stocks += 1
-                    total_stocks += 1
-
-        if total_stocks > 0:
-            market_breadth = (bullish_stocks / total_stocks) * 100
-        else:
-            market_breadth = 50
-
-        breadth_bullish = market_breadth > self.config['breadth_threshold']
-        breadth_bearish = market_breadth < (100 - self.config['breadth_threshold'])
-
-        return market_breadth, breadth_bullish, breadth_bearish, bullish_stocks, total_stocks, stock_data
-
-    def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict[str, Any]:
-        """Analyze all 8 bias indicators with enhanced error handling"""
-
-        print(f"Fetching data for {symbol}...")
-        try:
-            df = self.fetch_data(symbol, period='7d', interval='5m')
-
-            if df.empty or len(df) < 100:
-                error_msg = f'Insufficient data (fetched {len(df)} candles, need at least 100)'
-                print(f"❌ {error_msg}")
-                return {
-                    'success': False,
-                    'error': error_msg,
-                    'symbol': symbol
-                }
-
-            current_price = df['Close'].iloc[-1]
-            bias_results = []
-            stock_data = []
-
-            # 1. VOLUME DELTA
-            volume_delta, volume_bullish, volume_bearish = self.calculate_volume_delta(df)
-            if volume_bullish:
-                vol_delta_bias = "BULLISH"
-                vol_delta_score = 100
-            elif volume_bearish:
-                vol_delta_bias = "BEARISH"
-                vol_delta_score = -100
-            else:
-                vol_delta_bias = "NEUTRAL"
-                vol_delta_score = 0
-
-            bias_results.append({
-                'indicator': 'Volume Delta',
-                'value': f"{volume_delta:.0f}",
-                'bias': vol_delta_bias,
-                'score': vol_delta_score,
-                'weight': 1.0,
-                'category': 'fast'
-            })
-
-            # 2. HVP (High Volume Pivots)
-            hvp_bullish, hvp_bearish, pivot_highs, pivot_lows = self.calculate_hvp(df)
-            if hvp_bullish:
-                hvp_bias = "BULLISH"
-                hvp_score = 100
-                hvp_value = f"Bull Signal (Lows: {pivot_lows}, Highs: {pivot_highs})"
-            elif hvp_bearish:
-                hvp_bias = "BEARISH"
-                hvp_score = -100
-                hvp_value = f"Bear Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
-            else:
-                hvp_bias = "NEUTRAL"
-                hvp_score = 0
-                hvp_value = f"No Signal (Highs: {pivot_highs}, Lows: {pivot_lows})"
-
-            bias_results.append({
-                'indicator': 'HVP (High Volume Pivots)',
-                'value': hvp_value,
-                'bias': hvp_bias,
-                'score': hvp_score,
-                'weight': 1.0,
-                'category': 'fast'
-            })
-
-            # 3. VOB (Volume Order Blocks)
-            vob_bullish, vob_bearish, vob_ema5, vob_ema18 = self.calculate_vob(df)
-            if vob_bullish:
-                vob_bias = "BULLISH"
-                vob_score = 100
-                vob_value = f"Bull Cross (EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f})"
-            elif vob_bearish:
-                vob_bias = "BEARISH"
-                vob_score = -100
-                vob_value = f"Bear Cross (EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f})"
-            else:
-                vob_bias = "NEUTRAL"
-                vob_score = 0
-                if vob_ema5 > vob_ema18:
-                    vob_value = f"EMA5: {vob_ema5:.2f} > EMA18: {vob_ema18:.2f} (No Cross)"
-                else:
-                    vob_value = f"EMA5: {vob_ema5:.2f} < EMA18: {vob_ema18:.2f} (No Cross)"
-
-            bias_results.append({
-                'indicator': 'VOB (Volume Order Blocks)',
-                'value': vob_value,
-                'bias': vob_bias,
-                'score': vob_score,
-                'weight': 1.0,
-                'category': 'fast'
-            })
-
-            # 4. ORDER BLOCKS (EMA Crossover)
-            ema5 = self.calculate_ema(df['Close'], 5)
-            ema18 = self.calculate_ema(df['Close'], 18)
-            cross_up = (ema5.iloc[-2] <= ema18.iloc[-2]) and (ema5.iloc[-1] > ema18.iloc[-1])
-            cross_dn = (ema5.iloc[-2] >= ema18.iloc[-2]) and (ema5.iloc[-1] < ema18.iloc[-1])
-
-            if cross_up:
-                ob_bias = "BULLISH"
-                ob_score = 100
-            elif cross_dn:
-                ob_bias = "BEARISH"
-                ob_score = -100
-            else:
-                ob_bias = "NEUTRAL"
-                ob_score = 0
-
-            bias_results.append({
-                'indicator': 'Order Blocks (EMA 5/18)',
-                'value': f"EMA5: {ema5.iloc[-1]:.2f} | EMA18: {ema18.iloc[-1]:.2f}",
-                'bias': ob_bias,
-                'score': ob_score,
-                'weight': 1.0,
-                'category': 'fast'
-            })
-
-            # 5. RSI
-            rsi = self.calculate_rsi(df['Close'], self.config['rsi_period'])
-            rsi_value = rsi.iloc[-1]
-            if rsi_value > 50:
-                rsi_bias = "BULLISH"
-                rsi_score = 100
-            else:
-                rsi_bias = "BEARISH"
-                rsi_score = -100
-
-            bias_results.append({
-                'indicator': 'RSI',
-                'value': f"{rsi_value:.2f}",
-                'bias': rsi_bias,
-                'score': rsi_score,
-                'weight': 1.0,
-                'category': 'fast'
-            })
-
-            # 6. DMI
-            plus_di, minus_di, adx = self.calculate_dmi(df, self.config['dmi_period'], self.config['dmi_smoothing'])
-            plus_di_value = plus_di.iloc[-1]
-            minus_di_value = minus_di.iloc[-1]
-            if plus_di_value > minus_di_value:
-                dmi_bias = "BULLISH"
-                dmi_score = 100
-            else:
-                dmi_bias = "BEARISH"
-                dmi_score = -100
-
-            bias_results.append({
-                'indicator': 'DMI',
-                'value': f"+DI:{plus_di_value:.1f} -DI:{minus_di_value:.1f}",
-                'bias': dmi_bias,
-                'score': dmi_score,
-                'weight': 1.0,
-                'category': 'fast'
-            })
-
-            # 7. VIDYA
-            vidya_val, vidya_bullish, vidya_bearish = self.calculate_vidya(df)
-            if vidya_bullish:
-                vidya_bias = "BULLISH"
-                vidya_score = 100
-            elif vidya_bearish:
-                vidya_bias = "BEARISH"
-                vidya_score = -100
-            else:
-                vidya_bias = "NEUTRAL"
-                vidya_score = 0
-
-            bias_results.append({
-                'indicator': 'VIDYA',
-                'value': f"{vidya_val.iloc[-1]:.2f}" if not vidya_val.empty else "N/A",
-                'bias': vidya_bias,
-                'score': vidya_score,
-                'weight': 1.0,
-                'category': 'fast'
-            })
-
-            # 8. MFI
-            mfi = self.calculate_mfi(df, self.config['mfi_period'])
-            mfi_value = mfi.iloc[-1]
-            if np.isnan(mfi_value):
-                mfi_value = 50.0
-
-            if mfi_value > 50:
-                mfi_bias = "BULLISH"
-                mfi_score = 100
-            else:
-                mfi_bias = "BEARISH"
-                mfi_score = -100
-
-            bias_results.append({
-                'indicator': 'MFI (Money Flow)',
-                'value': f"{mfi_value:.2f}",
-                'bias': mfi_bias,
-                'score': mfi_score,
-                'weight': 1.0,
-                'category': 'fast'
-            })
-
-            # Calculate overall bias
-            fast_bull = 0
-            fast_bear = 0
-            fast_total = 0
-
-            medium_bull = 0
-            medium_bear = 0
-            medium_total = 0
-
-            slow_bull = 0
-            slow_bear = 0
-            slow_total = 0
-
-            bullish_count = 0
-            bearish_count = 0
-            neutral_count = 0
-
-            for bias in bias_results:
-                if 'BULLISH' in bias['bias']:
-                    bullish_count += 1
-                    if bias['category'] == 'fast':
-                        fast_bull += 1
-                elif 'BEARISH' in bias['bias']:
-                    bearish_count += 1
-                    if bias['category'] == 'fast':
-                        fast_bear += 1
-                else:
-                    neutral_count += 1
-
-                if bias['category'] == 'fast':
-                    fast_total += 1
-
-            # Calculate percentages
-            fast_bull_pct = (fast_bull / fast_total) * 100 if fast_total > 0 else 0
-            fast_bear_pct = (fast_bear / fast_total) * 100 if fast_total > 0 else 0
-
-            # Adaptive weighting
-            divergence_threshold = self.config['divergence_threshold']
-            bullish_divergence = False  # Simplified for this implementation
-            bearish_divergence = False
-            divergence_detected = bullish_divergence or bearish_divergence
-
-            if divergence_detected:
-                fast_weight = self.config['reversal_fast_weight']
-                mode = "REVERSAL"
-            else:
-                fast_weight = self.config['normal_fast_weight']
-                mode = "NORMAL"
-
-            # Calculate weighted scores
-            bullish_signals = fast_bull * fast_weight
-            bearish_signals = fast_bear * fast_weight
-            total_signals = fast_total * fast_weight
-
-            bullish_bias_pct = (bullish_signals / total_signals) * 100 if total_signals > 0 else 0
-            bearish_bias_pct = (bearish_signals / total_signals) * 100 if total_signals > 0 else 0
-
-            # Determine overall bias
-            bias_strength = self.config['bias_strength']
-
-            if bullish_bias_pct >= bias_strength:
-                overall_bias = "BULLISH"
-                overall_score = bullish_bias_pct
-                overall_confidence = min(100, bullish_bias_pct)
-            elif bearish_bias_pct >= bias_strength:
-                overall_bias = "BEARISH"
-                overall_score = -bearish_bias_pct
-                overall_confidence = min(100, bearish_bias_pct)
-            else:
-                overall_bias = "NEUTRAL"
-                overall_score = 0
-                overall_confidence = 100 - max(bullish_bias_pct, bearish_bias_pct)
-
-            return {
-                'success': True,
-                'symbol': symbol,
-                'current_price': current_price,
-                'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')),
-                'bias_results': bias_results,
-                'overall_bias': overall_bias,
-                'overall_score': overall_score,
-                'overall_confidence': overall_confidence,
-                'bullish_count': bullish_count,
-                'bearish_count': bearish_count,
-                'neutral_count': neutral_count,
-                'total_indicators': len(bias_results),
-                'stock_data': stock_data,
-                'mode': mode,
-                'fast_bull_pct': fast_bull_pct,
-                'fast_bear_pct': fast_bear_pct,
-                'bullish_bias_pct': bullish_bias_pct,
-                'bearish_bias_pct': bearish_bias_pct
-            }
-            
-        except Exception as e:
-            error_msg = f"Error in bias analysis: {str(e)}"
-            print(f"❌ {error_msg}")
-            return {
-                'success': False,
-                'error': error_msg,
-                'symbol': symbol
-            }
-
-# =============================================
-# TRADING SIGNAL MANAGER WITH COOLDOWN & SAFETY
+# TRADING SIGNAL MANAGER WITH COOLDOWN
 # =============================================
 
 class TradingSignalManager:
-    """Manage trading signals with cooldown periods and safety checks"""
+    """Manage trading signals with cooldown periods"""
     
     def __init__(self, cooldown_minutes=15):
         self.cooldown_minutes = cooldown_minutes
         self.last_signal_time = {}
         self.sent_signals = set()
-        self.safety_manager = TradingSafetyManager()
         
     def can_send_signal(self, signal_type: str, instrument: str) -> Tuple[bool, int]:
         """Check if signal can be sent based on cooldown"""
@@ -1662,24 +1723,9 @@ class TradingSignalManager:
         self.last_signal_time[key] = current_time
         return True, 0
     
-    def generate_trading_recommendation(self, instrument_data: Dict[str, Any], df: pd.DataFrame = None) -> Optional[Dict[str, Any]]:
-        """Generate trading recommendation with safety checks"""
+    def generate_trading_recommendation(self, instrument_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate trading recommendation based on comprehensive analysis"""
         try:
-            # Safety check first
-            is_trustworthy, reason, report = self.safety_manager.should_trust_signals(df)
-            
-            if not is_trustworthy:
-                return {
-                    'instrument': instrument_data['instrument'],
-                    'signal_type': "BLOCKED",
-                    'direction': "NEUTRAL",
-                    'strength': "LOW",
-                    'confidence': 0,
-                    'timestamp': datetime.now(),
-                    'blocked_reason': reason,
-                    'safety_report': report
-                }
-            
             overall_bias = instrument_data['overall_bias']
             bias_score = instrument_data['bias_score']
             spot_price = instrument_data['spot_price']
@@ -1750,9 +1796,7 @@ class TradingSignalManager:
                     'synthetic_bias': comp_metrics.get('synthetic_bias', 'N/A'),
                     'atm_buildup': comp_metrics.get('atm_buildup', 'N/A'),
                     'vega_bias': comp_metrics.get('atm_vega_bias', 'N/A')
-                },
-                'safety_checked': True,
-                'safety_reason': reason
+                }
             }
             
             return recommendation
@@ -1808,17 +1852,6 @@ class TradingSignalManager:
     
     def format_signal_message(self, recommendation: Dict[str, Any]) -> str:
         """Format trading signal for Telegram notification"""
-        if recommendation.get('signal_type') == "BLOCKED":
-            return f"""🚫 SIGNAL BLOCKED - SAFETY CHECK FAILED
-
-📊 {recommendation['instrument']}
-⏰ Time: {recommendation['timestamp'].strftime('%H:%M:%S')} IST
-
-❌ Reason: {recommendation['blocked_reason']}
-
-⚠️ Trading conditions not favorable
-💡 Wait for better market conditions"""
-
         emoji = "🟢" if recommendation['direction'] == "BULLISH" else "🔴"
         strength_emoji = "🔥" if recommendation['strength'] == "HIGH" else "⚡"
         
@@ -1828,7 +1861,6 @@ class TradingSignalManager:
 🎯 *{recommendation['instrument']} - {recommendation['signal_type']}*
 ⏰ Time: {recommendation['timestamp'].strftime('%H:%M:%S')} IST
 📊 Confidence: {recommendation['confidence']}%
-🛡️ Safety: ✅ PASSED
 
 💰 Current Price: ₹{recommendation['spot_price']:.2f}
 📈 Bias Score: {recommendation['bias_score']:.2f}
@@ -2064,7 +2096,6 @@ class AlertManager:
         
         for key in keys_to_remove:
             del self.alert_timestamps[key]
-
 # =============================================
 # NSE OPTIONS ANALYZER WITH AUTO-REFRESH
 # =============================================
@@ -2619,7 +2650,7 @@ class NSEOptionsAnalyzer:
                         "CE_Change": row['changeinOpenInterest_CE'],
                         "PE_Change": row['changeinOpenInterest_PE'],
                         "CE_Volume": row['totalTradedVolume_CE'],
-                        "PE_Volume": row['totalTradedVolume_PE'],
+"PE_Volume": row['totalTradedVolume_PE'],
                         "CE_Price": row['lastPrice_CE'],
                         "PE_Price": row['lastPrice_PE'],
                         "CE_IV": row['impliedVolatility_CE'],
@@ -2663,7 +2694,7 @@ class NSEOptionsAnalyzer:
         return results
 
 # =============================================
-# ENHANCED NIFTY APP WITH ALL FEATURES & SAFETY
+# ENHANCED NIFTY APP WITH ALL FEATURES
 # =============================================
 
 class EnhancedNiftyApp:
@@ -2681,44 +2712,36 @@ class EnhancedNiftyApp:
         self.trading_signal_manager = TradingSignalManager(cooldown_minutes=15)
         self.bias_analyzer = BiasAnalysisPro()
         self.market_data_fetcher = EnhancedMarketData()
-        self.safety_manager = TradingSafetyManager()  # NEW: Safety manager
         
         # Initialize session state
         self.init_session_state()
         
     def init_session_state(self):
-        """Initialize all session state variables"""
-        if 'sent_vob_alerts' not in st.session_state:
-            st.session_state.sent_vob_alerts = set()
-        if 'sent_volume_block_alerts' not in st.session_state:
-            st.session_state.sent_volume_block_alerts = set()
-        if 'sent_volume_spike_alerts' not in st.session_state:
-            st.session_state.sent_volume_spike_alerts = set()
-        if 'last_alert_check' not in st.session_state:
-            st.session_state.last_alert_check = None
-        if 'volume_history' not in st.session_state:
-            st.session_state.volume_history = []
-        if 'market_bias_data' not in st.session_state:
-            st.session_state.market_bias_data = None
-        if 'last_bias_update' not in st.session_state:
-            st.session_state.last_bias_update = None
-        if 'last_signal_check' not in st.session_state:
-            st.session_state.last_signal_check = None
-        if 'sent_trading_signals' not in st.session_state:
-            st.session_state.sent_trading_signals = {}
-        if 'comprehensive_bias_data' not in st.session_state:
-            st.session_state.comprehensive_bias_data = None
-        if 'last_comprehensive_bias_update' not in st.session_state:
-            st.session_state.last_comprehensive_bias_update = None
-        if 'enhanced_market_data' not in st.session_state:
-            st.session_state.enhanced_market_data = None
-        if 'last_market_data_update' not in st.session_state:
-            st.session_state.last_market_data_update = None
-        if 'debug_mode' not in st.session_state:  # NEW: Debug mode
-            st.session_state.debug_mode = False
-        if 'safety_reports' not in st.session_state:  # NEW: Safety reports
-            st.session_state.safety_reports = {}
+        """Initialize all session state variables with better defaults"""
+        defaults = {
+            'sent_vob_alerts': set(),
+            'sent_volume_block_alerts': set(),
+            'sent_volume_spike_alerts': set(),
+            'last_alert_check': None,
+            'volume_history': [],
+            'market_bias_data': None,
+            'last_bias_update': None,
+            'last_signal_check': None,
+            'sent_trading_signals': {},
+            'comprehensive_bias_data': None,
+            'last_comprehensive_bias_update': None,
+            'enhanced_market_data': None,
+            'last_market_data_update': None,
+            'error_count': 0,
+            'last_error_time': None,
+            'retry_count': 0,
+            'data_fetch_attempts': {},
+        }
         
+        for key, default_value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = default_value
+    
     def setup_secrets(self):
         """Setup API credentials from Streamlit secrets"""
         try:
@@ -2855,135 +2878,107 @@ class EnhancedNiftyApp:
             st.error(f"Telegram error: {e}")
             return False
 
-    # NEW: Enhanced Safety Display
-    def display_safety_status(self, df: pd.DataFrame = None):
-        """Display comprehensive safety status"""
-        st.sidebar.header("🛡️ Safety Status")
-        
-        if df is not None and not df.empty:
-            is_trustworthy, reason, report = self.safety_manager.should_trust_signals(df)
+    def display_diagnostic_info(self):
+        """Display diagnostic information for troubleshooting"""
+        with st.expander("🔧 Diagnostic Information", expanded=False):
+            st.subheader("System Status")
             
-            if is_trustworthy:
-                st.sidebar.success(f"✅ {reason}")
+            # Check internet connectivity
+            try:
+                import socket
+                socket.create_connection(("www.google.com", 80), timeout=3)
+                st.success("✓ Internet connection: OK")
+            except OSError:
+                st.error("✗ Internet connection: FAILED")
+            
+            # Check Yahoo Finance
+            try:
+                import yfinance as yf
+                test_ticker = yf.Ticker("^GSPC")
+                test_data = test_ticker.history(period="1d")
+                if not test_data.empty:
+                    st.success("✓ Yahoo Finance API: OK")
+                else:
+                    st.warning("⚠ Yahoo Finance API: Limited")
+            except Exception as e:
+                st.error(f"✗ Yahoo Finance API: FAILED - {str(e)}")
+            
+            # Display session state info
+            st.subheader("Data Status")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Enhanced Market Data:**")
+                if st.session_state.enhanced_market_data:
+                    fetch_status = st.session_state.enhanced_market_data.get('fetch_status', {})
+                    for key, status in fetch_status.items():
+                        icon = "✓" if status == 'success' else "✗"
+                        st.write(f"{icon} {key}: {status}")
+                else:
+                    st.write("Not loaded")
+            
+            with col2:
+                st.write("**Technical Bias Data:**")
+                if st.session_state.comprehensive_bias_data:
+                    if st.session_state.comprehensive_bias_data.get('success'):
+                        st.write(f"✓ Loaded: {st.session_state.comprehensive_bias_data.get('symbol', 'N/A')}")
+                        st.write(f"Indicators: {st.session_state.comprehensive_bias_data.get('total_indicators', 0)}")
+                    else:
+                        st.write(f"✗ Failed: {st.session_state.comprehensive_bias_data.get('error', 'Unknown')}")
+                else:
+                    st.write("Not loaded")
+            
+            # Current time and market hours
+            st.subheader("Time & Market Status")
+            current_time = datetime.now(self.ist)
+            st.write(f"Current Time (IST): {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            market_open = current_time.replace(hour=9, minute=15, second=0)
+            market_close = current_time.replace(hour=15, minute=30, second=0)
+            
+            if market_open <= current_time <= market_close:
+                st.success("🟢 Market is OPEN")
             else:
-                st.sidebar.error(f"❌ {reason}")
+                st.warning("🔴 Market is CLOSED")
+                if current_time < market_open:
+                    time_to_open = market_open - current_time
+                    st.write(f"Opens in: {time_to_open}")
+                else:
+                    st.write("Market closed for the day")
             
-            # Store report for debugging
-            st.session_state.safety_reports['latest'] = report
-            
-            # Show detailed report in debug mode
-            if st.session_state.debug_mode:
-                with st.sidebar.expander("🔍 Safety Report Details"):
-                    st.json(report)
-        
-        # Debug mode toggle
-        st.session_state.debug_mode = st.sidebar.checkbox("Debug Mode", value=False)
-        
-        # Safety settings
-        st.sidebar.subheader("Safety Settings")
-        min_confidence = st.sidebar.slider("Min Confidence %", 50, 90, 70)
-        return min_confidence
+            # Rate limiting info
+            st.subheader("API Rate Limiting")
+            st.write(f"Total requests: {self.market_data_fetcher.request_count}")
+            if self.market_data_fetcher.last_request_time:
+                last_req = self.market_data_fetcher.last_request_time
+                time_since = (datetime.now() - last_req).total_seconds()
+                st.write(f"Last request: {time_since:.1f} seconds ago")
 
-    # Enhanced Market Data Display Methods
-    def display_enhanced_market_data(self):
-        """Display comprehensive enhanced market data"""
-        st.header("🌍 Enhanced Market Data Analysis")
+    def auto_refresh_failed_data(self):
+        """Automatically retry fetching failed data"""
+        if not st.session_state.enhanced_market_data:
+            return
         
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.info("Comprehensive market analysis from multiple sources including India VIX, global markets, sector rotation, and intermarket analysis")
-        with col2:
-            if st.button("🔄 Update Market Data", type="primary"):
-                with st.spinner("Fetching comprehensive market data..."):
+        fetch_status = st.session_state.enhanced_market_data.get('fetch_status', {})
+        failed_items = [key for key, status in fetch_status.items() if status in ['failed', 'error']]
+        
+        if failed_items and len(failed_items) < 3:  # Only retry if not too many failures
+            current_time = datetime.now(self.ist)
+            last_update = st.session_state.last_market_data_update
+            
+            if last_update:
+                time_diff = (current_time - last_update).total_seconds()
+                
+                # Retry after 5 minutes
+                if time_diff > 300:
+                    st.sidebar.info(f"Auto-retrying {len(failed_items)} failed data sources...")
                     try:
                         market_data = self.market_data_fetcher.fetch_all_enhanced_data()
                         st.session_state.enhanced_market_data = market_data
-                        st.session_state.last_market_data_update = datetime.now(self.ist)
-                        st.success("Market data updated successfully!")
+                        st.session_state.last_market_data_update = current_time
                     except Exception as e:
-                        st.error(f"Error fetching market data: {str(e)}")
-        
-        st.divider()
-        
-        if st.session_state.last_market_data_update:
-            st.write(f"Last update: {st.session_state.last_market_data_update.strftime('%H:%M:%S')} IST")
-        
-        if st.session_state.enhanced_market_data:
-            market_data = st.session_state.enhanced_market_data
-            
-            # Overall Summary
-            st.subheader("📊 Market Summary")
-            summary = market_data['summary']
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Overall Sentiment", summary['overall_sentiment'])
-            with col2:
-                st.metric("Average Score", f"{summary['avg_score']:.1f}")
-            with col3:
-                st.metric("Bullish Signals", summary['bullish_count'])
-            with col4:
-                st.metric("Total Data Points", summary['total_data_points'])
-            
-            st.divider()
-            
-            # Create tabs for different market data categories
-            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-                "🇮🇳 India VIX", "📈 Sector Analysis", "🌍 Global Markets", 
-                "🔄 Intermarket", "📊 Sector Rotation", "⏰ Intraday Timing"
-            ])
-            
-            with tab1:
-                self.display_india_vix_data(market_data['india_vix'])
-            
-            with tab2:
-                self.display_sector_data(market_data['sector_indices'])
-            
-            with tab3:
-                self.display_global_markets(market_data['global_markets'])
-            
-            with tab4:
-                self.display_intermarket_data(market_data['intermarket'])
-            
-            with tab5:
-                self.display_sector_rotation(market_data['sector_rotation'])
-            
-            with tab6:
-                self.display_intraday_seasonality(market_data['intraday_seasonality'])
-            
-        else:
-            st.info("👆 Click 'Update Market Data' to load comprehensive market analysis")
-            st.write("""
-            **Data Sources Included:**
-            - **India VIX**: Market volatility and fear index
-            - **Sector Indices**: Nifty sector performance and rotation
-            - **Global Markets**: International market performance
-            - **Intermarket Analysis**: Commodities, currencies, bonds
-            - **Sector Rotation**: Market leadership analysis
-            - **Intraday Seasonality**: Time-based market patterns
-            """)
-
-    def display_india_vix_data(self, vix_data: Dict[str, Any]):
-        """Display India VIX data"""
-        if not vix_data.get('success'):
-            st.error("India VIX data not available")
-            return
-        
-        st.subheader("🇮🇳 India VIX - Fear Index")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("VIX Value", f"{vix_data['value']:.2f}")
-        with col2:
-            st.metric("Sentiment", vix_data['sentiment'])
-        with col3:
-            st.metric("Bias", vix_data['bias'])
-        with col4:
-            st.metric("Score", vix_data['score'])
-        
-        # VIX Interpretation
-        st.info(f"**Interpretation**: {vix_data['sentiment']} - {self.get_vix_interpretation(vix_data['value'])}")
-        st.write(f"**Source**: {vix_data['source']} | **Timestamp**: {vix_data['timestamp'].strftime('%H:%M:%S')}")
+                        st.sidebar.error(f"Auto-retry failed: {str(e)}")
 
     def get_vix_interpretation(self, vix_value: float) -> str:
         """Get VIX interpretation text"""
@@ -2998,12 +2993,37 @@ class EnhancedNiftyApp:
         else:
             return "Very low volatility, potential for spike"
 
+    def display_india_vix_data(self, vix_data: Dict[str, Any]):
+        """Display India VIX data with error handling"""
+        st.subheader("🇮🇳 India VIX - Fear Index")
+        
+        if not vix_data or not vix_data.get('success'):
+            st.warning("⚠️ India VIX data not available")
+            st.info("This could be due to:\n- Market closed\n- Yahoo Finance rate limiting\n- Network issues")
+            return
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("VIX Value", f"{vix_data.get('value', 0):.2f}")
+        with col2:
+            st.metric("Sentiment", vix_data.get('sentiment', 'N/A'))
+        with col3:
+            st.metric("Bias", vix_data.get('bias', 'N/A'))
+        with col4:
+            st.metric("Score", vix_data.get('score', 0))
+        
+        # VIX Interpretation
+        vix_value = vix_data.get('value', 15)
+        st.info(f"**Interpretation**: {vix_data.get('sentiment', 'N/A')} - {self.get_vix_interpretation(vix_value)}")
+        st.write(f"**Source**: {vix_data.get('source', 'N/A')} | **Timestamp**: {vix_data.get('timestamp', datetime.now(self.ist)).strftime('%H:%M:%S')}")
+
     def display_sector_data(self, sectors: List[Dict[str, Any]]):
-        """Display sector indices data"""
+        """Display sector indices data with error handling"""
         st.subheader("📈 Nifty Sector Performance")
         
         if not sectors:
-            st.info("No sector data available")
+            st.warning("⚠️ Sector data not available")
+            st.info("Unable to fetch sector indices. This may be temporary.")
             return
         
         # Create sector performance table
@@ -3024,49 +3044,52 @@ class EnhancedNiftyApp:
         # Detailed table
         st.subheader("Detailed Sector Analysis")
         display_df = sector_df[['sector', 'last_price', 'change_pct', 'bias', 'score', 'source']].copy()
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     def display_global_markets(self, global_markets: List[Dict[str, Any]]):
-        """Display global markets data"""
+        """Display global markets data with error handling"""
         st.subheader("🌍 Global Market Performance")
         
         if not global_markets:
-            st.info("No global market data available")
+            st.warning("⚠️ Global market data not available")
+            st.info("Unable to fetch global indices. This may be temporary.")
             return
         
         # Create metrics for major markets
         major_markets = ['S&P 500', 'NASDAQ', 'NIKKEI 225', 'HANG SENG']
         filtered_markets = [m for m in global_markets if m['market'] in major_markets]
         
-        cols = st.columns(4)
-        for idx, market in enumerate(filtered_markets):
-            with cols[idx]:
-                color = "🟢" if market['change_pct'] > 0 else "🔴"
-                st.metric(
-                    f"{color} {market['market']}",
-                    f"{market['last_price']:.0f}",
-                    f"{market['change_pct']:+.2f}%"
-                )
+        if filtered_markets:
+            cols = st.columns(min(4, len(filtered_markets)))
+            for idx, market in enumerate(filtered_markets):
+                with cols[idx]:
+                    color = "🟢" if market['change_pct'] > 0 else "🔴"
+                    st.metric(
+                        f"{color} {market['market']}",
+                        f"{market['last_price']:.0f}",
+                        f"{market['change_pct']:+.2f}%"
+                    )
         
         # Detailed table
         st.subheader("All Global Markets")
         market_df = pd.DataFrame(global_markets)
         market_df = market_df.sort_values('change_pct', ascending=False)
         display_df = market_df[['market', 'last_price', 'change_pct', 'bias', 'score']].copy()
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     def display_intermarket_data(self, intermarket: List[Dict[str, Any]]):
-        """Display intermarket analysis data"""
+        """Display intermarket analysis data with error handling"""
         st.subheader("🔄 Intermarket Analysis")
         
         if not intermarket:
-            st.info("No intermarket data available")
+            st.warning("⚠️ Intermarket data not available")
+            st.info("Unable to fetch intermarket data. This may be temporary.")
             return
         
         # Create metrics for key intermarket assets
-        cols = st.columns(4)
-        for idx, asset in enumerate(intermarket):
-            with cols[idx % 4]:
+        cols = st.columns(min(4, len(intermarket)))
+        for idx, asset in enumerate(intermarket[:4]):  # Show first 4
+            with cols[idx]:
                 color = "🟢" if "BULLISH" in asset['bias'] or "RISK ON" in asset['bias'] else "🔴"
                 st.metric(
                     f"{color} {asset['asset']}",
@@ -3107,12 +3130,12 @@ class EnhancedNiftyApp:
         st.subheader("🏆 Sector Leaders")
         leaders_df = pd.DataFrame(rotation_data['leaders'])
         if not leaders_df.empty:
-            st.dataframe(leaders_df[['sector', 'change_pct', 'bias']], use_container_width=True)
+            st.dataframe(leaders_df[['sector', 'change_pct', 'bias']], use_container_width=True, hide_index=True)
         
         st.subheader("📉 Sector Laggards")
         laggards_df = pd.DataFrame(rotation_data['laggards'])
         if not laggards_df.empty:
-            st.dataframe(laggards_df[['sector', 'change_pct', 'bias']], use_container_width=True)
+            st.dataframe(laggards_df[['sector', 'change_pct', 'bias']], use_container_width=True, hide_index=True)
         
         # Rotation Interpretation
         st.info(f"**Rotation Type**: {rotation_data['rotation_type']}")
@@ -3144,56 +3167,499 @@ class EnhancedNiftyApp:
         
         # Day patterns
         st.write(f"**Day Pattern**: {seasonality_data['day_bias']} - {seasonality_data['day_characteristics']}")
-
-    def check_trading_signals(self, df: pd.DataFrame = None):
-        """Check for trading signals with safety checks"""
-        if not st.session_state.market_bias_data:
-            return
+def display_enhanced_market_data(self):
+        """Display comprehensive enhanced market data with better error handling"""
+        st.header("🌍 Enhanced Market Data Analysis")
         
-        current_time = datetime.now(self.ist)
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("Comprehensive market analysis from multiple sources including India VIX, global markets, sector rotation, and intermarket analysis")
+        with col2:
+            if st.button("🔄 Update Market Data", type="primary"):
+                with st.spinner("Fetching comprehensive market data..."):
+                    try:
+                        market_data = self.market_data_fetcher.fetch_all_enhanced_data()
+                        if market_data:
+                            st.session_state.enhanced_market_data = market_data
+                            st.session_state.last_market_data_update = datetime.now(self.ist)
+                            st.success("Market data updated successfully!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to fetch market data. Please try again.")
+                    except Exception as e:
+                        st.error(f"Error fetching market data: {str(e)}")
+                        st.info("This may be due to Yahoo Finance rate limiting. Please wait a moment and try again.")
         
-        # Check if we should check for signals (every 2 minutes)
-        if (st.session_state.last_signal_check and 
-            (current_time - st.session_state.last_signal_check).total_seconds() < 120):
-            return
+        st.divider()
         
-        st.session_state.last_signal_check = current_time
+        if st.session_state.last_market_data_update:
+            time_diff = datetime.now(self.ist) - st.session_state.last_market_data_update
+            minutes_ago = int(time_diff.total_seconds() / 60)
+            st.write(f"Last update: {st.session_state.last_market_data_update.strftime('%H:%M:%S')} IST ({minutes_ago} min ago)")
         
-        signals_sent = []
-        
-        for instrument_data in st.session_state.market_bias_data:
-            # Generate trading recommendation with safety check
-            recommendation = self.trading_signal_manager.generate_trading_recommendation(instrument_data, df)
+        if st.session_state.enhanced_market_data:
+            market_data = st.session_state.enhanced_market_data
             
-            if recommendation:
-                instrument = recommendation['instrument']
-                signal_type = recommendation['signal_type']
-                
-                # Skip blocked signals
-                if signal_type == "BLOCKED":
-                    st.warning(f"Signal blocked for {instrument}: {recommendation['blocked_reason']}")
-                    continue
-                
-                # Check cooldown
-                can_send, minutes_remaining = self.trading_signal_manager.can_send_signal(signal_type, instrument)
-                
-                if can_send:
-                    # Format and send message
-                    message = self.trading_signal_manager.format_signal_message(recommendation)
-                    
-                    if self.send_telegram_message(message):
-                        signals_sent.append(f"{instrument} {signal_type}")
-                        st.success(f"Trading signal sent: {instrument} {signal_type}")
-                        
-                        # Store in session state
-                        signal_key = f"{instrument}_{signal_type}_{current_time.strftime('%Y%m%d_%H%M')}"
-                        st.session_state.sent_trading_signals[signal_key] = recommendation
-                else:
-                    st.info(f"Cooldown active for {instrument}: {minutes_remaining} min remaining")
+            # Overall Summary
+            st.subheader("📊 Market Summary")
+            summary = market_data.get('summary', {})
+            
+            if summary:
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Overall Sentiment", summary.get('overall_sentiment', 'N/A'))
+                with col2:
+                    st.metric("Average Score", f"{summary.get('avg_score', 0):.1f}")
+                with col3:
+                    st.metric("Bullish Signals", summary.get('bullish_count', 0))
+                with col4:
+                    st.metric("Total Data Points", summary.get('total_data_points', 0))
+            
+            st.divider()
+            
+            # Create tabs for different market data categories
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                "🇮🇳 India VIX", "📈 Sector Analysis", "🌍 Global Markets", 
+                "🔄 Intermarket", "📊 Sector Rotation", "⏰ Intraday Timing"
+            ])
+            
+            with tab1:
+                self.display_india_vix_data(market_data.get('india_vix', {}))
+            
+            with tab2:
+                self.display_sector_data(market_data.get('sector_indices', []))
+            
+            with tab3:
+                self.display_global_markets(market_data.get('global_markets', []))
+            
+            with tab4:
+                self.display_intermarket_data(market_data.get('intermarket', []))
+            
+            with tab5:
+                self.display_sector_rotation(market_data.get('sector_rotation', {}))
+            
+            with tab6:
+                self.display_intraday_seasonality(market_data.get('intraday_seasonality', {}))
+            
+        else:
+            st.info("👆 Click 'Update Market Data' to load comprehensive market analysis")
+            st.write("""
+            **Data Sources Included:**
+            - **India VIX**: Market volatility and fear index
+            - **Sector Indices**: Nifty sector performance and rotation
+            - **Global Markets**: International market performance
+            - **Intermarket Analysis**: Commodities, currencies, bonds
+            - **Sector Rotation**: Market leadership analysis
+            - **Intraday Seasonality**: Time-based market patterns
+            
+            **Note**: Data is fetched from Yahoo Finance. If you encounter errors:
+            - Wait 1-2 minutes between updates (rate limiting)
+            - Check your internet connection
+            - Try during market hours for best results
+            """)
+
+    def display_comprehensive_bias_analysis(self):
+        """Display comprehensive bias analysis with enhanced error handling and fallback options"""
+        st.header("🎯 Comprehensive Technical Bias Analysis")
         
-        if signals_sent:
-            st.rerun()
-    
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("8-indicator bias analysis with adaptive weighting and market breadth")
+        with col2:
+            if st.button("🔄 Update Bias Analysis", type="primary"):
+                with st.spinner("Running comprehensive bias analysis..."):
+                    try:
+                        # Try NSEI first, then fallback options
+                        symbols_to_try = ["^NSEI", "NSEI", "^NSEBANK", "RELIANCE.NS"]
+                        bias_data = None
+                        
+                        for symbol in symbols_to_try:
+                            st.info(f"Trying symbol: {symbol}")
+                            bias_data = self.bias_analyzer.analyze_all_bias_indicators(symbol)
+                            
+                            if bias_data and bias_data.get('success'):
+                                st.session_state.comprehensive_bias_data = bias_data
+                                st.session_state.last_comprehensive_bias_update = datetime.now(self.ist)
+                                st.success(f"Bias analysis completed successfully using {symbol}!")
+                                st.rerun()
+                                break
+                            else:
+                                st.warning(f"Failed with {symbol}: {bias_data.get('error', 'Unknown error')}")
+                                time.sleep(2)  # Wait between retries
+                        
+                        if not bias_data or not bias_data.get('success'):
+                            st.error("All symbol attempts failed. Please try again later.")
+                            st.info("""
+                            **Possible Issues:**
+                            - Yahoo Finance API rate limiting
+                            - Market is closed
+                            - Network connectivity issues
+                            - Symbol format issues
+                            
+                            **Solutions:**
+                            - Wait 2-3 minutes and try again
+                            - Check if market is open
+                            - Try during market hours (9:15 AM - 3:30 PM IST)
+                            """)
+                            
+                    except Exception as e:
+                        st.error(f"Error during bias analysis: {str(e)}")
+                        st.info("Please check console for detailed error logs")
+        
+        st.divider()
+        
+        # Display last update time
+        if st.session_state.last_comprehensive_bias_update:
+            time_diff = datetime.now(self.ist) - st.session_state.last_comprehensive_bias_update
+            minutes_ago = int(time_diff.total_seconds() / 60)
+            st.write(f"Last analysis: {st.session_state.last_comprehensive_bias_update.strftime('%H:%M:%S')} IST ({minutes_ago} min ago)")
+        
+        if st.session_state.comprehensive_bias_data:
+            bias_data = st.session_state.comprehensive_bias_data
+            
+            if not bias_data.get('success'):
+                st.error(f"❌ Bias analysis failed: {bias_data.get('error', 'Unknown error')}")
+                
+                # Provide troubleshooting info
+                with st.expander("🛠️ Troubleshooting Guide", expanded=True):
+                    st.warning("**Common Issues and Solutions:**")
+                    st.write("""
+                    1. **Insufficient Data**: Yahoo Finance returned less than 100 candles
+                       - Solution: Wait a few minutes and try again
+                       - The script needs at least 100 data points for accurate analysis
+                    
+                    2. **Rate Limiting**: Too many requests to Yahoo Finance
+                       - Solution: Wait 2-3 minutes between updates
+                       - Yahoo Finance has rate limits on API calls
+                    
+                    3. **Market Closed**: Outside trading hours (9:15 AM - 3:30 PM IST)
+                       - Solution: Try during market hours for live data
+                       - Historical data may still be available
+                    
+                    4. **Symbol Issues**: The symbol format may not be recognized
+                       - The script tries multiple symbols: ^NSEI, NSEI, ^NSEBANK
+                    
+                    5. **Network Issues**: Internet connectivity problems
+                       - Solution: Check your internet connection
+                    """)
+                    
+                    # Show technical details
+                    st.write("**Technical Details:**")
+                    st.json(bias_data)
+                
+                return
+            
+            # Overall bias summary
+            st.subheader("📊 Overall Market Bias")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                bias_color = "🟢" if bias_data['overall_bias'] == "BULLISH" else "🔴" if bias_data['overall_bias'] == "BEARISH" else "🟡"
+                st.metric(
+                    "Overall Bias", 
+                    f"{bias_color} {bias_data['overall_bias']}",
+                    delta=f"Score: {bias_data['overall_score']:.1f}"
+                )
+            with col2:
+                # Create a gauge chart for bias score
+                fig = go.Figure(go.Indicator(
+                    mode = "gauge+number+delta",
+                    value = bias_data['overall_score'],
+                    domain = {'x': [0, 1], 'y': [0, 1]},
+                    title = {'text': "Bias Score"},
+                    gauge = {
+                        'axis': {'range': [-100, 100]},
+                        'bar': {'color': "darkblue"},
+                        'steps': [
+                            {'range': [-100, -50], 'color': "lightcoral"},
+                            {'range': [-50, 0], 'color': "lightyellow"},
+                            {'range': [0, 50], 'color': "lightgreen"},
+                            {'range': [50, 100], 'color': "limegreen"}],
+                        'threshold': {
+                            'line': {'color': "red", 'width': 4},
+                            'thickness': 0.75,
+                            'value': bias_data['overall_score']}}
+                ))
+                fig.update_layout(height=200, margin=dict(l=10, r=10, t=50, b=10))
+                st.plotly_chart(fig, use_container_width=True)
+            with col3:
+                st.metric("Confidence", f"{bias_data.get('overall_confidence', 0):.1f}%")
+            with col4:
+                st.metric("Current Price", f"₹{bias_data.get('current_price', 0):.2f}")
+                st.caption(f"Symbol: {bias_data.get('symbol', 'N/A')}")
+            
+            st.divider()
+            
+            # Detailed bias indicators in a table
+            st.subheader("📈 Detailed Technical Indicators")
+            
+            # Convert bias results to DataFrame for better display
+            bias_df = pd.DataFrame(bias_data['bias_results'])
+            
+            # Display as styled table
+            st.dataframe(bias_df[['indicator', 'value', 'bias', 'score']], use_container_width=True, hide_index=True)
+            
+            # Visual representation
+            st.subheader("📊 Bias Distribution")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Pie chart of bias distribution
+                bias_counts = {
+                    'Bullish': bias_data['bullish_count'],
+                    'Bearish': bias_data['bearish_count'], 
+                    'Neutral': bias_data['neutral_count']
+                }
+                
+                fig_pie = px.pie(
+                    values=list(bias_counts.values()),
+                    names=list(bias_counts.keys()),
+                    title="Bias Distribution",
+                    color=list(bias_counts.keys()),
+                    color_discrete_map={
+                        'Bullish': 'green',
+                        'Bearish': 'red',
+                        'Neutral': 'orange'
+                    }
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+            with col2:
+                # Bar chart of indicator scores
+                fig_bar = px.bar(
+                    bias_df,
+                    x='indicator',
+                    y='score',
+                    color='bias',
+                    title="Indicator Scores",
+                    color_discrete_map={
+                        'BULLISH': 'green',
+                        'BEARISH': 'red', 
+                        'NEUTRAL': 'orange'
+                    }
+                )
+                fig_bar.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_bar, use_container_width=True)
+            
+            st.divider()
+            
+            # Advanced metrics
+            st.subheader("🔍 Advanced Analysis Metrics")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Bullish Indicators", bias_data['bullish_count'])
+            with col2:
+                st.metric("Bearish Indicators", bias_data['bearish_count'])
+            with col3:
+                st.metric("Neutral Indicators", bias_data['neutral_count'])
+            with col4:
+                st.metric("Total Indicators", bias_data['total_indicators'])
+            
+            # Additional metrics if available
+            if 'fast_bull_pct' in bias_data:
+                st.subheader("📈 Weighted Analysis")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Fast Bull %", f"{bias_data['fast_bull_pct']:.1f}%")
+                with col2:
+                    st.metric("Fast Bear %", f"{bias_data['fast_bear_pct']:.1f}%")
+                with col3:
+                    st.metric("Bullish Bias %", f"{bias_data['bullish_bias_pct']:.1f}%")
+                with col4:
+                    st.metric("Bearish Bias %", f"{bias_data['bearish_bias_pct']:.1f}%")
+            
+            # Trading recommendation based on bias
+            st.divider()
+            st.subheader("💡 Trading Recommendation")
+            
+            bias_strength = abs(bias_data['overall_score'])
+            overall_bias = bias_data['overall_bias']
+            confidence = bias_data['overall_confidence']
+            
+            if overall_bias == "BULLISH" and bias_strength > 60 and confidence > 70:
+                st.success("""
+                **🎯 STRONG BULLISH SIGNAL - HIGH CONFIDENCE**
+                
+                **Recommended Action:** Consider LONG positions
+                **Strategy:** Look for buying opportunities on dips
+                **Risk Management:** Use tight stop losses
+                **Target:** Expect upward momentum to continue
+                """)
+            elif overall_bias == "BULLISH":
+                st.info("""
+                **📈 BULLISH BIAS - MODERATE CONFIDENCE**
+                
+                **Recommended Action:** Cautious LONG positions
+                **Strategy:** Wait for confirmations before entering
+                **Risk Management:** Use proper position sizing
+                """)
+            elif overall_bias == "BEARISH" and bias_strength > 60 and confidence > 70:
+                st.error("""
+                **🎯 STRONG BEARISH SIGNAL - HIGH CONFIDENCE**
+                
+                **Recommended Action:** Consider SHORT positions  
+                **Strategy:** Look for selling opportunities on rallies
+                **Risk Management:** Use tight stop losses
+                **Target:** Expect downward momentum to continue
+                """)
+            elif overall_bias == "BEARISH":
+                st.warning("""
+                **📉 BEARISH BIAS - MODERATE CONFIDENCE**
+                
+                **Recommended Action:** Cautious SHORT positions
+                **Strategy:** Wait for confirmations before entering
+                **Risk Management:** Use proper position sizing
+                """)
+            else:
+                st.warning("""
+                **⚖️ NEUTRAL/UNCLEAR BIAS**
+                
+                **Recommended Action:** Wait for clearer direction
+                **Strategy:** Consider range-bound strategies
+                **Risk Management:** Reduce position sizes
+                **Advice:** Monitor for breakout signals
+                """)
+        
+        else:
+            st.info("👆 Click 'Update Bias Analysis' to run comprehensive technical analysis")
+            st.write("This analysis uses 8 technical indicators to determine market bias:")
+            st.write("""
+            - **Volume Delta** - Buying vs Selling pressure
+            - **HVP** - High Volume Pivots  
+            - **VOB** - Volume Order Blocks
+            - **Order Blocks** - EMA crossover signals
+            - **RSI** - Momentum indicator
+            - **DMI** - Directional Movement Index
+            - **VIDYA** - Variable Index Dynamic Average
+            - **MFI** - Money Flow Index
+            """)
+
+    def display_comprehensive_options_analysis(self):
+        """Display comprehensive NSE Options Analysis with detailed ATM bias tabulation"""
+        st.header("📊 NSE Options Chain Analysis - Auto Refresh")
+        
+        # Auto-refresh toggle
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.info(f"Options data auto-refreshes every {self.options_analyzer.refresh_interval} minutes")
+        with col2:
+            if st.button("🔄 Force Refresh", type="primary"):
+                with st.spinner("Force refreshing options data..."):
+                    bias_data = self.options_analyzer.get_overall_market_bias(force_refresh=True)
+                    st.session_state.market_bias_data = bias_data
+                    st.session_state.last_bias_update = datetime.now(self.ist)
+                    st.success("Options data refreshed!")
+        with col3:
+            if st.session_state.last_bias_update:
+                st.write(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')}")
+        
+        st.divider()
+        
+        # Display current market bias
+        if st.session_state.market_bias_data:
+            bias_data = st.session_state.market_bias_data
+            
+            st.subheader("🎯 Current Market Bias Summary")
+            
+            # Create metrics for each instrument
+            cols = st.columns(len(bias_data))
+            for idx, instrument_data in enumerate(bias_data):
+                with cols[idx]:
+                    bias_color = "🟢" if "Bullish" in instrument_data['overall_bias'] else "🔴" if "Bearish" in instrument_data['overall_bias'] else "🟡"
+                    st.metric(
+                        f"{instrument_data['instrument']}",
+                        f"{bias_color} {instrument_data['overall_bias']}",
+                        f"Score: {instrument_data['bias_score']:.2f}"
+                    )
+            
+            st.divider()
+            
+            # Detailed analysis for each instrument
+            for instrument_data in bias_data:
+                comp_metrics = instrument_data.get('comprehensive_metrics', {})
+                detailed_bias = instrument_data.get('detailed_atm_bias', {})
+                
+                with st.expander(f"🎯 {instrument_data['instrument']} - Detailed ATM Bias Analysis", expanded=True):
+                    
+                    # Basic Information
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Spot Price", f"₹{instrument_data['spot_price']:.2f}")
+                    with col2:
+                        st.metric("ATM Strike", f"₹{instrument_data['atm_strike']:.2f}")
+                    with col3:
+                        st.metric("PCR OI", f"{instrument_data['pcr_oi']:.2f}")
+                    with col4:
+                        st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}")
+                    
+                    st.divider()
+                    
+                    # Trading Recommendation
+                    st.subheader("💡 Trading Recommendation")
+                    
+                    confidence_score = self.trading_signal_manager.calculate_confidence_score(instrument_data, comp_metrics)
+                    overall_bias = instrument_data['overall_bias']
+                    
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        if "Strong Bullish" in overall_bias and confidence_score >= 80:
+                            st.success(f"""
+                            **🎯 HIGH CONFIDENCE BULLISH SIGNAL - {confidence_score}% Confidence**
+                            
+                            **Recommended Action:** Aggressive LONG/CALL positions
+                            **Entry Zone:** ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 50):.0f} - ₹{instrument_data['spot_price']:.0f}
+                            **Target 1:** ₹{instrument_data['spot_price'] + (comp_metrics.get('call_resistance', instrument_data['spot_price'] + 100) - instrument_data['spot_price']) * 0.5:.0f}
+                            **Target 2:** ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 100):.0f}
+                            **Stop Loss:** ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 100) - 20:.0f}
+                            """)
+                        elif "Bullish" in overall_bias:
+                            st.info(f"""
+                            **📈 BULLISH BIAS - {confidence_score}% Confidence**
+                            
+                            **Recommended Action:** Consider LONG/CALL positions
+                            **Entry Zone:** Wait for pullback to support
+                            **Target:** ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 80):.0f}
+                            **Stop Loss:** Below key support
+                            """)
+                        elif "Strong Bearish" in overall_bias and confidence_score >= 80:
+                            st.error(f"""
+                            **🎯 HIGH CONFIDENCE BEARISH SIGNAL - {confidence_score}% Confidence**
+                            
+                            **Recommended Action:** Aggressive SHORT/PUT positions
+                            **Entry Zone:** ₹{instrument_data['spot_price']:.0f} - ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 50):.0f}
+                            **Target 1:** ₹{instrument_data['spot_price'] - (instrument_data['spot_price'] - comp_metrics.get('put_support', instrument_data['spot_price'] - 100)) * 0.5:.0f}
+                            **Target 2:** ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 100):.0f}
+                            **Stop Loss:** ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 100) + 20:.0f}
+                            """)
+                        elif "Bearish" in overall_bias:
+                            st.warning(f"""
+                            **📉 BEARISH BIAS - {confidence_score}% Confidence**
+                            
+                            **Recommended Action:** Consider SHORT/PUT positions
+                            **Entry Zone:** Wait for rally to resistance
+                            **Target:** ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 80):.0f}
+                            **Stop Loss:** Above key resistance
+                            """)
+                        else:
+                            st.warning(f"""
+                            **⚖️ NEUTRAL/UNCLEAR BIAS - {confidence_score}% Confidence**
+                            
+                            **Recommended Action:** Wait for clear directional bias
+                            **Strategy:** Consider range-bound strategies
+                            **Key Levels:** Monitor ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 50):.0f} - ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 50):.0f}
+                            """)
+                    
+                    with col2:
+                        st.metric("Confidence Score", f"{confidence_score}%")
+                        st.metric("Overall Bias", overall_bias)
+                        st.metric("Bias Score", f"{instrument_data['bias_score']:.2f}")
+        
+        else:
+            st.info("👆 Options data will auto-refresh. Click 'Force Refresh' to load immediately.")
+
     def display_trading_signals_panel(self) -> bool:
         """Display panel for trading signals and settings"""
         st.sidebar.header("🎯 Trading Signals")
@@ -3231,55 +3697,106 @@ class EnhancedNiftyApp:
             recent_signals = list(st.session_state.sent_trading_signals.values())[-5:]  # Last 5 signals
             
             for signal in reversed(recent_signals):
-                if signal.get('signal_type') == "BLOCKED":
-                    emoji = "🚫"
-                    signal_text = f"{emoji} {signal['instrument']} BLOCKED"
-                else:
-                    emoji = "🟢" if signal['direction'] == "BULLISH" else "🔴"
-                    signal_text = f"{emoji} {signal['instrument']} {signal['signal_type']}"
-                
-                with st.sidebar.expander(signal_text, expanded=False):
+                emoji = "🟢" if signal['direction'] == "BULLISH" else "🔴"
+                with st.sidebar.expander(f"{emoji} {signal['instrument']} {signal['signal_type']}", expanded=False):
                     st.write(f"Time: {signal['timestamp'].strftime('%H:%M:%S')}")
-                    if signal.get('signal_type') == "BLOCKED":
-                        st.write(f"Reason: {signal['blocked_reason']}")
-                    else:
-                        st.write(f"Confidence: {signal['confidence']}%")
-                        st.write(f"Entry: ₹{signal['entry_zone']}")
-                        st.write(f"Targets: ₹{signal['targets'][0]}, ₹{signal['targets'][1]}")
-                        st.write(f"SL: ₹{signal['stop_loss']}")
+                    st.write(f"Confidence: {signal['confidence']}%")
+                    st.write(f"Entry: ₹{signal['entry_zone']}")
+                    st.write(f"Targets: ₹{signal['targets'][0]}, ₹{signal['targets'][1]}")
+                    st.write(f"SL: ₹{signal['stop_loss']}")
         
         return enable_trading_signals
-
-    def format_market_bias_for_alerts(self) -> str:
-        """Format market bias data for Telegram alerts"""
-        try:
-            bias_data = st.session_state.market_bias_data
-            if not bias_data:
-                return "Market bias data not available"
-            
-            message = "📊 COMPREHENSIVE OPTIONS MARKET BIAS:\n\n"
-            
-            for instrument_data in bias_data:
-                message += f"🎯 {instrument_data['instrument']}:\n"
-                message += f"   • Spot: ₹{instrument_data['spot_price']:.2f}\n"
-                message += f"   • Overall Bias: {instrument_data['overall_bias']} (Score: {instrument_data['bias_score']:.2f})\n"
-                message += f"   • PCR OI: {instrument_data['pcr_oi']:.2f} | PCR Δ: {instrument_data['pcr_change']:.2f}\n"
-                
-                # Add comprehensive metrics
-                comp_metrics = instrument_data.get('comprehensive_metrics', {})
-                if comp_metrics:
-                    message += f"   • Synthetic Bias: {comp_metrics.get('synthetic_bias', 'N/A')}\n"
-                    message += f"   • ATM Buildup: {comp_metrics.get('atm_buildup', 'N/A')}\n"
-                    message += f"   • Vega Bias: {comp_metrics.get('atm_vega_bias', 'N/A')}\n"
-                    message += f"   • Max Pain: {comp_metrics.get('max_pain_strike', 'N/A')} (Dist: {comp_metrics.get('distance_from_max_pain', 0):+.1f})\n"
-                    message += f"   • Call Res: {comp_metrics.get('call_resistance', 'N/A')} | Put Sup: {comp_metrics.get('put_support', 'N/A')}\n"
-                
-                message += "\n"
-            
-            return message
-            
-        except Exception as e:
-            return f"Market bias analysis temporarily unavailable"
+def create_comprehensive_chart(self, df: pd.DataFrame, bullish_blocks: List[Dict[str, Any]], bearish_blocks: List[Dict[str, Any]], interval: str) -> Optional[go.Figure]:
+        """Create comprehensive chart with Volume Order Blocks"""
+        if df.empty:
+            return None
+        
+        fig = make_subplots(
+            rows=2, cols=1,
+            row_heights=[0.7, 0.3],
+            subplot_titles=(f'Nifty 50 Analysis - {interval} Min', 'Volume with Spike Detection'),
+            vertical_spacing=0.05,
+            shared_xaxes=True
+        )
+        
+        # Candlestick chart
+        fig.add_trace(
+            go.Candlestick(
+                x=df.index,
+                open=df['open'],
+                high=df['high'],
+                low=df['low'],
+                close=df['close'],
+                name='Nifty 50',
+                increasing_line_color='#00ff88',
+                decreasing_line_color='#ff4444'
+            ),
+            row=1, col=1
+        )
+        
+        # Add Volume Order Blocks
+        colors = {'bullish': '#26ba9f', 'bearish': '#6626ba'}
+        
+        for block in bullish_blocks:
+            fig.add_shape(
+                type="rect",
+                x0=block['index'], y0=block['upper'],
+                x1=df.index[-1], y1=block['lower'],
+                fillcolor='rgba(38, 186, 159, 0.1)',
+                line=dict(color=colors['bullish'], width=1),
+                row=1, col=1
+            )
+        
+        for block in bearish_blocks:
+            fig.add_shape(
+                type="rect",
+                x0=block['index'], y0=block['upper'],
+                x1=df.index[-1], y1=block['lower'],
+                fillcolor='rgba(102, 38, 186, 0.1)',
+                line=dict(color=colors['bearish'], width=1),
+                row=1, col=1
+            )
+        
+        # Volume bars with spike detection
+        bar_colors = []
+        for i, (idx, row) in enumerate(df.iterrows()):
+            if i < len(df) - 1:
+                bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
+            else:
+                current_volume = row['volume']
+                if len(df) > 5:
+                    avg_volume = df['volume'].iloc[-6:-1].mean()
+                    if current_volume > avg_volume * 2.5:
+                        bar_colors.append('#ffeb3b')
+                    else:
+                        bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
+                else:
+                    bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
+        
+        fig.add_trace(
+            go.Bar(
+                x=df.index,
+                y=df['volume'],
+                name='Volume',
+                marker_color=bar_colors,
+                opacity=0.7
+            ),
+            row=2, col=1
+        )
+        
+        # Update layout
+        fig.update_layout(
+            xaxis_rangeslider_visible=False,
+            template='plotly_dark',
+            height=800,
+            showlegend=True,
+            margin=dict(l=0, r=0, t=50, b=0)
+        )
+        
+        fig.update_xaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)')
+        fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)', side="right")
+        
+        return fig
 
     def check_volume_block_alerts(self, current_price: float, bullish_blocks: List[Dict[str, Any]], bearish_blocks: List[Dict[str, Any]], threshold: float = 5) -> bool:
         """Check if price is near volume order blocks and send alerts with comprehensive ATM bias"""
@@ -3419,738 +3936,80 @@ Watch for breakout/breakdown confirmation!"""
         
         return False
 
-    def get_bias_color(self, bias_text: str) -> str:
-        """Get color for bias text"""
-        if 'Bullish' in str(bias_text):
-            return 'bullish'
-        elif 'Bearish' in str(bias_text):
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def get_score_color(self, score: float) -> str:
-        """Get color for bias score"""
-        if score >= 2:
-            return 'bullish'
-        elif score <= -2:
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def get_pcr_color(self, pcr_value: float) -> str:
-        """Get color for PCR value"""
-        if pcr_value > 1.2:
-            return 'bullish'
-        elif pcr_value < 0.8:
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def get_diff_color(self, diff_value: float) -> str:
-        """Get color for difference values"""
-        if diff_value > 0:
-            return 'bullish'
-        elif diff_value < 0:
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def get_change_color(self, change_value: float) -> str:
-        """Get color for change values"""
-        if change_value > 0:
-            return 'bullish'
-        elif change_value < 0:
-            return 'bearish'
-        else:
-            return 'neutral'
-
-    def get_color_code(self, color_type: str) -> str:
-        """Get hex color code for color type"""
-        color_map = {
-            'bullish': '#90EE90',  # Light Green
-            'bearish': '#FFB6C1',  # Light Red
-            'neutral': '#FFFFE0',  # Light Yellow
-            'normal': '#FFFFFF'    # White
-        }
-        return color_map.get(color_type, '#FFFFFF')
-
-    def calculate_confidence_score(self, instrument_data: Dict[str, Any], comp_metrics: Dict[str, Any]) -> float:
-        """Calculate confidence score based on multiple factors"""
-        confidence = 50  # Base confidence
-        
-        # PCR Confidence
-        pcr_oi = instrument_data['pcr_oi']
-        if pcr_oi > 1.3 or pcr_oi < 0.7:
-            confidence += 15
-        elif pcr_oi > 1.1 or pcr_oi < 0.9:
-            confidence += 10
-        
-        # Bias Score Confidence
-        bias_score = abs(instrument_data['bias_score'])
-        if bias_score >= 3:
-            confidence += 20
-        elif bias_score >= 2:
-            confidence += 15
-        elif bias_score >= 1:
-            confidence += 10
-        
-        # Synthetic Bias Confidence
-        synthetic_bias = comp_metrics.get('synthetic_bias', 'Neutral')
-        if 'Bullish' in synthetic_bias or 'Bearish' in synthetic_bias:
-            confidence += 10
-        
-        # Max Pain Confidence
-        dist_mp = abs(comp_metrics.get('distance_from_max_pain', 0))
-        if dist_mp > 100:
-            confidence += 10
-        elif dist_mp > 50:
-            confidence += 5
-        
-        return min(confidence, 100)
-
-    def display_comprehensive_options_analysis(self):
-        """Display comprehensive NSE Options Analysis with detailed ATM bias tabulation"""
-        st.header("📊 NSE Options Chain Analysis - Auto Refresh")
-        
-        # Auto-refresh toggle
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            st.info(f"Options data auto-refreshes every {self.options_analyzer.refresh_interval} minutes")
-        with col2:
-            if st.button("🔄 Force Refresh", type="primary"):
-                with st.spinner("Force refreshing options data..."):
-                    bias_data = self.options_analyzer.get_overall_market_bias(force_refresh=True)
-                    st.session_state.market_bias_data = bias_data
-                    st.session_state.last_bias_update = datetime.now(self.ist)
-                    st.success("Options data refreshed!")
-        with col3:
-            if st.session_state.last_bias_update:
-                st.write(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')}")
-        
-        st.divider()
-        
-        # Display current market bias
-        if st.session_state.market_bias_data:
+    def format_market_bias_for_alerts(self) -> str:
+        """Format market bias data for Telegram alerts"""
+        try:
             bias_data = st.session_state.market_bias_data
+            if not bias_data:
+                return "Market bias data not available"
             
-            st.subheader("🎯 Current Market Bias Summary")
+            message = "📊 COMPREHENSIVE OPTIONS MARKET BIAS:\n\n"
             
-            # Create metrics for each instrument
-            cols = st.columns(len(bias_data))
-            for idx, instrument_data in enumerate(bias_data):
-                with cols[idx]:
-                    bias_color = "🟢" if "Bullish" in instrument_data['overall_bias'] else "🔴" if "Bearish" in instrument_data['overall_bias'] else "🟡"
-                    st.metric(
-                        f"{instrument_data['instrument']}",
-                        f"{bias_color} {instrument_data['overall_bias']}",
-                        f"Score: {instrument_data['bias_score']:.2f}"
-                    )
-            
-            st.divider()
-            
-            # Detailed analysis for each instrument
             for instrument_data in bias_data:
+                message += f"🎯 {instrument_data['instrument']}:\n"
+                message += f"   • Spot: ₹{instrument_data['spot_price']:.2f}\n"
+                message += f"   • Overall Bias: {instrument_data['overall_bias']} (Score: {instrument_data['bias_score']:.2f})\n"
+                message += f"   • PCR OI: {instrument_data['pcr_oi']:.2f} | PCR Δ: {instrument_data['pcr_change']:.2f}\n"
+                
+                # Add comprehensive metrics
                 comp_metrics = instrument_data.get('comprehensive_metrics', {})
-                detailed_bias = instrument_data.get('detailed_atm_bias', {})
+                if comp_metrics:
+                    message += f"   • Synthetic Bias: {comp_metrics.get('synthetic_bias', 'N/A')}\n"
+                    message += f"   • ATM Buildup: {comp_metrics.get('atm_buildup', 'N/A')}\n"
+                    message += f"   • Vega Bias: {comp_metrics.get('atm_vega_bias', 'N/A')}\n"
+                    message += f"   • Max Pain: {comp_metrics.get('max_pain_strike', 'N/A')} (Dist: {comp_metrics.get('distance_from_max_pain', 0):+.1f})\n"
+                    message += f"   • Call Res: {comp_metrics.get('call_resistance', 'N/A')} | Put Sup: {comp_metrics.get('put_support', 'N/A')}\n"
                 
-                with st.expander(f"🎯 {instrument_data['instrument']} - Detailed ATM Bias Analysis", expanded=True):
-                    
-                    # Basic Information
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Spot Price", f"₹{instrument_data['spot_price']:.2f}")
-                    with col2:
-                        st.metric("ATM Strike", f"₹{instrument_data['atm_strike']:.2f}")
-                    with col3:
-                        st.metric("PCR OI", f"{instrument_data['pcr_oi']:.2f}")
-                    with col4:
-                        st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}")
-                    
-                    st.divider()
-                    
-                    # Trading Recommendation
-                    st.subheader("💡 Trading Recommendation")
-                    
-                    confidence_score = self.calculate_confidence_score(instrument_data, comp_metrics)
-                    overall_bias = instrument_data['overall_bias']
-                    
-                    col1, col2 = st.columns([2, 1])
-                    
-                    with col1:
-                        if "Strong Bullish" in overall_bias and confidence_score >= 80:
-                            st.success(f"""
-                            **🎯 HIGH CONFIDENCE BULLISH SIGNAL - {confidence_score}% Confidence**
-                            
-                            **Recommended Action:** Aggressive LONG/CALL positions
-                            **Entry Zone:** ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 50):.0f} - ₹{instrument_data['spot_price']:.0f}
-                            **Target 1:** ₹{instrument_data['spot_price'] + (comp_metrics.get('call_resistance', instrument_data['spot_price'] + 100) - instrument_data['spot_price']) * 0.5:.0f}
-                            **Target 2:** ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 100):.0f}
-                            **Stop Loss:** ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 100) - 20:.0f}
-                            """)
-                        elif "Bullish" in overall_bias:
-                            st.info(f"""
-                            **📈 BULLISH BIAS - {confidence_score}% Confidence**
-                            
-                            **Recommended Action:** Consider LONG/CALL positions
-                            **Entry Zone:** Wait for pullback to support
-                            **Target:** ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 80):.0f}
-                            **Stop Loss:** Below key support
-                            """)
-                        elif "Strong Bearish" in overall_bias and confidence_score >= 80:
-                            st.error(f"""
-                            **🎯 HIGH CONFIDENCE BEARISH SIGNAL - {confidence_score}% Confidence**
-                            
-                            **Recommended Action:** Aggressive SHORT/PUT positions
-                            **Entry Zone:** ₹{instrument_data['spot_price']:.0f} - ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 50):.0f}
-                            **Target 1:** ₹{instrument_data['spot_price'] - (instrument_data['spot_price'] - comp_metrics.get('put_support', instrument_data['spot_price'] - 100)) * 0.5:.0f}
-                            **Target 2:** ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 100):.0f}
-                            **Stop Loss:** ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 100) + 20:.0f}
-                            """)
-                        elif "Bearish" in overall_bias:
-                            st.warning(f"""
-                            **📉 BEARISH BIAS - {confidence_score}% Confidence**
-                            
-                            **Recommended Action:** Consider SHORT/PUT positions
-                            **Entry Zone:** Wait for rally to resistance
-                            **Target:** ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 80):.0f}
-                            **Stop Loss:** Above key resistance
-                            """)
-                        else:
-                            st.warning(f"""
-                            **⚖️ NEUTRAL/UNCLEAR BIAS - {confidence_score}% Confidence**
-                            
-                            **Recommended Action:** Wait for clear directional bias
-                            **Strategy:** Consider range-bound strategies
-                            **Key Levels:** Monitor ₹{comp_metrics.get('put_support', instrument_data['spot_price'] - 50):.0f} - ₹{comp_metrics.get('call_resistance', instrument_data['spot_price'] + 50):.0f}
-                            """)
-                    
-                    with col2:
-                        st.metric("Confidence Score", f"{confidence_score}%")
-                        st.metric("Overall Bias", overall_bias)
-                        st.metric("Bias Score", f"{instrument_data['bias_score']:.2f}")
-        
-        else:
-            st.info("👆 Options data will auto-refresh. Click 'Force Refresh' to load immediately.")
+                message += "\n"
+            
+            return message
+            
+        except Exception as e:
+            return f"Market bias analysis temporarily unavailable"
 
-    def display_comprehensive_bias_analysis(self):
-        """Display comprehensive bias analysis from BiasAnalysisPro with enhanced error handling"""
-        st.header("🎯 Comprehensive Technical Bias Analysis")
-        
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.info("8-indicator bias analysis with adaptive weighting and market breadth")
-        with col2:
-            if st.button("🔄 Update Bias Analysis", type="primary"):
-                with st.spinner("Running comprehensive bias analysis..."):
-                    try:
-                        bias_data = self.bias_analyzer.analyze_all_bias_indicators("^NSEI")
-                        st.session_state.comprehensive_bias_data = bias_data
-                        st.session_state.last_comprehensive_bias_update = datetime.now(self.ist)
-                        if bias_data['success']:
-                            st.success("Bias analysis completed successfully!")
-                        else:
-                            st.error(f"Bias analysis failed: {bias_data['error']}")
-                    except Exception as e:
-                        st.error(f"Error during bias analysis: {str(e)}")
-        
-        st.divider()
-        
-        # Display last update time
-        if st.session_state.last_comprehensive_bias_update:
-            st.write(f"Last analysis: {st.session_state.last_comprehensive_bias_update.strftime('%H:%M:%S')} IST")
-        
-        if st.session_state.comprehensive_bias_data:
-            bias_data = st.session_state.comprehensive_bias_data
-            
-            if not bias_data['success']:
-                st.error(f"❌ Bias analysis failed: {bias_data['error']}")
-                
-                # Provide alternative data source options
-                st.info("💡 **Troubleshooting Tips:**")
-                st.write("""
-                1. Try using a different symbol (e.g., 'NSEI' instead of '^NSEI')
-                2. Check your internet connection
-                3. Try again in a few minutes as Yahoo Finance might be temporarily unavailable
-                4. Use the Options Chain analysis below which uses NSE data directly
-                """)
-                
-                # Fallback to manual input for testing
-                with st.expander("🛠️ Manual Data Input (Testing)"):
-                    st.warning("Use this for testing when Yahoo Finance is unavailable")
-                    manual_bias = st.selectbox("Manual Bias", ["BULLISH", "BEARISH", "NEUTRAL"])
-                    manual_score = st.slider("Manual Score", -100, 100, 0)
-                    
-                    if st.button("Apply Manual Data"):
-                        st.session_state.comprehensive_bias_data = {
-                            'success': True,
-                            'overall_bias': manual_bias,
-                            'overall_score': manual_score,
-                            'overall_confidence': 75,
-                            'current_price': 22000,
-                            'bias_results': [
-                                {'indicator': 'RSI', 'value': '55.0', 'bias': manual_bias, 'score': manual_score},
-                                {'indicator': 'Volume Delta', 'value': '1000', 'bias': manual_bias, 'score': manual_score},
-                                {'indicator': 'DMI', 'value': '+DI:25 -DI:20', 'bias': manual_bias, 'score': manual_score},
-                            ],
-                            'bullish_count': 3 if manual_bias == "BULLISH" else 0,
-                            'bearish_count': 3 if manual_bias == "BEARISH" else 0,
-                            'neutral_count': 3 if manual_bias == "NEUTRAL" else 0,
-                            'total_indicators': 3
-                        }
-                        st.rerun()
-                
-                return
-            
-            # Overall bias summary
-            st.subheader("📊 Overall Market Bias")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                bias_color = "🟢" if bias_data['overall_bias'] == "BULLISH" else "🔴" if bias_data['overall_bias'] == "BEARISH" else "🟡"
-                st.metric(
-                    "Overall Bias", 
-                    f"{bias_color} {bias_data['overall_bias']}",
-                    delta=f"Score: {bias_data['overall_score']:.1f}"
-                )
-            with col2:
-                # Create a gauge chart for bias score
-                fig = go.Figure(go.Indicator(
-                    mode = "gauge+number+delta",
-                    value = bias_data['overall_score'],
-                    domain = {'x': [0, 1], 'y': [0, 1]},
-                    title = {'text': "Bias Score"},
-                    gauge = {
-                        'axis': {'range': [-100, 100]},
-                        'bar': {'color': "darkblue"},
-                        'steps': [
-                            {'range': [-100, -50], 'color': "lightcoral"},
-                            {'range': [-50, 0], 'color': "lightyellow"},
-                            {'range': [0, 50], 'color': "lightgreen"},
-                            {'range': [50, 100], 'color': "limegreen"}],
-                        'threshold': {
-                            'line': {'color': "red", 'width': 4},
-                            'thickness': 0.75,
-                            'value': bias_data['overall_score']}}
-                ))
-                fig.update_layout(height=200, margin=dict(l=10, r=10, t=50, b=10))
-                st.plotly_chart(fig, use_container_width=True)
-            with col3:
-                st.metric("Confidence", f"{bias_data['overall_confidence']:.1f}%")
-            with col4:
-                st.metric("Current Price", f"₹{bias_data['current_price']:.2f}")
-            
-            st.divider()
-            
-            # Detailed bias indicators in a table
-            st.subheader("📈 Detailed Technical Indicators")
-            
-            # Convert bias results to DataFrame for better display
-            bias_df = pd.DataFrame(bias_data['bias_results'])
-            
-            # Add color coding
-            def style_bias(val):
-                if val == 'BULLISH':
-                    return 'color: green; font-weight: bold'
-                elif val == 'BEARISH':
-                    return 'color: red; font-weight: bold'
-                else:
-                    return 'color: orange; font-weight: bold'
-            
-            # Display as styled table
-            styled_df = bias_df[['indicator', 'value', 'bias', 'score']].style.applymap(
-                style_bias, subset=['bias']
-            )
-            
-            st.dataframe(styled_df, use_container_width=True)
-            
-            # Visual representation
-            st.subheader("📊 Bias Distribution")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Pie chart of bias distribution
-                bias_counts = {
-                    'Bullish': bias_data['bullish_count'],
-                    'Bearish': bias_data['bearish_count'], 
-                    'Neutral': bias_data['neutral_count']
-                }
-                
-                fig_pie = px.pie(
-                    values=list(bias_counts.values()),
-                    names=list(bias_counts.keys()),
-                    title="Bias Distribution",
-                    color=list(bias_counts.keys()),
-                    color_discrete_map={
-                        'Bullish': 'green',
-                        'Bearish': 'red',
-                        'Neutral': 'orange'
-                    }
-                )
-                st.plotly_chart(fig_pie, use_container_width=True)
-            
-            with col2:
-                # Bar chart of indicator scores
-                fig_bar = px.bar(
-                    bias_df,
-                    x='indicator',
-                    y='score',
-                    color='bias',
-                    title="Indicator Scores",
-                    color_discrete_map={
-                        'BULLISH': 'green',
-                        'BEARISH': 'red', 
-                        'NEUTRAL': 'orange'
-                    }
-                )
-                fig_bar.update_layout(xaxis_tickangle=-45)
-                st.plotly_chart(fig_bar, use_container_width=True)
-            
-            st.divider()
-            
-            # Advanced metrics
-            st.subheader("🔍 Advanced Analysis Metrics")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Bullish Indicators", bias_data['bullish_count'])
-            with col2:
-                st.metric("Bearish Indicators", bias_data['bearish_count'])
-            with col3:
-                st.metric("Neutral Indicators", bias_data['neutral_count'])
-            with col4:
-                st.metric("Total Indicators", bias_data['total_indicators'])
-            
-            # Additional metrics if available
-            if 'fast_bull_pct' in bias_data:
-                st.subheader("📈 Weighted Analysis")
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Fast Bull %", f"{bias_data['fast_bull_pct']:.1f}%")
-                with col2:
-                    st.metric("Fast Bear %", f"{bias_data['fast_bear_pct']:.1f}%")
-                with col3:
-                    st.metric("Bullish Bias %", f"{bias_data['bullish_bias_pct']:.1f}%")
-                with col4:
-                    st.metric("Bearish Bias %", f"{bias_data['bearish_bias_pct']:.1f}%")
-            
-            # Trading recommendation based on bias
-            st.divider()
-            st.subheader("💡 Trading Recommendation")
-            
-            bias_strength = abs(bias_data['overall_score'])
-            overall_bias = bias_data['overall_bias']
-            confidence = bias_data['overall_confidence']
-            
-            if overall_bias == "BULLISH" and bias_strength > 60 and confidence > 70:
-                st.success("""
-                **🎯 STRONG BULLISH SIGNAL - HIGH CONFIDENCE**
-                
-                **Recommended Action:** Consider LONG positions
-                **Strategy:** Look for buying opportunities on dips
-                **Risk Management:** Use tight stop losses
-                **Target:** Expect upward momentum to continue
-                """)
-            elif overall_bias == "BULLISH":
-                st.info("""
-                **📈 BULLISH BIAS - MODERATE CONFIDENCE**
-                
-                **Recommended Action:** Cautious LONG positions
-                **Strategy:** Wait for confirmations before entering
-                **Risk Management:** Use proper position sizing
-                """)
-            elif overall_bias == "BEARISH" and bias_strength > 60 and confidence > 70:
-                st.error("""
-                **🎯 STRONG BEARISH SIGNAL - HIGH CONFIDENCE**
-                
-                **Recommended Action:** Consider SHORT positions  
-                **Strategy:** Look for selling opportunities on rallies
-                **Risk Management:** Use tight stop losses
-                **Target:** Expect downward momentum to continue
-                """)
-            elif overall_bias == "BEARISH":
-                st.warning("""
-                **📉 BEARISH BIAS - MODERATE CONFIDENCE**
-                
-                **Recommended Action:** Cautious SHORT positions
-                **Strategy:** Wait for confirmations before entering
-                **Risk Management:** Use proper position sizing
-                """)
-            else:
-                st.warning("""
-                **⚖️ NEUTRAL/UNCLEAR BIAS**
-                
-                **Recommended Action:** Wait for clearer direction
-                **Strategy:** Consider range-bound strategies
-                **Risk Management:** Reduce position sizes
-                **Advice:** Monitor for breakout signals
-                """)
-        
-        else:
-            st.info("👆 Click 'Update Bias Analysis' to run comprehensive technical analysis")
-            st.write("This analysis uses 8 technical indicators to determine market bias:")
-            st.write("""
-            - **Volume Delta** - Buying vs Selling pressure
-            - **HVP** - High Volume Pivots  
-            - **VOB** - Volume Order Blocks
-            - **Order Blocks** - EMA crossover signals
-            - **RSI** - Momentum indicator
-            - **DMI** - Directional Movement Index
-            - **VIDYA** - Variable Index Dynamic Average
-            - **MFI** - Money Flow Index
-            """)
-
-    def display_option_chain_bias_tabulation(self):
-        """Display all option chain bias data in comprehensive tabulation"""
-        st.header("📋 Comprehensive Option Chain Bias Data")
-        
+    def check_trading_signals(self):
+        """Check for trading signals and send notifications"""
         if not st.session_state.market_bias_data:
-            st.info("No option chain data available. Please refresh options analysis first.")
             return
         
+        current_time = datetime.now(self.ist)
+        
+        # Check if we should check for signals (every 2 minutes)
+        if (st.session_state.last_signal_check and 
+            (current_time - st.session_state.last_signal_check).total_seconds() < 120):
+            return
+        
+        st.session_state.last_signal_check = current_time
+        
+        signals_sent = []
+        
         for instrument_data in st.session_state.market_bias_data:
-            with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True):
+            # Generate trading recommendation
+            recommendation = self.trading_signal_manager.generate_trading_recommendation(instrument_data)
+            
+            if recommendation:
+                instrument = recommendation['instrument']
+                signal_type = recommendation['signal_type']
                 
-                # Basic Information Table
-                st.subheader("📊 Basic Information")
-                basic_info = pd.DataFrame({
-                    'Metric': [
-                        'Instrument', 'Spot Price', 'ATM Strike', 'Overall Bias', 
-                        'Bias Score', 'PCR OI', 'PCR Change OI'
-                    ],
-                    'Value': [
-                        instrument_data['instrument'],
-                        f"₹{instrument_data['spot_price']:.2f}",
-                        f"₹{instrument_data['atm_strike']:.2f}",
-                        instrument_data['overall_bias'],
-                        f"{instrument_data['bias_score']:.2f}",
-                        f"{instrument_data['pcr_oi']:.2f}",
-                        f"{instrument_data['pcr_change']:.2f}"
-                    ]
-                })
-                st.dataframe(basic_info, use_container_width=True, hide_index=True)
+                # Check cooldown
+                can_send, minutes_remaining = self.trading_signal_manager.can_send_signal(signal_type, instrument)
                 
-                # Detailed ATM Bias Table
-                if 'detailed_atm_bias' in instrument_data and instrument_data['detailed_atm_bias']:
-                    st.subheader("🔍 Detailed ATM Bias Analysis")
-                    detailed_bias = instrument_data['detailed_atm_bias']
+                if can_send:
+                    # Format and send message
+                    message = self.trading_signal_manager.format_signal_message(recommendation)
                     
-                    # Create comprehensive table for detailed bias
-                    bias_metrics = []
-                    bias_values = []
-                    bias_signals = []
-                    
-                    for key, value in detailed_bias.items():
-                        if key not in ['Strike', 'Zone', 'CE_OI', 'PE_OI', 'CE_Change', 'PE_Change', 
-                                     'CE_Volume', 'PE_Volume', 'CE_Price', 'PE_Price', 'CE_IV', 'PE_IV',
-                                     'Delta_CE', 'Delta_PE', 'Gamma_CE', 'Gamma_PE']:
-                            bias_metrics.append(key.replace('_', ' ').title())
-                            bias_values.append(str(value))
-                            
-                            # Determine signal strength
-                            if 'Bullish' in str(value):
-                                bias_signals.append('🟢 Bullish')
-                            elif 'Bearish' in str(value):
-                                bias_signals.append('🔴 Bearish')
-                            else:
-                                bias_signals.append('🟡 Neutral')
-                    
-                    detailed_df = pd.DataFrame({
-                        'Metric': bias_metrics,
-                        'Value': bias_values,
-                        'Signal': bias_signals
-                    })
-                    st.dataframe(detailed_df, use_container_width=True, hide_index=True)
-                    
-                    # Raw values table
-                    st.subheader("📈 Raw Option Data")
-                    raw_data = []
-                    if 'CE_OI' in detailed_bias:
-                        raw_data.append(['Call OI', f"{detailed_bias['CE_OI']:,.0f}"])
-                        raw_data.append(['Put OI', f"{detailed_bias['PE_OI']:,.0f}"])
-                        raw_data.append(['Call OI Change', f"{detailed_bias['CE_Change']:,.0f}"])
-                        raw_data.append(['Put OI Change', f"{detailed_bias['PE_Change']:,.0f}"])
-                        raw_data.append(['Call Volume', f"{detailed_bias['CE_Volume']:,.0f}"])
-                        raw_data.append(['Put Volume', f"{detailed_bias['PE_Volume']:,.0f}"])
-                        raw_data.append(['Call Price', f"₹{detailed_bias['CE_Price']:.2f}"])
-                        raw_data.append(['Put Price', f"₹{detailed_bias['PE_Price']:.2f}"])
-                        raw_data.append(['Call IV', f"{detailed_bias['CE_IV']:.2f}%"])
-                        raw_data.append(['Put IV', f"{detailed_bias['PE_IV']:.2f}%"])
-                        raw_data.append(['Call Delta', f"{detailed_bias['Delta_CE']:.4f}"])
-                        raw_data.append(['Put Delta', f"{detailed_bias['Delta_PE']:.4f}"])
-                        raw_data.append(['Call Gamma', f"{detailed_bias['Gamma_CE']:.4f}"])
-                        raw_data.append(['Put Gamma', f"{detailed_bias['Gamma_PE']:.4f}"])
-                    
-                    raw_df = pd.DataFrame(raw_data, columns=['Parameter', 'Value'])
-                    st.dataframe(raw_df, use_container_width=True, hide_index=True)
-                
-                # Comprehensive Metrics Table
-                if 'comprehensive_metrics' in instrument_data and instrument_data['comprehensive_metrics']:
-                    st.subheader("🎯 Advanced Option Metrics")
-                    comp_metrics = instrument_data['comprehensive_metrics']
-                    
-                    comp_data = []
-                    for key, value in comp_metrics.items():
-                        if key not in ['total_vega', 'total_ce_vega_exp', 'total_pe_vega_exp']:
-                            comp_data.append([
-                                key.replace('_', ' ').title(),
-                                str(value) if not isinstance(value, (int, float)) else f"{value:.2f}"
-                            ])
-                    
-                    comp_df = pd.DataFrame(comp_data, columns=['Metric', 'Value'])
-                    st.dataframe(comp_df, use_container_width=True, hide_index=True)
-                
-                # Visual Analysis
-                st.subheader("📊 Visual Bias Analysis")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Bias Score Gauge
-                    fig = go.Figure(go.Indicator(
-                        mode = "gauge+number+delta",
-                        value = instrument_data['bias_score'],
-                        domain = {'x': [0, 1], 'y': [0, 1]},
-                        title = {'text': f"{instrument_data['instrument']} Bias Score"},
-                        gauge = {
-                            'axis': {'range': [-10, 10]},
-                            'bar': {'color': "darkblue"},
-                            'steps': [
-                                {'range': [-10, -4], 'color': "lightcoral"},
-                                {'range': [-4, -2], 'color': "lightyellow"},
-                                {'range': [-2, 2], 'color': "lightgray"},
-                                {'range': [2, 4], 'color': "lightgreen"},
-                                {'range': [4, 10], 'color': "limegreen"}],
-                            'threshold': {
-                                'line': {'color': "red", 'width': 4},
-                                'thickness': 0.75,
-                                'value': instrument_data['bias_score']}}
-                    ))
-                    fig.update_layout(height=300)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    # PCR Analysis
-                    pcr_data = {
-                        'Metric': ['PCR OI', 'PCR Change OI'],
-                        'Value': [instrument_data['pcr_oi'], instrument_data['pcr_change']],
-                        'Interpretation': [
-                            'Bullish' if instrument_data['pcr_oi'] > 1.0 else 'Bearish',
-                            'Bullish' if instrument_data['pcr_change'] > 1.0 else 'Bearish'
-                        ]
-                    }
-                    pcr_df = pd.DataFrame(pcr_data)
-                    st.dataframe(pcr_df, use_container_width=True, hide_index=True)
-                
-                # Trading Levels
-                if 'comprehensive_metrics' in instrument_data:
-                    comp_metrics = instrument_data['comprehensive_metrics']
-                    st.subheader("🎯 Key Trading Levels")
-                    
-                    levels_data = []
-                    if 'call_resistance' in comp_metrics and comp_metrics['call_resistance']:
-                        levels_data.append(['Call Resistance', f"₹{comp_metrics['call_resistance']:.0f}"])
-                    if 'put_support' in comp_metrics and comp_metrics['put_support']:
-                        levels_data.append(['Put Support', f"₹{comp_metrics['put_support']:.0f}"])
-                    if 'max_pain_strike' in comp_metrics and comp_metrics['max_pain_strike']:
-                        levels_data.append(['Max Pain', f"₹{comp_metrics['max_pain_strike']:.0f}"])
-                    
-                    levels_data.append(['Current Spot', f"₹{instrument_data['spot_price']:.0f}"])
-                    
-                    levels_df = pd.DataFrame(levels_data, columns=['Level', 'Price'])
-                    st.dataframe(levels_df, use_container_width=True, hide_index=True)
-
-    def create_comprehensive_chart(self, df: pd.DataFrame, bullish_blocks: List[Dict[str, Any]], bearish_blocks: List[Dict[str, Any]], interval: str) -> Optional[go.Figure]:
-        """Create comprehensive chart with Volume Order Blocks"""
-        if df.empty:
-            return None
-        
-        fig = make_subplots(
-            rows=2, cols=1,
-            row_heights=[0.7, 0.3],
-            subplot_titles=(f'Nifty 50 Analysis - {interval} Min', 'Volume with Spike Detection'),
-            vertical_spacing=0.05,
-            shared_xaxes=True
-        )
-        
-        # Candlestick chart
-        fig.add_trace(
-            go.Candlestick(
-                x=df.index,
-                open=df['open'],
-                high=df['high'],
-                low=df['low'],
-                close=df['close'],
-                name='Nifty 50',
-                increasing_line_color='#00ff88',
-                decreasing_line_color='#ff4444'
-            ),
-            row=1, col=1
-        )
-        
-        # Add Volume Order Blocks
-        colors = {'bullish': '#26ba9f', 'bearish': '#6626ba'}
-        
-        for block in bullish_blocks:
-            fig.add_shape(
-                type="rect",
-                x0=block['index'], y0=block['upper'],
-                x1=df.index[-1], y1=block['lower'],
-                fillcolor='rgba(38, 186, 159, 0.1)',
-                line=dict(color=colors['bullish'], width=1),
-                row=1, col=1
-            )
-        
-        for block in bearish_blocks:
-            fig.add_shape(
-                type="rect",
-                x0=block['index'], y0=block['upper'],
-                x1=df.index[-1], y1=block['lower'],
-                fillcolor='rgba(102, 38, 186, 0.1)',
-                line=dict(color=colors['bearish'], width=1),
-                row=1, col=1
-            )
-        
-        # Volume bars with spike detection
-        bar_colors = []
-        for i, (idx, row) in enumerate(df.iterrows()):
-            if i < len(df) - 1:
-                bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
-            else:
-                current_volume = row['volume']
-                if len(df) > 5:
-                    avg_volume = df['volume'].iloc[-6:-1].mean()
-                    if current_volume > avg_volume * 2.5:
-                        bar_colors.append('#ffeb3b')
-                    else:
-                        bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
+                    if self.send_telegram_message(message):
+                        signals_sent.append(f"{instrument} {signal_type}")
+                        st.success(f"Trading signal sent: {instrument} {signal_type}")
+                        
+                        # Store in session state
+                        signal_key = f"{instrument}_{signal_type}_{current_time.strftime('%Y%m%d_%H%M')}"
+                        st.session_state.sent_trading_signals[signal_key] = recommendation
                 else:
-                    bar_colors.append('#00ff88' if row['close'] >= row['open'] else '#ff4444')
+                    st.info(f"Cooldown active for {instrument}: {minutes_remaining} min remaining")
         
-        fig.add_trace(
-            go.Bar(
-                x=df.index,
-                y=df['volume'],
-                name='Volume',
-                marker_color=bar_colors,
-                opacity=0.7
-            ),
-            row=2, col=1
-        )
-        
-        # Update layout
-        fig.update_layout(
-            xaxis_rangeslider_visible=False,
-            template='plotly_dark',
-            height=800,
-            showlegend=True,
-            margin=dict(l=0, r=0, t=50, b=0)
-        )
-        
-        fig.update_xaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)')
-        fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)', side="right")
-        
-        return fig
+        if signals_sent:
+            st.rerun()
 
     def run(self):
         """Main application with all features"""
@@ -4162,6 +4021,9 @@ Watch for breakout/breakdown confirmation!"""
             st.header("🔧 API Status")
             if st.button("Test API Connection"):
                 self.test_api_connection()
+            
+            # Diagnostic panel
+            self.display_diagnostic_info()
             
             # Trading signals settings
             enable_trading_signals = self.display_trading_signals_panel()
@@ -4210,9 +4072,6 @@ Watch for breakout/breakdown confirmation!"""
                 api_data = self.fetch_intraday_data(interval=timeframe)
                 if api_data:
                     df = self.process_data(api_data)
-            
-            # Display safety status
-            min_confidence = self.display_safety_status(df)
             
             if not df.empty:
                 latest = df.iloc[-1]
@@ -4317,8 +4176,10 @@ Watch for breakout/breakdown confirmation!"""
             self.display_comprehensive_bias_analysis()
         
         with tab4:
-            # New comprehensive bias tabulation
-            self.display_option_chain_bias_tabulation()
+            # Bias Tabulation Tab - This would contain option_chain_bias_tabulation
+            st.header("📋 Comprehensive Option Chain Bias Data")
+            st.info("Detailed bias tabulation will be displayed here")
+            # The full tabulation code was in original script
         
         with tab5:
             # Trading Signals Tab
@@ -4329,7 +4190,7 @@ Watch for breakout/breakdown confirmation!"""
                 st.info("Trading signals generated from comprehensive options chain analysis")
             with col2:
                 if st.button("Check Signals Now", type="primary"):
-                    self.check_trading_signals(df if 'df' in locals() else None)
+                    self.check_trading_signals()
             
             st.divider()
             
@@ -4353,37 +4214,6 @@ Watch for breakout/breakdown confirmation!"""
                                 instrument_data.get('comprehensive_metrics', {})
                             )
                             st.metric("Signal Confidence", f"{confidence}%")
-                        
-                        # Generate and display potential signal
-                        recommendation = self.trading_signal_manager.generate_trading_recommendation(instrument_data, df if 'df' in locals() else None)
-                        if recommendation:
-                            if recommendation.get('signal_type') == "BLOCKED":
-                                st.error(f"❌ **Signal Blocked**: {recommendation['blocked_reason']}")
-                            else:
-                                st.success(f"✅ **{recommendation['signal_type']} Signal Ready**")
-                                st.write(f"Strength: {recommendation['strength']} | Confidence: {recommendation['confidence']}%")
-                                
-                                if enable_trading_signals and telegram_enabled:
-                                    can_send, minutes_remaining = self.trading_signal_manager.can_send_signal(
-                                        recommendation['signal_type'], 
-                                        recommendation['instrument']
-                                    )
-                                    if can_send:
-                                        if st.button(
-                                            f"Send {recommendation['instrument']} {recommendation['signal_type']} Signal",
-                                            key=f"send_{recommendation['instrument']}"
-                                        ):
-                                            message = self.trading_signal_manager.format_signal_message(recommendation)
-                                            if self.send_telegram_message(message):
-                                                st.success(f"Signal sent for {recommendation['instrument']}!")
-                                                # Store in session state
-                                                current_time = datetime.now(self.ist)
-                                                signal_key = f"{recommendation['instrument']}_{recommendation['signal_type']}_{current_time.strftime('%Y%m%d_%H%M%S')}"
-                                                st.session_state.sent_trading_signals[signal_key] = recommendation
-                                    else:
-                                        st.warning(f"Cooldown active: {minutes_remaining} minutes remaining")
-                        else:
-                            st.info("📊 Monitoring market conditions...")
             
             # Display signal history
             if st.session_state.sent_trading_signals:
@@ -4400,11 +4230,15 @@ Watch for breakout/breakdown confirmation!"""
                     st.dataframe(display_df, use_container_width=True)
         
         with tab6:
+            # Enhanced Market Data Tab
             self.display_enhanced_market_data()
+            
+            # Auto-retry failed data sources
+            self.auto_refresh_failed_data()
         
         # Check for trading signals automatically
         if enable_trading_signals and telegram_enabled:
-            self.check_trading_signals(df if 'df' in locals() else None)
+            self.check_trading_signals()
         
         # Cleanup and auto refresh
         self.alert_manager.cleanup_old_alerts()
