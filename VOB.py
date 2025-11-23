@@ -394,7 +394,8 @@ class BiasAnalysisPro:
         vob_bearish = cross_dn
 
         return vob_bullish, vob_bearish, ema1.iloc[-1], ema2.iloc[-1]
-# =========================================================================
+
+    # =========================================================================
     # ENHANCED INDICATORS (KEPT FOR COMPATIBILITY)
     # =========================================================================
 
@@ -948,6 +949,7 @@ class BiasAnalysisPro:
             'bullish_bias_pct': bullish_bias_pct,
             'bearish_bias_pct': bearish_bias_pct
         }
+
 # =============================================
 # ENHANCED MARKET DATA FETCHER INTEGRATION
 # =============================================
@@ -1496,7 +1498,8 @@ class EnhancedMarketData:
             'day_characteristics': day_characteristics,
             'timestamp': now
         }
-def fetch_all_enhanced_data(self) -> Dict[str, Any]:
+
+    def fetch_all_enhanced_data(self) -> Dict[str, Any]:
         """Fetch all enhanced market data from all sources with progress tracking"""
         print("=" * 60)
         print("FETCHING ENHANCED MARKET DATA")
@@ -2096,6 +2099,7 @@ class AlertManager:
         
         for key in keys_to_remove:
             del self.alert_timestamps[key]
+
 # =============================================
 # NSE OPTIONS ANALYZER WITH AUTO-REFRESH
 # =============================================
@@ -2650,7 +2654,7 @@ class NSEOptionsAnalyzer:
                         "CE_Change": row['changeinOpenInterest_CE'],
                         "PE_Change": row['changeinOpenInterest_PE'],
                         "CE_Volume": row['totalTradedVolume_CE'],
-"PE_Volume": row['totalTradedVolume_PE'],
+                        "PE_Volume": row['totalTradedVolume_PE'],
                         "CE_Price": row['lastPrice_CE'],
                         "PE_Price": row['lastPrice_PE'],
                         "CE_IV": row['impliedVolatility_CE'],
@@ -3167,7 +3171,8 @@ class EnhancedNiftyApp:
         
         # Day patterns
         st.write(f"**Day Pattern**: {seasonality_data['day_bias']} - {seasonality_data['day_characteristics']}")
-def display_enhanced_market_data(self):
+
+    def display_enhanced_market_data(self):
         """Display comprehensive enhanced market data with better error handling"""
         st.header("🌍 Enhanced Market Data Analysis")
         
@@ -3706,7 +3711,8 @@ def display_enhanced_market_data(self):
                     st.write(f"SL: ₹{signal['stop_loss']}")
         
         return enable_trading_signals
-def create_comprehensive_chart(self, df: pd.DataFrame, bullish_blocks: List[Dict[str, Any]], bearish_blocks: List[Dict[str, Any]], interval: str) -> Optional[go.Figure]:
+
+    def create_comprehensive_chart(self, df: pd.DataFrame, bullish_blocks: List[Dict[str, Any]], bearish_blocks: List[Dict[str, Any]], interval: str) -> Optional[go.Figure]:
         """Create comprehensive chart with Volume Order Blocks"""
         if df.empty:
             return None
