@@ -4331,7 +4331,7 @@ class EnhancedNiftyApp:
             "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"
         ])
         
-        def run(self):
+    def run(self):
         st.title("📈 Advanced Nifty Trading Dashboard")
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
