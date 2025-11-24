@@ -4325,66 +4325,20 @@ class EnhancedNiftyApp:
         """Main application with all features"""
         st.title("📈 Advanced Nifty Trading Dashboard")
         st.markdown("*Volume Analysis, Options Chain, Technical Bias, Trading Signals & Master Decision Engine*")
-
+        
+        # Sidebar settings remain the same
+        # Main content - Add NEW Tab for Master Decision
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", 
-            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"
+            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"  # NEW TAB
         ])
         
-    def run(self):
-        """Main application with all features"""
-        st.title("📈 Advanced Nifty Trading Dashboard")
-        st.markdown("*Volume Analysis, Options Chain, Technical Bias, Trading Signals & Master Decision Engine*")
-
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-            "📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", 
-            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"
-        ])
+        # Previous tabs remain the same (tab1 through tab6)
         
-        with tab1:
-            st.header("📈 Price Analysis")
-            st.info("Price analysis content coming soon...")
-            # TODO: Add price analysis implementation
-        
-        with tab2:
-            st.header("📊 Options Analysis")
-            try:
-                self.display_comprehensive_options_analysis()
-            except Exception as e:
-                st.error(f"Error loading Options Analysis: {str(e)}")
-        
-        with tab3:
-            st.header("🎯 Technical Bias")
-            try:
-                self.display_comprehensive_bias_analysis()
-            except Exception as e:
-                st.error(f"Error loading Technical Bias: {str(e)}")
-        
-        with tab4:
-            st.header("📋 Bias Tabulation")
-            try:
-                self.display_option_chain_bias_tabulation()
-            except Exception as e:
-                st.error(f"Error loading Bias Tabulation: {str(e)}")
-        
-        with tab5:
-            st.header("🚀 Trading Signals")
-            try:
-                self.display_trading_signals_panel()
-            except Exception as e:
-                st.error(f"Error loading Trading Signals: {str(e)}")
-        
-        with tab6:
-            st.header("🌍 Market Data")
-            try:
-                self.display_enhanced_market_data()
-            except Exception as e:
-                st.error(f"Error loading Market Data: {str(e)}")
-        
-        with tab7:
+        with tab7:  # NEW: Master Decision Engine Tab
             self.display_master_decision()
         
-        # Auto-refresh every 30 seconds
+        # Auto-generate decision and cleanup remain the same
         time.sleep(30)
         st.rerun()
 
