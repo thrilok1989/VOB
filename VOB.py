@@ -4321,24 +4321,281 @@ class EnhancedNiftyApp:
             - Load Enhanced Market Data (Tab 6)
             """)
 
-    def run(self):
-        """Main application with all features"""
-        st.title("📈 Advanced Nifty Trading Dashboard")
-        st.markdown("*Volume Analysis, Options Chain, Technical Bias, Trading Signals & Master Decision Engine*")
+       def display_price_analysis(self):
+        """Display price analysis with charts and metrics"""
+        st.header("📈 Price Analysis")
         
-        # Sidebar settings remain the same
-        # Main content - Add NEW Tab for Master Decision
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("Real-time price analysis with technical indicators")
+        with col2:
+            if st.button("🔄 Refresh Price", type="primary", key="refresh_price"):
+                st.rerun()
+        
+        st.divider()
+        
+        api_data = self.fetch_intraday_data(interval='5')
+        if api_data:
+            df = self.process_data(api_data)
+            if not df.empty:
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Current", f"₹{df['close'].iloc[-1]:.2f}")
+                with col2:
+                    change = df['close'].iloc[-1] - df['close'].iloc[0]
+                    st.metric("Change", f"₹{change:+.2f}")
+                with col3:
+                    st.metric("High", f"₹{df['high'].max():.2f}")
+                with col4:
+                    st.metric("Low", f"₹{df['low'].min():.2f}")
+                
+                st.divider()
+                st.subheader("📊 Candlestick Chart")
+                fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'])])
+                fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("No data available")
+
+    def display_comprehensive_options_analysis(self):
+        """Display comprehensive options analysis"""
+        st.header("📊 Options Analysis")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("Options chain analysis with auto-refresh")
+        with col2:
+            if st.button("🔄 Refresh Options", type="primary", key="refresh_options"):
+                with st.spinner("Loading..."):
+                    bias_data = self.options_analyzer.get_overall_market_bias(force_refresh=True)
+                    st.session_state.market_bias_data = bias_data
+                    st.rerun()
+        
+        st.divider()
+        
+        if st.session_state.market_bias_data:
+            for instrument in st.session_state.market_bias_data:
+                with st.expander(f"{instrument['instrument']} - {instrument['overall_bias']}", expanded=True):
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Spot", f"₹{instrument['spot_price']:.0f}")
+                    with col2:
+                        st.metric("PCR OI", f"{instrument['pcr_oi']:.2f}")
+                    with col3:
+                        st.metric("Score", f"{instrument['bias_score']:.1f}")
+                    with col4:
+                        st.metric("ATM", f"₹{instrument['atm_strike']:.0f}")
+                    
+                    cm = instrument.get('comprehensive_metrics', {})
+                    st.write(f"**Call Resistance:** ₹{cm.get('call_resistance', 'N/A')}")
+                    st.write(f"**Put Support:** ₹{cm.get('put_support', 'N/A')}")
+                    st.write(f"**Max Pain:** ₹{cm.get('max_pain_strike', 'N/A')}")
+        else:
+            st.info("Click 'Refresh Options' to load data")
+
+    def display_comprehensive_bias_analysis(self):
+        """Display comprehensive bias analysis"""
+        st.header("🎯 Technical Bias")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("8-indicator comprehensive technical bias")
+        with col2:
+            if st.button("🔄 Run Bias", type="primary", key="refresh_bias"):
+                with st.spinner("Analyzing..."):
+                    bias_data = self.bias_analyzer.analyze_all_bias_indicators("^NSEI")
+                    st.session_state.comprehensive_bias_data = bias_data
+                    st.rerun()
+        
+        st.divider()
+        
+        if st.session_state.comprehensive_bias_data:
+            bias_data = st.session_state.comprehensive_bias_data
+            if bias_data.get('success'):
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Bias", bias_data['overall_bias'])
+                with col2:
+                    st.metric("Score", f"{bias_data['overall_score']:.1f}")
+                with col3:
+                    st.metric("Confidence", f"{bias_data['overall_confidence']:.0f}%")
+                with col4:
+                    st.metric("Price", f"₹{bias_data['current_price']:.0f}")
+                
+                st.divider()
+                st.write(f"🟢 Bullish: {bias_data['bullish_count']} | 🔴 Bearish: {bias_data['bearish_count']} | 🟡 Neutral: {bias_data['neutral_count']}")
+                
+                st.dataframe(pd.DataFrame(bias_data['bias_results'])[['indicator', 'bias', 'score']], use_container_width=True)
+
+    def display_option_chain_bias_tabulation(self):
+        """Display bias tabulation"""
+        st.header("📋 Bias Tabulation")
+        
+        if st.session_state.market_bias_data:
+            for instrument in st.session_state.market_bias_data:
+                with st.expander(f"{instrument['instrument']} - Detailed", expanded=False):
+                    st.json(instrument.get('comprehensive_metrics', {}))
+        else:
+            st.info("No options data available")
+
+    def display_trading_signals_panel(self):
+        """Display trading signals"""
+        st.header("🚀 Trading Signals")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("Automated trading signal generation")
+        with col2:
+            if st.button("🎯 Generate Signals", type="primary", key="gen_signals"):
+                st.rerun()
+        
+        st.divider()
+        
+        if st.session_state.market_bias_data:
+            for instrument in st.session_state.market_bias_data:
+                rec = self.trading_signal_manager.generate_trading_recommendation(instrument)
+                if rec:
+                    with st.expander(f"{rec['direction']} - {rec['signal_type']}", expanded=False):
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Direction", rec['direction'])
+                        with col2:
+                            st.metric("Confidence", f"{rec['confidence']}%")
+                        with col3:
+                            st.metric("Entry", rec['entry_zone'])
+                        st.write(f"Targets: {', '.join(rec['targets'])}")
+                        st.write(f"Stop: {rec['stop_loss']}")
+        else:
+            st.info("Load Options data first")
+
+    def display_enhanced_market_data(self):
+        """Display enhanced market data"""
+        st.header("🌍 Market Data")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("Global markets, sectors, intermarket data")
+        with col2:
+            if st.button("🔄 Update Market", type="primary", key="update_mkdata"):
+                with st.spinner("Fetching..."):
+                    market_data = self.market_data_fetcher.fetch_all_enhanced_data()
+                    st.session_state.enhanced_market_data = market_data
+                    st.rerun()
+        
+        st.divider()
+        
+        if st.session_state.enhanced_market_data:
+            market_data = st.session_state.enhanced_market_data
+            summary = market_data.get('summary', {})
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Sentiment", summary.get('overall_sentiment', 'N/A'))
+            with col2:
+                st.metric("Avg Score", f"{summary.get('avg_score', 0):.1f}")
+            with col3:
+                st.metric("Bullish", summary.get('bullish_count', 0))
+            with col4:
+                st.metric("Bearish", summary.get('bearish_count', 0))
+            
+            st.divider()
+            
+            tab1, tab2, tab3 = st.tabs(["Sectors", "Global", "Intermarket"])
+            with tab1:
+                if market_data.get('sector_indices'):
+                    st.dataframe(pd.DataFrame(market_data['sector_indices'])[['sector', 'change_pct', 'bias']], use_container_width=True)
+            with tab2:
+                if market_data.get('global_markets'):
+                    st.dataframe(pd.DataFrame(market_data['global_markets'])[['market', 'change_pct', 'bias']], use_container_width=True)
+            with tab3:
+                if market_data.get('intermarket'):
+                    st.dataframe(pd.DataFrame(market_data['intermarket'])[['asset', 'change_pct', 'bias']], use_container_width=True)
+        else:
+            st.info("Click 'Update Market' to load data")
+
+    def display_master_decision(self):
+        """Display master trading decision"""
+        st.header("🧠 Master Decision Engine")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("Combined market regime + trap + filter analysis")
+        with col2:
+            if st.button("🎯 Get Decision", type="primary", key="master_decision"):
+                with st.spinner("Generating..."):
+                    try:
+                        api_data = self.fetch_intraday_data(interval='5')
+                        if api_data and st.session_state.comprehensive_bias_data and st.session_state.market_bias_data:
+                            df = self.process_data(api_data)
+                            decision = self.decision_engine.make_trading_decision(
+                                price_data=df,
+                                bias_data=st.session_state.comprehensive_bias_data,
+                                options_data=st.session_state.market_bias_data[0],
+                                market_data=st.session_state.enhanced_market_data
+                            )
+                            st.session_state.master_decision = decision
+                            st.rerun()
+                        else:
+                            st.error("Load Bias, Options, and Market data first!")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+        
+        st.divider()
+        
+        if st.session_state.master_decision:
+            decision = st.session_state.master_decision
+            if decision.get('success'):
+                st.markdown(decision.get('simple_summary', ''))
+            else:
+                st.error(f"Error: {decision.get('error', 'Unknown')}")
+        else:
+            st.info("Click 'Get Decision' to generate trading decision")
+
+    def run(self):
+        """Main application with all features - FIXED VERSION"""
+        st.title("📈 Advanced Nifty Trading Dashboard")
+        st.markdown("*Comprehensive trading analysis with 7 integrated tabs*")
+
+        # Create all 7 tabs
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-            "📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", 
-            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"  # NEW TAB
+            "📈 Price Analysis", 
+            "📊 Options Analysis", 
+            "🎯 Technical Bias", 
+            "📋 Bias Tabulation", 
+            "🚀 Trading Signals", 
+            "🌍 Market Data", 
+            "🧠 Master Decision"
         ])
         
-        # Previous tabs remain the same (tab1 through tab6)
+        # Tab 1: Price Analysis
+        with tab1:
+            self.display_price_analysis()
         
-        with tab7:  # NEW: Master Decision Engine Tab
+        # Tab 2: Options Analysis
+        with tab2:
+            self.display_comprehensive_options_analysis()
+        
+        # Tab 3: Technical Bias
+        with tab3:
+            self.display_comprehensive_bias_analysis()
+        
+        # Tab 4: Bias Tabulation
+        with tab4:
+            self.display_option_chain_bias_tabulation()
+        
+        # Tab 5: Trading Signals
+        with tab5:
+            self.display_trading_signals_panel()
+        
+        # Tab 6: Market Data
+        with tab6:
+            self.display_enhanced_market_data()
+        
+        # Tab 7: Master Decision
+        with tab7:
             self.display_master_decision()
         
-        # Auto-generate decision and cleanup remain the same
+        # Auto-refresh every 30 seconds
         time.sleep(30)
         st.rerun()
 
