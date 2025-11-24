@@ -2661,7 +2661,413 @@ class NSEOptionsAnalyzer:
                     results.append(self.cached_bias_data[instrument])
         
         return results
+# =============================================
+# MASTER DECISION ENGINE (THE COMPLETE BRAIN)
+# =============================================
+class MasterDecisionEngine:
+    """
+    THE ULTIMATE TRADING BRAIN
+    Combines ALL components into ONE intelligent decision system
+    This is what professional traders have - now you have it too!
+    """
 
+    def __init__(self):
+        self.ist = pytz.timezone('Asia/Kolkata')
+        self.regime_detector = MarketRegimeDetector()
+        self.trap_detector = TrapDetector()
+        self.execution_filter = ExecutionFilterEngine()
+        
+    def make_trading_decision(self,
+                            price_data: pd.DataFrame,
+                            bias_data: Dict[str, Any],
+                            options_data: Dict[str, Any] = None,
+                            market_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        MASTER FUNCTION: Makes the final trading decision
+        This is THE SOUL of your trading app
+        """
+        
+        if price_data.empty or len(price_data) < 50:
+            return self._create_empty_decision("Insufficient data")
+        
+        try:
+            current_price = price_data['close'].iloc[-1]
+            current_time = datetime.now(self.ist)
+            
+            # =====================================================
+            # STEP 1: ANALYZE MARKET REGIME (The Context)
+            # =====================================================
+            vix_value = None
+            if market_data and market_data.get('india_vix', {}).get('success'):
+                vix_value = market_data['india_vix'].get('value')
+            
+            volume_ratio = 1.0
+            if not price_data.empty and len(price_data) > 20:
+                avg_volume = price_data['volume'].rolling(20).mean().iloc[-1]
+                current_volume = price_data['volume'].iloc[-1]
+                volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+            
+            regime_analysis = self.regime_detector.detect_market_regime(
+                price_data, vix_value, volume_ratio
+            )
+            
+            # =====================================================
+            # STEP 2: ANALYZE TRAPS (The Edge)
+            # =====================================================
+            trap_analysis = self.trap_detector.analyze_market_trap(
+                price_data, options_data, bias_data
+            )
+            
+            # =====================================================
+            # STEP 3: CHECK EXECUTION FILTERS (The Guardian)
+            # =====================================================
+            filter_result = self.execution_filter.should_trade(
+                regime_analysis,
+                trap_analysis,
+                bias_data,
+                options_data,
+                market_data,
+                current_price,
+                price_data
+            )
+            
+            # =====================================================
+            # STEP 4: MAKE FINAL DECISION (The Brain)
+            # =====================================================
+            decision = self._make_final_decision(
+                regime_analysis,
+                trap_analysis,
+                filter_result,
+                bias_data,
+                current_price,
+                price_data
+            )
+            
+            # Add metadata
+            decision.update({
+                'timestamp': current_time,
+                'current_price': current_price,
+                'regime_analysis': regime_analysis,
+                'trap_analysis': trap_analysis,
+                'filter_result': filter_result,
+                'execution_approved': filter_result.get('trade_allowed', False)
+            })
+            
+            return decision
+            
+        except Exception as e:
+            return self._create_error_decision(f"Decision engine error: {str(e)}")
+    
+    def _make_final_decision(self,
+                           regime: Dict[str, Any],
+                           trap: Dict[str, Any],
+                           filters: Dict[str, Any],
+                           bias: Dict[str, Any],
+                           current_price: float,
+                           df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Make the ultimate trading decision
+        """
+        
+        decision = {
+            'trade_decision': 'NO TRADE',
+            'trade_direction': 'NEUTRAL',
+            'confidence': 0,
+            'trade_type': 'NONE',
+            'position_size': 'NONE',
+            'entry_zone': 'N/A',
+            'targets': [],
+            'stop_loss': 'N/A',
+            'key_factors': [],
+            'risk_level': 'HIGH',
+            'timeframe': 'N/A',
+            'simple_summary': 'No trade recommended'
+        }
+        
+        # If execution filters block trading
+        if not filters.get('trade_allowed', False):
+            decision['trade_decision'] = 'NO TRADE'
+            decision['simple_summary'] = f"Execution blocked: {filters.get('final_recommendation', 'Unknown')}"
+            decision['key_factors'].append(f"Execution filters blocked trading")
+            return decision
+        
+        # Get confidence from filters
+        base_confidence = filters.get('confidence', 0)
+        
+        # =====================================================
+        # HIGH CONVICTION TRAP-BASED DECISIONS
+        # =====================================================
+        
+        if trap.get('trap_detected') and trap.get('trap_confidence', 0) >= 70:
+            trap_type = trap.get('trap_type', '')
+            
+            # BULL TRAP DETECTED - GO SHORT
+            if 'BULL_TRAP' in trap_type:
+                decision.update({
+                    'trade_decision': 'TRADE',
+                    'trade_direction': 'SHORT',
+                    'confidence': min(95, base_confidence + 20),
+                    'trade_type': 'TRAP_REVERSAL',
+                    'position_size': filters.get('position_sizing', 'NORMAL'),
+                    'entry_zone': f"{current_price:.0f}-{current_price * 1.005:.0f}",
+                    'targets': [current_price * 0.985, current_price * 0.975],
+                    'stop_loss': current_price * 1.015,
+                    'risk_level': 'MEDIUM',
+                    'timeframe': '15min-1h'
+                })
+                decision['key_factors'].append(f"BULL_TRAP detected with {trap['trap_confidence']}% confidence")
+                decision['key_factors'].append(f"Trapped: {trap.get('who_is_trapped', 'Unknown')}")
+                decision['simple_summary'] = f"HIGH CONVICTION SHORT - Bull trap detected!"
+            
+            # BEAR TRAP DETECTED - GO LONG  
+            elif 'BEAR_TRAP' in trap_type:
+                decision.update({
+                    'trade_decision': 'TRADE',
+                    'trade_direction': 'LONG',
+                    'confidence': min(95, base_confidence + 20),
+                    'trade_type': 'TRAP_REVERSAL',
+                    'position_size': filters.get('position_sizing', 'NORMAL'),
+                    'entry_zone': f"{current_price * 0.995:.0f}-{current_price:.0f}",
+                    'targets': [current_price * 1.015, current_price * 1.025],
+                    'stop_loss': current_price * 0.985,
+                    'risk_level': 'MEDIUM',
+                    'timeframe': '15min-1h'
+                })
+                decision['key_factors'].append(f"BEAR_TRAP detected with {trap['trap_confidence']}% confidence")
+                decision['key_factors'].append(f"Trapped: {trap.get('who_is_trapped', 'Unknown')}")
+                decision['simple_summary'] = f"HIGH CONVICTION LONG - Bear trap detected!"
+            
+            # SHORT COVERING DETECTED - GO LONG (SQUEEZE)
+            elif 'SHORT_COVERING' in trap_type:
+                decision.update({
+                    'trade_decision': 'TRADE',
+                    'trade_direction': 'LONG',
+                    'confidence': min(98, base_confidence + 25),
+                    'trade_type': 'SHORT_SQUEEZE',
+                    'position_size': 'FULL',
+                    'entry_zone': f"{current_price:.0f}-{current_price * 1.005:.0f}",
+                    'targets': [current_price * 1.02, current_price * 1.03],
+                    'stop_loss': current_price * 0.995,
+                    'risk_level': 'HIGH',
+                    'timeframe': '5min-15min'
+                })
+                decision['key_factors'].append(f"SHORT_COVERING detected with {trap['trap_confidence']}% confidence")
+                decision['key_factors'].append("SHORT SQUEEZE potential - move fast!")
+                decision['simple_summary'] = f"URGENT LONG - Short squeeze starting!"
+            
+            # LONG LIQUIDATION DETECTED - GO SHORT (CASCADE)
+            elif 'LONG_LIQUIDATION' in trap_type:
+                decision.update({
+                    'trade_decision': 'TRADE',
+                    'trade_direction': 'SHORT',
+                    'confidence': min(98, base_confidence + 25),
+                    'trade_type': 'LONG_SQUEEZE',
+                    'position_size': 'FULL',
+                    'entry_zone': f"{current_price * 0.995:.0f}-{current_price:.0f}",
+                    'targets': [current_price * 0.98, current_price * 0.97],
+                    'stop_loss': current_price * 1.005,
+                    'risk_level': 'HIGH',
+                    'timeframe': '5min-15min'
+                })
+                decision['key_factors'].append(f"LONG_LIQUIDATION detected with {trap['trap_confidence']}% confidence")
+                decision['key_factors'].append("LONG SQUEEZE potential - move fast!")
+                decision['simple_summary'] = f"URGENT SHORT - Long squeeze starting!"
+        
+        # =====================================================
+        # REGIME-BASED TREND FOLLOWING DECISIONS
+        # =====================================================
+        
+        elif base_confidence >= 70 and regime.get('confidence', 0) >= 70:
+            regime_type = regime.get('regime', '')
+            
+            # STRONG TREND MARKET - FOLLOW TREND
+            if 'STRONG_TREND_UP' in regime_type:
+                decision.update({
+                    'trade_decision': 'TRADE',
+                    'trade_direction': 'LONG',
+                    'confidence': base_confidence,
+                    'trade_type': 'TREND_FOLLOWING',
+                    'position_size': filters.get('position_sizing', 'NORMAL'),
+                    'entry_zone': f"{current_price * 0.995:.0f}-{current_price:.0f}",
+                    'targets': [current_price * 1.01, current_price * 1.02],
+                    'stop_loss': current_price * 0.985,
+                    'risk_level': 'LOW',
+                    'timeframe': '1h-4h'
+                })
+                decision['key_factors'].append(f"Market in STRONG_TREND_UP regime")
+                decision['key_factors'].append("Follow trend with pullback entries")
+                decision['simple_summary'] = f"TREND LONG - Strong uptrend confirmed"
+            
+            elif 'STRONG_TREND_DOWN' in regime_type:
+                decision.update({
+                    'trade_decision': 'TRADE',
+                    'trade_direction': 'SHORT',
+                    'confidence': base_confidence,
+                    'trade_type': 'TREND_FOLLOWING',
+                    'position_size': filters.get('position_sizing', 'NORMAL'),
+                    'entry_zone': f"{current_price:.0f}-{current_price * 1.005:.0f}",
+                    'targets': [current_price * 0.99, current_price * 0.98],
+                    'stop_loss': current_price * 1.015,
+                    'risk_level': 'LOW',
+                    'timeframe': '1h-4h'
+                })
+                decision['key_factors'].append(f"Market in STRONG_TREND_DOWN regime")
+                decision['key_factors'].append("Follow trend with bounce entries")
+                decision['simple_summary'] = f"TREND SHORT - Strong downtrend confirmed"
+            
+            # BREAKOUT MARKET - MOMENTUM TRADING
+            elif 'HIGH_VOLATILITY_BREAKOUT' in regime_type:
+                # Wait for breakout confirmation
+                decision.update({
+                    'trade_decision': 'WAIT',
+                    'trade_direction': 'NEUTRAL',
+                    'confidence': 60,
+                    'trade_type': 'BREAKOUT_PENDING',
+                    'position_size': 'NONE',
+                    'entry_zone': 'Wait for breakout confirmation',
+                    'targets': [],
+                    'stop_loss': 'N/A',
+                    'risk_level': 'HIGH',
+                    'timeframe': '15min-1h'
+                })
+                decision['key_factors'].append("High volatility breakout regime detected")
+                decision['key_factors'].append("Wait for clear breakout direction")
+                decision['simple_summary'] = "WAIT - Watch for breakout confirmation"
+        
+        # =====================================================
+        # RANGE BOUND MARKET - MEAN REVERSION
+        # =====================================================
+        
+        elif regime.get('regime') == 'RANGE_BOUND' and base_confidence >= 60:
+            # Simple range detection (you can enhance this)
+            if len(df) > 20:
+                recent_high = df['high'].tail(20).max()
+                recent_low = df['low'].tail(20).min()
+                range_mid = (recent_high + recent_low) / 2
+                
+                if current_price > range_mid:
+                    # Near top of range - look for shorts
+                    decision.update({
+                        'trade_decision': 'TRADE',
+                        'trade_direction': 'SHORT',
+                        'confidence': base_confidence,
+                        'trade_type': 'MEAN_REVERSION',
+                        'position_size': 'SMALL',
+                        'entry_zone': f"{current_price:.0f}-{recent_high:.0f}",
+                        'targets': [range_mid, recent_low],
+                        'stop_loss': recent_high * 1.005,
+                        'risk_level': 'MEDIUM',
+                        'timeframe': '15min-1h'
+                    })
+                    decision['key_factors'].append("Range-bound market - selling at resistance")
+                    decision['simple_summary'] = "RANGE SHORT - Selling at range top"
+                else:
+                    # Near bottom of range - look for longs
+                    decision.update({
+                        'trade_decision': 'TRADE',
+                        'trade_direction': 'LONG',
+                        'confidence': base_confidence,
+                        'trade_type': 'MEAN_REVERSION',
+                        'position_size': 'SMALL',
+                        'entry_zone': f"{recent_low:.0f}-{current_price:.0f}",
+                        'targets': [range_mid, recent_high],
+                        'stop_loss': recent_low * 0.995,
+                        'risk_level': 'MEDIUM',
+                        'timeframe': '15min-1h'
+                    })
+                    decision['key_factors'].append("Range-bound market - buying at support")
+                    decision['simple_summary'] = "RANGE LONG - Buying at range bottom"
+        
+        # =====================================================
+        # DEFAULT: NO CLEAR EDGE
+        # =====================================================
+        
+        else:
+            decision.update({
+                'trade_decision': 'NO TRADE',
+                'confidence': base_confidence,
+                'key_factors': ['No clear edge detected', 'Wait for better setup'],
+                'simple_summary': 'No trade - Wait for better conditions'
+            })
+        
+        # Add regime context
+        decision['key_factors'].append(f"Market regime: {regime.get('regime', 'Unknown')}")
+        decision['key_factors'].append(f"Execution confidence: {base_confidence}%")
+        
+        return decision
+    
+    def _create_empty_decision(self, reason: str) -> Dict[str, Any]:
+        """Create empty decision when data is insufficient"""
+        return {
+            'trade_decision': 'NO TRADE',
+            'trade_direction': 'NEUTRAL',
+            'confidence': 0,
+            'trade_type': 'NONE',
+            'position_size': 'NONE',
+            'entry_zone': 'N/A',
+            'targets': [],
+            'stop_loss': 'N/A',
+            'key_factors': [f"Insufficient data: {reason}"],
+            'risk_level': 'HIGH',
+            'timeframe': 'N/A',
+            'simple_summary': f'No decision - {reason}',
+            'timestamp': datetime.now(self.ist),
+            'execution_approved': False
+        }
+    
+    def _create_error_decision(self, error_msg: str) -> Dict[str, Any]:
+        """Create error decision"""
+        decision = self._create_empty_decision(error_msg)
+        decision['error'] = error_msg
+        return decision
+    
+    def format_decision_for_display(self, decision: Dict[str, Any]) -> str:
+        """Format decision for beautiful Streamlit display"""
+        
+        if decision.get('trade_decision') == 'NO TRADE':
+            return f"""
+            ## 🚫 NO TRADE SIGNAL
+            
+            **Reason:** {decision.get('simple_summary', 'Unknown')}
+            **Confidence:** {decision.get('confidence', 0)}%
+            
+            **Key Factors:**
+            {chr(10).join(['• ' + factor for factor in decision.get('key_factors', [])])}
+            """
+        
+        elif decision.get('trade_decision') == 'WAIT':
+            return f"""
+            ## ⏳ WAIT FOR CONFIRMATION
+            
+            **Situation:** {decision.get('simple_summary', 'Unknown')}
+            **Confidence:** {decision.get('confidence', 0)}%
+            
+            **Key Factors:**
+            {chr(10).join(['• ' + factor for factor in decision.get('key_factors', [])])}
+            """
+        
+        else:  # TRADE decision
+            direction_emoji = "🟢" if decision['trade_direction'] == 'LONG' else "🔴"
+            return f"""
+            ## 🎯 {direction_emoji} TRADE SIGNAL: {decision['trade_direction']}
+            
+            **Type:** {decision.get('trade_type', 'Unknown')}
+            **Confidence:** {decision.get('confidence', 0)}%
+            **Position Size:** {decision.get('position_size', 'Unknown')}
+            
+            **💰 Entry Zone:** ₹{decision.get('entry_zone', 'N/A')}
+            **🎯 Target 1:** ₹{decision['targets'][0] if decision.get('targets') else 'N/A'}
+            **🎯 Target 2:** ₹{decision['targets'][1] if decision.get('targets') and len(decision['targets']) > 1 else 'N/A'}
+            **🛑 Stop Loss:** ₹{decision.get('stop_loss', 'N/A')}
+            
+            **⏰ Timeframe:** {decision.get('timeframe', 'N/A')}
+            **📊 Risk Level:** {decision.get('risk_level', 'Unknown')}
+            
+            **🔍 Key Factors:**
+            {chr(10).join(['• ' + factor for factor in decision.get('key_factors', [])])}
+            
+            **✅ Execution Approved:** {decision.get('execution_approved', False)}
+            """
 # =============================================
 # ENHANCED NIFTY APP WITH ALL FEATURES & SAFETY
 # =============================================
@@ -2682,6 +3088,7 @@ class EnhancedNiftyApp:
         self.bias_analyzer = BiasAnalysisPro()
         self.market_data_fetcher = EnhancedMarketData()
         self.safety_manager = TradingSafetyManager()  # NEW: Safety manager
+        self.decision_engine = MasterDecisionEngine()  # NEW: Master Decision Engine
         
         # Initialize session state
         self.init_session_state()
@@ -2718,7 +3125,247 @@ class EnhancedNiftyApp:
             st.session_state.debug_mode = False
         if 'safety_reports' not in st.session_state:  # NEW: Safety reports
             st.session_state.safety_reports = {}
+        # NEW: Master Decision Engine session state
+        if 'master_decision' not in st.session_state:
+            st.session_state.master_decision = None
+        if 'last_decision_time' not in st.session_state:
+            st.session_state.last_decision_time = None
+        if 'decision_history' not in st.session_state:
+            st.session_state.decision_history = []
+    
+    # =============================================
+    # NEW MASTER DECISION ENGINE METHODS
+    # =============================================
+    
+    def display_master_decision(self):
+        """Display the Master Decision Engine output"""
+        st.header("🧠 MASTER DECISION ENGINE")
+        st.success("THE BRAIN IS NOW ACTIVE - Making intelligent trading decisions!")
         
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.info("Combines Market Regime, Trap Detection, Execution Filters into ONE intelligent decision")
+        with col2:
+            if st.button("🎯 Get Decision", type="primary", use_container_width=True):
+                with st.spinner("Master Brain analyzing..."):
+                    self.generate_master_decision()
+        with col3:
+            if st.session_state.master_decision:
+                decision = st.session_state.master_decision
+                confidence = decision.get('confidence', 0)
+                if confidence >= 80:
+                    st.success(f"Confidence: {confidence}%")
+                elif confidence >= 60:
+                    st.warning(f"Confidence: {confidence}%")
+                else:
+                    st.error(f"Confidence: {confidence}%")
+        
+        st.divider()
+        
+        # Display current decision
+        if st.session_state.master_decision:
+            decision = st.session_state.master_decision
+            
+            # Decision Summary
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                trade_decision = decision.get('trade_decision', 'UNKNOWN')
+                if trade_decision == 'TRADE':
+                    st.success(f"**Decision:** {trade_decision}")
+                elif trade_decision == 'NO TRADE':
+                    st.error(f"**Decision:** {trade_decision}")
+                else:
+                    st.warning(f"**Decision:** {trade_decision}")
+            
+            with col2:
+                direction = decision.get('trade_direction', 'NEUTRAL')
+                if direction == 'LONG':
+                    st.success(f"**Direction:** {direction}")
+                elif direction == 'SHORT':
+                    st.error(f"**Direction:** {direction}")
+                else:
+                    st.info(f"**Direction:** {direction}")
+            
+            with col3:
+                st.metric("Confidence", f"{decision.get('confidence', 0)}%")
+            
+            with col4:
+                st.metric("Position Size", decision.get('position_size', 'NONE'))
+            
+            # Detailed decision display
+            st.markdown(self.decision_engine.format_decision_for_display(decision))
+            
+            # Show component analyses
+            with st.expander("🔍 View Component Analyses", expanded=False):
+                tab1, tab2, tab3 = st.tabs(["Market Regime", "Trap Analysis", "Execution Filters"])
+                
+                with tab1:
+                    regime = decision.get('regime_analysis', {})
+                    st.write(f"**Regime:** {regime.get('regime', 'Unknown')}")
+                    st.write(f"**Confidence:** {regime.get('confidence', 0)}%")
+                    st.write(f"**Recommendation:** {regime.get('trade_recommendation', 'N/A')}")
+                    
+                    if regime.get('characteristics'):
+                        st.write("**Characteristics:**")
+                        for char in regime['characteristics']:
+                            st.write(f"• {char}")
+                
+                with tab2:
+                    trap = decision.get('trap_analysis', {})
+                    if trap.get('trap_detected'):
+                        st.error(f"**Trap Detected:** {trap.get('trap_type', 'Unknown')}")
+                        st.write(f"**Confidence:** {trap.get('trap_confidence', 0)}%")
+                        st.write(f"**Action:** {trap.get('action', 'N/A')}")
+                    else:
+                        st.success("No traps detected")
+                
+                with tab3:
+                    filters = decision.get('filter_result', {})
+                    if filters.get('trade_allowed'):
+                        st.success("✅ Execution APPROVED")
+                    else:
+                        st.error("❌ Execution BLOCKED")
+                    
+                    st.write(f"**Filters Passed:** {len(filters.get('filters_passed', []))}")
+                    st.write(f"**Risk Level:** {filters.get('risk_level', 'Unknown')}")
+                    
+                    if filters.get('warnings'):
+                        st.write("**Warnings:**")
+                        for warning in filters['warnings']:
+                            st.warning(warning)
+        
+        else:
+            st.info("👆 Click 'Get Decision' to activate the Master Brain")
+            
+            st.write("""
+            ### 🧠 What the Master Decision Engine Does:
+            
+            **1. Market Regime Analysis**
+            - Detects what TYPE of market we're in
+            - Tells you which strategies work best
+            - Identifies dangerous market conditions
+            
+            **2. Trap Detection**  
+            - Spots bull traps and bear traps
+            - Detects short covering and long liquidation
+            - Identifies who is trapped in the market
+            
+            **3. Execution Filter Engine**
+            - 10+ filters that protect your capital
+            - Checks time, volume, VIX, PCR, and more
+            - Only allows high-probability trades
+            
+            **4. Master Decision**
+            - Combines everything into ONE clear decision
+            - Provides entry, target, stop loss levels
+            - Gives position sizing and confidence score
+            """)
+            
+        # Display decision history
+        if st.session_state.decision_history:
+            st.divider()
+            self.display_decision_history()
+    
+    def generate_master_decision(self):
+        """Generate a master trading decision"""
+        try:
+            # Get all required data
+            price_data = None
+            bias_data = st.session_state.comprehensive_bias_data
+            options_data = None
+            market_data = st.session_state.enhanced_market_data
+            
+            # Fetch current price data if needed
+            api_data = self.fetch_intraday_data(interval='5')
+            if api_data:
+                price_data = self.process_data(api_data)
+            
+            # Get options data
+            if st.session_state.market_bias_data:
+                options_data = st.session_state.market_bias_data[0]  # Use first instrument
+            
+            # Generate decision
+            if price_data is not None and not price_data.empty:
+                decision = self.decision_engine.make_trading_decision(
+                    price_data=price_data,
+                    bias_data=bias_data,
+                    options_data=options_data,
+                    market_data=market_data
+                )
+                
+                st.session_state.master_decision = decision
+                st.session_state.last_decision_time = datetime.now(self.ist)
+                
+                # Store in history
+                if 'decision_history' not in st.session_state:
+                    st.session_state.decision_history = []
+                st.session_state.decision_history.append(decision)
+                
+                # Keep only last 20 decisions
+                if len(st.session_state.decision_history) > 20:
+                    st.session_state.decision_history.pop(0)
+                    
+            else:
+                st.error("Could not fetch price data for decision making")
+                
+        except Exception as e:
+            st.error(f"Error generating master decision: {str(e)}")
+    
+    def display_decision_history(self):
+        """Display history of Master Decision Engine decisions"""
+        st.subheader("📊 Decision History")
+        
+        if not st.session_state.get('decision_history'):
+            st.info("No decision history yet")
+            return
+        
+        # Create summary statistics
+        total_decisions = len(st.session_state.decision_history)
+        trade_decisions = [d for d in st.session_state.decision_history if d.get('trade_decision') == 'TRADE']
+        long_trades = [d for d in trade_decisions if d.get('trade_direction') == 'LONG']
+        short_trades = [d for d in trade_decisions if d.get('trade_direction') == 'SHORT']
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Decisions", total_decisions)
+        with col2:
+            st.metric("Trade Signals", len(trade_decisions))
+        with col3:
+            st.metric("Long Signals", len(long_trades))
+        with col4:
+            st.metric("Short Signals", len(short_trades))
+        
+        st.divider()
+        
+        # Display each decision
+        for idx, decision in enumerate(reversed(st.session_state.decision_history)):
+            timestamp = decision.get('timestamp', datetime.now(self.ist)).strftime('%H:%M:%S')
+            trade_decision = decision.get('trade_decision', 'Unknown')
+            confidence = decision.get('confidence', 0)
+            
+            if trade_decision == 'TRADE':
+                direction = decision.get('trade_direction', 'Unknown')
+                emoji = "🟢" if direction == 'LONG' else "🔴"
+                color = "success" if direction == 'LONG' else "error"
+            elif trade_decision == 'NO TRADE':
+                emoji = "🚫"
+                color = "error"
+            else:
+                emoji = "⏳"
+                color = "warning"
+            
+            with st.expander(f"{emoji} {timestamp} - {trade_decision} (Confidence: {confidence:.0f}%)", expanded=False):
+                st.write(decision.get('simple_summary', 'No summary'))
+                
+                if decision.get('key_factors'):
+                    st.write("**Key Factors:**")
+                    for factor in decision['key_factors']:
+                        st.write(f"• {factor}")
+
+    # =============================================
+    # EXISTING METHODS (Keep all your existing methods below)
+    # =============================================
+    
     def setup_secrets(self):
         """Setup API credentials from Streamlit secrets"""
         try:
@@ -4191,9 +4838,10 @@ Watch for breakout/breakdown confirmation!"""
         self.alert_manager.cooldown_minutes = cooldown_minutes
         
         # Main content - Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        # UPDATED: Added tab7 for Master Decision Engine
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", 
-            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data"
+            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"  # NEW TAB
         ])
         
         with tab1:
@@ -4401,6 +5049,10 @@ Watch for breakout/breakdown confirmation!"""
         
         with tab6:
             self.display_enhanced_market_data()
+            
+        # NEW TAB: Master Decision Engine
+        with tab7:
+            self.display_master_decision()
         
         # Check for trading signals automatically
         if enable_trading_signals and telegram_enabled:
@@ -4410,8 +5062,3 @@ Watch for breakout/breakdown confirmation!"""
         self.alert_manager.cleanup_old_alerts()
         time.sleep(30)
         st.rerun()
-
-# Run the app
-if __name__ == "__main__":
-    app = EnhancedNiftyApp()
-    app.run()
