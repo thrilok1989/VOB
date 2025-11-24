@@ -4331,7 +4331,7 @@ class EnhancedNiftyApp:
             "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"
         ])
         
-         with tab1:
+        with tab1:
             st.header("📈 Price Analysis")
             # Fetch latest price data (e.g., from Yahoo Finance or your own API)
             try:
