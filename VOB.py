@@ -4321,7 +4321,7 @@ class EnhancedNiftyApp:
             - Load Enhanced Market Data (Tab 6)
             """)
 
-     def display_price_analysis(self):
+    def display_price_analysis(self):
         """Display price analysis with charts and metrics"""
         st.header("📈 Price Analysis")
         
