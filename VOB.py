@@ -4331,122 +4331,32 @@ class EnhancedNiftyApp:
             "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"
         ])
         
-        with tab1:
-            st.header("📈 Price Analysis")
-            # Fetch latest price data (e.g., from Yahoo Finance or your own API)
-            try:
-                api_data = self.fetch_intraday_data(interval='5')
-                if api_data:
-                    df = self.process_data(api_data)
-                    if not df.empty:
-                        st.line_chart(df['close'])
-                        st.metric("Current Close", f"{df['close'].iloc[-1]:.2f}")
-                        st.write(df.tail(10))
-                    else:
-                        st.warning("No price data available.")
-                else:
-                    st.warning("Couldn't fetch price data. Try again.")
-            except Exception as e:
-                st.error(f"Error loading price data: {e}")
+        def run(self):
+    st.title("📈 Advanced Nifty Trading Dashboard")
 
-        with tab2:
-            st.header("📊 Options Analysis")
-            options_data = None
-            if 'market_bias_data' in st.session_state and st.session_state.market_bias_data:
-                # Use first instrument by default (e.g. NIFTY)
-                options_data = st.session_state.market_bias_data[0]
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", 
+        "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data"
+    ])
 
-            if options_data:
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Spot Price", f"{options_data['spot_price']:.2f}")
-                with col2:
-                    st.metric("PCR OI", f"{options_data['pcr_oi']:.2f}")
-                with col3:
-                    st.metric("Overall Bias", options_data['overall_bias'])
+    with tab1:
+        # Modern price analysis, chart, metrics, alerts all in main run logic or a modular function
+        self.display_price_analysis()  # If you want, copy the price tab logic from Errorhandling.py .run()
 
-                st.subheader("Key Option Chain Levels")
-                cm = options_data.get('comprehensive_metrics', {})
-                st.write(f"**ATM Strike:** {options_data.get('atm_strike', 'N/A')}")
-                st.write(f"**Bias Score:** {options_data.get('bias_score', 'N/A')}")
-                st.write(f"**Call Resistance:** {cm.get('call_resistance', 'N/A')}")
-                st.write(f"**Put Support:** {cm.get('put_support', 'N/A')}")
-                st.write(f"**Max Pain:** {cm.get('max_pain_strike', 'N/A')}")
+    with tab2:
+        self.display_comprehensive_options_analysis()
 
-                st.subheader("Comprehensive Metrics")
-                st.json(cm)
+    with tab3:
+        self.display_comprehensive_bias_analysis()
 
-                if options_data.get("detailed_atm_bias"):
-                    st.subheader("Detailed ATM Bias")
-                    st.table(pd.DataFrame([options_data["detailed_atm_bias"]]))
+    with tab4:
+        self.display_option_chain_bias_tabulation()
 
-                if "comprehensive_metrics" in options_data and "unusual_activity_count" in options_data["comprehensive_metrics"]:
-                    ua = options_data["comprehensive_metrics"].get("unusual_activity_count", 0)
-                    st.write(f"Unusual activity strikes detected: {ua}")
-            else:
-                st.warning("No options data loaded yet. Please load Options Chain Analysis in the app.")
+    with tab5:
+        self.display_trading_signals_panel()  # Or render the signals panel + history as in Errorhandling.py
 
-        with tab3:
-            st.header("🎯 Technical Bias")
-            bias_data = None
-            if 'comprehensive_bias_data' in st.session_state and st.session_state.comprehensive_bias_data:
-                bias_data = st.session_state.comprehensive_bias_data
-            if bias_data:
-                st.metric("Overall Bias", bias_data.get('overall_bias', 'N/A'))
-                st.metric("Confidence", f"{bias_data.get('overall_confidence', 0):.2f}%")
-                st.metric("Bullish Count", bias_data.get('bullish_count', 0))
-                st.metric("Bearish Count", bias_data.get('bearish_count', 0))
-                st.subheader("Indicator Breakdown")
-                st.dataframe(pd.DataFrame(bias_data.get('bias_results', [])))
-            else:
-                st.warning("No technical bias available. Please run analysis.")
-
-        with tab4:
-            st.header("📋 Bias Tabulation")
-            bias_data = None
-            if 'comprehensive_bias_data' in st.session_state and st.session_state.comprehensive_bias_data:
-                bias_data = st.session_state.comprehensive_bias_data
-            if bias_data:
-                st.subheader("Tabulated Bias Details")
-                st.table(pd.DataFrame(bias_data.get('bias_results', [])))
-            else:
-                st.warning("No bias tabulation yet.")
-
-        with tab5:
-            st.header("🚀 Trading Signals")
-            # Example: Use trading signals manager for recommendations
-            rec = None
-            if 'market_bias_data' in st.session_state and st.session_state.market_bias_data:
-                rec = self.trading_signal_manager.generate_trading_recommendation(st.session_state.market_bias_data[0])
-            if rec:
-                st.success(f"{rec['signal_type']} ({rec['direction']}) — Confidence: {rec['confidence']}%")
-                st.write(f"Entry Zone: {rec['entry_zone']}")
-                st.write(f"Targets: {', '.join(rec['targets'])}")
-                st.write(f"Stop Loss: {rec['stop_loss']}")
-                st.write(rec)
-            else:
-                st.warning("No trading signals at this moment.")
-
-        with tab6:
-            st.header("🌍 Market Data")
-            mkdata = None
-            if 'enhanced_market_data' in st.session_state and st.session_state.enhanced_market_data:
-                mkdata = st.session_state.enhanced_market_data
-            if mkdata:
-                st.subheader("India VIX")
-                st.write(mkdata['india_vix'])
-                st.subheader("Global Markets")
-                st.dataframe(pd.DataFrame(mkdata['global_markets']))
-                st.subheader("Sector Rotation")
-                st.dataframe(pd.DataFrame(mkdata['sector_indices']))
-                st.subheader("Intermarket Data")
-                st.dataframe(pd.DataFrame(mkdata['intermarket']))
-                st.subheader("Intraday Seasonality")
-                st.write(mkdata['intraday_seasonality'])
-                st.subheader("Summary")
-                st.write(mkdata['summary'])
-            else:
-                st.warning("No market data loaded yet. Please load Enhanced Market Data in the app.")
+    with tab6:
+        self.display_enhanced_market_data()
 
         # Remove or update the forced rerun for production!
         time.sleep(30)
