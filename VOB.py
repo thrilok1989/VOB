@@ -2662,6 +2662,481 @@ class NSEOptionsAnalyzer:
         
         return results
 # =============================================
+# MARKET REGIME DETECTOR
+# =============================================
+
+class MarketRegimeDetector:
+    """Detects different market regimes to determine trading strategy suitability"""
+    
+    def __init__(self):
+        self.ist = pytz.timezone('Asia/Kolkata')
+    
+    def detect_market_regime(self, price_data: pd.DataFrame, vix_value: float = None, volume_ratio: float = 1.0) -> Dict[str, Any]:
+        """Detect current market regime with confidence scoring"""
+        
+        if price_data.empty or len(price_data) < 50:
+            return {
+                'regime': 'UNKNOWN',
+                'confidence': 0,
+                'characteristics': ['Insufficient data'],
+                'trade_recommendation': 'NO TRADE'
+            }
+        
+        try:
+            # Calculate technical indicators
+            returns = price_data['close'].pct_change()
+            volatility = returns.rolling(20).std()
+            avg_volatility = volatility.mean()
+            current_volatility = volatility.iloc[-1] if not volatility.empty else avg_volatility
+            
+            # Price trends
+            sma_20 = price_data['close'].rolling(20).mean()
+            sma_50 = price_data['close'].rolling(50).mean()
+            current_price = price_data['close'].iloc[-1]
+            
+            # Volume analysis
+            volume_trend = price_data['volume'].rolling(20).mean().iloc[-1] if len(price_data) > 20 else price_data['volume'].mean()
+            
+            # Determine regime characteristics
+            characteristics = []
+            regime_scores = {
+                'STRONG_TREND_UP': 0,
+                'STRONG_TREND_DOWN': 0, 
+                'RANGE_BOUND': 0,
+                'HIGH_VOLATILITY_BREAKOUT': 0,
+                'LOW_VOLATILITY_CONSOLIDATION': 0
+            }
+            
+            # Trend strength analysis
+            price_above_20sma = current_price > sma_20.iloc[-1] if not sma_20.empty else False
+            price_above_50sma = current_price > sma_50.iloc[-1] if not sma_50.empty else False
+            sma_trend = sma_20.iloc[-1] > sma_50.iloc[-1] if not sma_20.empty and not sma_50.empty else False
+            
+            # Volatility regime
+            vol_ratio = current_volatility / avg_volatility if avg_volatility > 0 else 1.0
+            high_volatility = vol_ratio > 1.5
+            low_volatility = vol_ratio < 0.7
+            
+            # Strong Uptrend detection
+            if price_above_20sma and price_above_50sma and sma_trend:
+                regime_scores['STRONG_TREND_UP'] += 3
+                characteristics.append("Price above both SMAs")
+                characteristics.append("SMA alignment bullish")
+            
+            # Strong Downtrend detection  
+            if not price_above_20sma and not price_above_50sma and not sma_trend:
+                regime_scores['STRONG_TREND_DOWN'] += 3
+                characteristics.append("Price below both SMAs")
+                characteristics.append("SMA alignment bearish")
+            
+            # Range bound detection
+            recent_high = price_data['high'].tail(20).max()
+            recent_low = price_data['low'].tail(20).min()
+            price_range = (recent_high - recent_low) / recent_low
+            
+            if price_range < 0.02:  # Less than 2% range
+                regime_scores['RANGE_BOUND'] += 2
+                regime_scores['LOW_VOLATILITY_CONSOLIDATION'] += 1
+                characteristics.append("Low price range (<2%)")
+            
+            # Volatility-based regimes
+            if high_volatility:
+                regime_scores['HIGH_VOLATILITY_BREAKOUT'] += 2
+                characteristics.append("High volatility environment")
+            elif low_volatility:
+                regime_scores['LOW_VOLATILITY_CONSOLIDATION'] += 2
+                characteristics.append("Low volatility environment")
+            
+            # Volume confirmation
+            if volume_ratio > 1.2:
+                if regime_scores['STRONG_TREND_UP'] > 0:
+                    regime_scores['STRONG_TREND_UP'] += 1
+                elif regime_scores['STRONG_TREND_DOWN'] > 0:
+                    regime_scores['STRONG_TREND_DOWN'] += 1
+                characteristics.append("Above average volume")
+            
+            # VIX influence
+            if vix_value:
+                if vix_value > 20:
+                    regime_scores['HIGH_VOLATILITY_BREAKOUT'] += 1
+                    characteristics.append(f"High VIX ({vix_value:.1f})")
+                elif vix_value < 15:
+                    regime_scores['LOW_VOLATILITY_CONSOLIDATION'] += 1
+                    characteristics.append(f"Low VIX ({vix_value:.1f})")
+            
+            # Determine dominant regime
+            dominant_regime = max(regime_scores.items(), key=lambda x: x[1])
+            regime_name = dominant_regime[0]
+            regime_score = dominant_regime[1]
+            
+            # Calculate confidence (0-100%)
+            max_possible_score = 5
+            confidence = min(100, (regime_score / max_possible_score) * 100)
+            
+            # Trading recommendations per regime
+            recommendation_map = {
+                'STRONG_TREND_UP': 'Trend following LONG, Buy dips',
+                'STRONG_TREND_DOWN': 'Trend following SHORT, Sell rallies', 
+                'RANGE_BOUND': 'Mean reversion, Range trading',
+                'HIGH_VOLATILITY_BREAKOUT': 'Breakout trading, Wide stops',
+                'LOW_VOLATILITY_CONSOLIDATION': 'Wait for breakout, Low risk'
+            }
+            
+            return {
+                'regime': regime_name,
+                'confidence': confidence,
+                'characteristics': characteristics,
+                'trade_recommendation': recommendation_map.get(regime_name, 'NO TRADE'),
+                'volatility_ratio': vol_ratio,
+                'volume_ratio': volume_ratio,
+                'price_above_20sma': price_above_20sma,
+                'price_above_50sma': price_above_50sma
+            }
+            
+        except Exception as e:
+            return {
+                'regime': 'ERROR',
+                'confidence': 0,
+                'characteristics': [f'Error: {str(e)}'],
+                'trade_recommendation': 'NO TRADE'
+            }
+
+# =============================================
+# TRAP DETECTOR
+# =============================================
+
+class TrapDetector:
+    """Detects market traps and squeeze scenarios"""
+    
+    def __init__(self):
+        self.ist = pytz.timezone('Asia/Kolkata')
+    
+    def analyze_market_trap(self, price_data: pd.DataFrame, options_data: Dict[str, Any] = None, bias_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Analyze market for potential traps and squeeze scenarios"""
+        
+        if price_data.empty or len(price_data) < 20:
+            return {
+                'trap_detected': False,
+                'trap_confidence': 0,
+                'trap_type': 'NONE',
+                'action': 'NO ACTION',
+                'who_is_trapped': 'UNKNOWN'
+            }
+        
+        try:
+            current_price = price_data['close'].iloc[-1]
+            trap_indicators = {
+                'BULL_TRAP': 0,
+                'BEAR_TRAP': 0, 
+                'SHORT_COVERING': 0,
+                'LONG_LIQUIDATION': 0
+            }
+            
+            characteristics = []
+            confidence_factors = []
+            
+            # Price action analysis
+            recent_high = price_data['high'].tail(10).max()
+            recent_low = price_data['low'].tail(10).min()
+            current_high = price_data['high'].iloc[-1]
+            current_low = price_data['low'].iloc[-1]
+            
+            # Volume analysis for traps
+            volume_avg = price_data['volume'].rolling(20).mean().iloc[-1]
+            current_volume = price_data['volume'].iloc[-1]
+            volume_ratio = current_volume / volume_avg if volume_avg > 0 else 1.0
+            
+            # Bull Trap: Price makes new high but fails to sustain
+            if current_high >= recent_high and price_data['close'].iloc[-1] < price_data['open'].iloc[-1]:
+                trap_indicators['BULL_TRAP'] += 2
+                characteristics.append("New high rejected")
+                confidence_factors.append("Price rejected at highs")
+            
+            # Bear Trap: Price makes new low but reverses strongly
+            if current_low <= recent_low and price_data['close'].iloc[-1] > price_data['open'].iloc[-1]:
+                trap_indicators['BEAR_TRAP'] += 2  
+                characteristics.append("New low rejected")
+                confidence_factors.append("Price rejected at lows")
+            
+            # Volume confirmation for traps
+            if volume_ratio > 1.5:
+                if trap_indicators['BULL_TRAP'] > 0:
+                    trap_indicators['BULL_TRAP'] += 1
+                    confidence_factors.append("High volume on rejection")
+                if trap_indicators['BEAR_TRAP'] > 0:
+                    trap_indicators['BEAR_TRAP'] += 1
+                    confidence_factors.append("High volume on reversal")
+            
+            # Options data analysis for squeeze detection
+            if options_data:
+                pcr_oi = options_data.get('pcr_oi', 1.0)
+                pcr_change = options_data.get('pcr_change', 1.0)
+                
+                # Short covering potential (low PCR with bearish price action)
+                if pcr_oi < 0.7 and trap_indicators['BEAR_TRAP'] > 0:
+                    trap_indicators['SHORT_COVERING'] += 2
+                    characteristics.append("Low PCR with bear trap")
+                    confidence_factors.append("Shorts may be trapped")
+                
+                # Long liquidation potential (high PCR with bullish trap)
+                if pcr_oi > 1.3 and trap_indicators['BULL_TRAP'] > 0:
+                    trap_indicators['LONG_LIQUIDATION'] += 2
+                    characteristics.append("High PCR with bull trap") 
+                    confidence_factors.append("Longs may be trapped")
+            
+            # Bias data integration
+            if bias_data and bias_data.get('success'):
+                overall_bias = bias_data.get('overall_bias', 'NEUTRAL')
+                bias_score = bias_data.get('overall_score', 0)
+                
+                # Contrarian trap signals
+                if "BULLISH" in overall_bias and bias_score > 50 and trap_indicators['BULL_TRAP'] > 0:
+                    trap_indicators['BULL_TRAP'] += 1
+                    confidence_factors.append("Bullish bias with rejection")
+                elif "BEARISH" in overall_bias and bias_score < -50 and trap_indicators['BEAR_TRAP'] > 0:
+                    trap_indicators['BEAR_TRAP'] += 1
+                    confidence_factors.append("Bearish bias with reversal")
+            
+            # Determine if any trap is significant
+            max_trap = max(trap_indicators.items(), key=lambda x: x[1])
+            trap_type = max_trap[0]
+            trap_score = max_trap[1]
+            
+            trap_detected = trap_score >= 2
+            trap_confidence = min(100, (trap_score / 5) * 100) if trap_detected else 0
+            
+            # Determine who is trapped
+            who_trapped_map = {
+                'BULL_TRAP': 'LONGS',
+                'BEAR_TRAP': 'SHORTS', 
+                'SHORT_COVERING': 'SHORTS',
+                'LONG_LIQUIDATION': 'LONGS'
+            }
+            
+            # Action recommendations
+            action_map = {
+                'BULL_TRAP': 'Consider SHORT positions',
+                'BEAR_TRAP': 'Consider LONG positions',
+                'SHORT_COVERING': 'Prepare for LONG squeeze', 
+                'LONG_LIQUIDATION': 'Prepare for SHORT squeeze',
+                'NONE': 'No action needed'
+            }
+            
+            return {
+                'trap_detected': trap_detected,
+                'trap_confidence': trap_confidence,
+                'trap_type': trap_type if trap_detected else 'NONE',
+                'action': action_map.get(trap_type, 'NO ACTION'),
+                'who_is_trapped': who_trapped_map.get(trap_type, 'UNKNOWN'),
+                'characteristics': characteristics,
+                'confidence_factors': confidence_factors,
+                'volume_ratio': volume_ratio
+            }
+            
+        except Exception as e:
+            return {
+                'trap_detected': False,
+                'trap_confidence': 0,
+                'trap_type': 'ERROR',
+                'action': 'NO ACTION',
+                'who_is_trapped': 'UNKNOWN',
+                'error': str(e)
+            }
+
+# =============================================
+# EXECUTION FILTER ENGINE
+# =============================================
+
+class ExecutionFilterEngine:
+    """Filters trade executions based on multiple safety and timing factors"""
+    
+    def __init__(self):
+        self.ist = pytz.timezone('Asia/Kolkata')
+    
+    def should_trade(self, regime_analysis: Dict[str, Any], trap_analysis: Dict[str, Any], 
+                    bias_data: Dict[str, Any], options_data: Dict[str, Any] = None,
+                    market_data: Dict[str, Any] = None, current_price: float = None,
+                    price_data: pd.DataFrame = None) -> Dict[str, Any]:
+        """Determine if trading should be allowed based on multiple filters"""
+        
+        filters_passed = []
+        filters_failed = []
+        warnings = []
+        confidence = 100  # Start with 100% and deduct for failures
+        
+        # Filter 1: Market Hours
+        if self._is_market_hours():
+            filters_passed.append("Market hours")
+        else:
+            filters_failed.append("Outside market hours")
+            confidence -= 30
+        
+        # Filter 2: Data Quality
+        if price_data is not None and len(price_data) >= 20:
+            filters_passed.append("Sufficient data")
+        else:
+            filters_failed.append("Insufficient price data")
+            confidence -= 25
+        
+        # Filter 3: Market Regime suitability
+        regime_confidence = regime_analysis.get('confidence', 0)
+        regime_type = regime_analysis.get('regime', 'UNKNOWN')
+        
+        suitable_regimes = ['STRONG_TREND_UP', 'STRONG_TREND_DOWN', 'RANGE_BOUND']
+        if regime_type in suitable_regimes and regime_confidence >= 60:
+            filters_passed.append(f"Favorable regime ({regime_type})")
+        else:
+            filters_failed.append(f"Unfavorable regime ({regime_type})")
+            confidence -= 15
+        
+        # Filter 4: Trap Analysis
+        if trap_analysis.get('trap_detected', False):
+            trap_confidence = trap_analysis.get('trap_confidence', 0)
+            if trap_confidence >= 70:
+                filters_passed.append(f"High-confidence trap detected ({trap_analysis['trap_type']})")
+                confidence += 10  # Bonus for high-confidence traps
+            else:
+                filters_failed.append("Low-confidence trap")
+                confidence -= 10
+        else:
+            filters_passed.append("No traps detected")
+        
+        # Filter 5: Bias Confidence
+        if bias_data and bias_data.get('success'):
+            bias_confidence = bias_data.get('overall_confidence', 0)
+            if bias_confidence >= 60:
+                filters_passed.append(f"Strong bias confidence ({bias_confidence}%)")
+            else:
+                filters_failed.append(f"Weak bias confidence ({bias_confidence}%)")
+                confidence -= 10
+        else:
+            filters_failed.append("No bias data")
+            confidence -= 15
+        
+        # Filter 6: Options Data Quality
+        if options_data:
+            pcr_oi = options_data.get('pcr_oi', 1.0)
+            if 0.3 <= pcr_oi <= 3.0:  # Reasonable PCR range
+                filters_passed.append("Valid PCR data")
+            else:
+                filters_failed.append("Extreme PCR value")
+                confidence -= 10
+                warnings.append(f"Extreme PCR: {pcr_oi:.2f}")
+        else:
+            filters_failed.append("No options data")
+            confidence -= 10
+        
+        # Filter 7: Volatility Check
+        if market_data and market_data.get('india_vix', {}).get('success'):
+            vix_value = market_data['india_vix'].get('value', 20)
+            if 12 <= vix_value <= 25:  # Reasonable VIX range
+                filters_passed.append("Normal VIX levels")
+            else:
+                filters_failed.append("Extreme VIX levels")
+                confidence -= 10
+                warnings.append(f"Extreme VIX: {vix_value:.1f}")
+        
+        # Filter 8: Volume Check
+        if price_data is not None and len(price_data) > 5:
+            current_volume = price_data['volume'].iloc[-1]
+            avg_volume = price_data['volume'].rolling(20).mean().iloc[-1]
+            if avg_volume > 0:
+                volume_ratio = current_volume / avg_volume
+                if 0.5 <= volume_ratio <= 3.0:
+                    filters_passed.append("Normal volume levels")
+                else:
+                    filters_failed.append("Abnormal volume")
+                    confidence -= 10
+                    warnings.append(f"Volume ratio: {volume_ratio:.1f}x")
+        
+        # Filter 9: Time of Day
+        current_time = datetime.now(self.ist).time()
+        avoid_times = [
+            (datetime.strptime("11:30", "%H:%M").time(), datetime.strptime("14:00", "%H:%M").time()),  # Lunch
+            (datetime.strptime("15:15", "%H:%M").time(), datetime.strptime("15:30", "%H:%M").time())   # Close
+        ]
+        
+        in_avoid_period = False
+        for start, end in avoid_times:
+            if start <= current_time <= end:
+                in_avoid_period = True
+                break
+        
+        if not in_avoid_period:
+            filters_passed.append("Good trading time")
+        else:
+            filters_failed.append("Avoid trading period")
+            confidence -= 20
+            warnings.append("Trading during low-activity period")
+        
+        # Filter 10: Price Stability
+        if price_data is not None and len(price_data) > 10:
+            recent_volatility = price_data['close'].pct_change().tail(5).std()
+            if recent_volatility < 0.02:  # Less than 2% volatility
+                filters_passed.append("Stable price action")
+            else:
+                filters_failed.append("High volatility")
+                confidence -= 10
+                warnings.append(f"High recent volatility: {recent_volatility:.3f}")
+        
+        # Final decision
+        trade_allowed = len(filters_failed) <= 2 and confidence >= 70
+        confidence = max(0, min(100, confidence))  # Clamp between 0-100
+        
+        # Position sizing based on confidence
+        if confidence >= 85:
+            position_sizing = "FULL"
+        elif confidence >= 70:
+            position_sizing = "NORMAL" 
+        elif confidence >= 60:
+            position_sizing = "SMALL"
+        else:
+            position_sizing = "NONE"
+        
+        # Risk level assessment
+        if confidence >= 80:
+            risk_level = "LOW"
+        elif confidence >= 65:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "HIGH"
+        
+        # Final recommendation
+        if trade_allowed:
+            final_recommendation = f"TRADE ALLOWED - {position_sizing} position"
+        else:
+            final_recommendation = f"TRADE BLOCKED - {len(filters_failed)} filters failed"
+        
+        return {
+            'trade_allowed': trade_allowed,
+            'confidence': confidence,
+            'filters_passed': filters_passed,
+            'filters_failed': filters_failed,
+            'warnings': warnings,
+            'position_sizing': position_sizing,
+            'risk_level': risk_level,
+            'final_recommendation': final_recommendation,
+            'total_filters': len(filters_passed) + len(filters_failed),
+            'passed_ratio': len(filters_passed) / (len(filters_passed) + len(filters_failed)) if (len(filters_passed) + len(filters_failed)) > 0 else 0
+        }
+    
+    def _is_market_hours(self) -> bool:
+        """Check if current time is within regular market hours"""
+        try:
+            now = datetime.now(self.ist)
+            current_time = now.time()
+            
+            # Market hours: 9:15 AM to 3:30 PM IST
+            market_open = datetime.strptime("09:15", "%H:%M").time()
+            market_close = datetime.strptime("15:30", "%H:%M").time()
+            
+            # Check if weekday (Monday to Friday)
+            is_weekday = now.weekday() < 5
+            
+            return is_weekday and market_open <= current_time <= market_close
+        except:
+            return False
+# =============================================
 # MASTER DECISION ENGINE (THE COMPLETE BRAIN)
 # =============================================
 class MasterDecisionEngine:
