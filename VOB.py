@@ -4325,20 +4325,46 @@ class EnhancedNiftyApp:
         """Main application with all features"""
         st.title("📈 Advanced Nifty Trading Dashboard")
         st.markdown("*Volume Analysis, Options Chain, Technical Bias, Trading Signals & Master Decision Engine*")
-        
-        # Sidebar settings remain the same
-        # Main content - Add NEW Tab for Master Decision
+
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📈 Price Analysis", "📊 Options Analysis", "🎯 Technical Bias", 
-            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"  # NEW TAB
+            "📋 Bias Tabulation", "🚀 Trading Signals", "🌍 Market Data", "🧠 Master Decision"
         ])
         
-        # Previous tabs remain the same (tab1 through tab6)
+        with tab1:
+            st.header("📈 Price Analysis")
+            st.info("(Sample content) Price analysis charts, plotting, LTP and trend indicators should appear here.")
+            # Example: st.line_chart(some_dataframe)
         
-        with tab7:  # NEW: Master Decision Engine Tab
-            self.display_master_decision()
+        with tab2:
+            st.header("📊 Options Analysis")
+            st.info("(Sample content) Option chain, ATM bias, max pain, PCR, etc. should appear here.")
+            # Example: Display options chain table or chart
         
-        # Auto-generate decision and cleanup remain the same
+        with tab3:
+            st.header("🎯 Technical Bias")
+            st.info("(Sample content) Technical bias summary, indicator heatmap, or scorecards should appear here.")
+            # Example: Show results from BiasAnalysisPro
+        
+        with tab4:
+            st.header("📋 Bias Tabulation")
+            st.info("(Sample content) Bias details in table form, breakout per indicator, etc.")
+            # Example: st.table, st.dataframe for indicator breakdown
+        
+        with tab5:
+            st.header("🚀 Trading Signals")
+            st.info("(Sample content) Generated buy/sell signals, signal logs, cooldown status, etc.")
+            # Example: Show any signal recommendations
+        
+        with tab6:
+            st.header("🌍 Market Data")
+            st.info("(Sample content) Global indices, sector rotation, intermarket asset info, India VIX, etc.")
+            # Example: st.dataframe(global_indices_dataframe)
+        
+        with tab7:
+            self.display_master_decision()  # Your advanced tab logic
+
+        # Remove or update the forced rerun for production!
         time.sleep(30)
         st.rerun()
 
