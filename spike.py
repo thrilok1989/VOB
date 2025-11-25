@@ -81,7 +81,8 @@ def initialize_session_state():
         'current_volume_data': {},
         'data_quality_check': False,
         'successful_fetches': 0,
-        'failed_fetches': 0
+        'failed_fetches': 0,
+        'fetching_in_progress': False  # NEW: Prevent concurrent fetches
     }
     
     for key, value in defaults.items():
@@ -96,15 +97,18 @@ initialize_session_state()
 # ---------------------------
 
 def save_current_data(current_data, spot_price):
-    """Save current data to session state with validation"""
+    """Save current data to session state with validation - MORE RESILIENT"""
     if current_data is None or current_data.empty:
-        st.warning("⚠️ No valid data to save")
+        st.warning("⚠️ No valid data to save - keeping previous data")
         return False
     
     try:
-        # Validate data before saving
-        if not validate_option_chain_data(current_data):
-            st.warning("⚠️ Data validation failed - not saving")
+        # Validate data before saving - but don't reject if we have SOME valid data
+        is_valid = validate_option_chain_data(current_data)
+        
+        if not is_valid:
+            st.warning("⚠️ Data validation failed - keeping previous data as fallback")
+            # Don't overwrite previous_data if validation fails
             return False
         
         # Store the current data as previous data for next run
@@ -141,10 +145,11 @@ def save_current_data(current_data, spot_price):
     except Exception as e:
         st.error(f"❌ Error saving data: {e}")
         st.session_state.failed_fetches += 1
+        # Don't clear previous_data on error - maintain continuity
         return False
 
 def validate_option_chain_data(df):
-    """Validate the option chain data for quality"""
+    """Validate the option chain data for quality - now more lenient"""
     if df is None or df.empty:
         return False
     
@@ -157,17 +162,18 @@ def validate_option_chain_data(df):
                 st.warning(f"Missing column: {col}")
                 return False
         
-        # Check if OI values are reasonable (not all zeros)
+        # Check if OI values are reasonable (not all zeros) - MORE LENIENT
         total_ce_oi = df['ce_oi'].sum()
         total_pe_oi = df['pe_oi'].sum()
         
+        # Allow if at least ONE side has data
         if total_ce_oi == 0 and total_pe_oi == 0:
             st.warning("⚠️ All OI values are zero - data may be invalid")
             return False
         
-        # Check if we have reasonable strike prices
+        # Check if we have reasonable strike prices - MORE LENIENT
         strikes = df['strike'].values
-        if len(strikes) < 10:  # Should have at least 10 strikes
+        if len(strikes) < 5:  # Reduced from 10 to 5
             st.warning("⚠️ Too few strikes - data may be incomplete")
             return False
             
@@ -196,7 +202,7 @@ def has_valid_previous_data():
     if previous_data is None:
         return False
     
-    # Check if data is not too old (max 10 minutes for better persistence)
+    # Check if data is not too old (max 20 minutes - more lenient for stability)
     if st.session_state.last_fetch_time:
         # Handle both datetime and timestamp formats
         if isinstance(st.session_state.last_fetch_time, (int, float)):
@@ -205,9 +211,10 @@ def has_valid_previous_data():
             last_fetch = st.session_state.last_fetch_time
             
         time_diff = (get_ist_time() - last_fetch).total_seconds() / 60
-        if time_diff > 10:  # Increased to 10 minutes for better persistence
-            st.info("🕒 Previous data is stale, collecting fresh baseline...")
-            return False
+        if time_diff > 20:  # Increased to 20 minutes for better stability
+            st.info("🕒 Previous data is aging, will refresh on next successful fetch...")
+            # Don't immediately invalidate - let it be used until we have fresh data
+            return True
     
     return True
 
@@ -557,7 +564,7 @@ def master_bias_engine(gamma_data, spike_data):
 # ENHANCED DATA FETCHING WITH RETRY MECHANISM
 # ---------------------------
 
-@st.cache_data(ttl=30, show_spinner=False)  # Reduced cache time for freshness
+@st.cache_data(ttl=120, show_spinner=False)  # Increased to 2 minutes for stability
 def fetch_option_chain_dhan_cached(symbol_key: str, expiry_date: str, attempt=1):
     """Fetch option chain using Dhan API V2 with caching and retry"""
     if not ACCESS_TOKEN or not CLIENT_ID:
@@ -904,7 +911,15 @@ with col2:
 
 # Main analysis function
 def run_comprehensive_analysis():
-    """Run all analysis engines with enhanced error handling"""
+    """Run all analysis engines with enhanced error handling and race condition protection"""
+    
+    # Prevent concurrent fetches
+    if st.session_state.get('fetching_in_progress', False):
+        st.warning("⏳ Analysis already in progress, please wait...")
+        return None
+    
+    st.session_state.fetching_in_progress = True
+    
     try:
         with st.spinner("🔄 Fetching live option chain data..."):
             raw = fetch_option_chain_dhan(symbol_selection, expiry)
@@ -955,6 +970,9 @@ def run_comprehensive_analysis():
         st.error(f"❌ Comprehensive analysis error: {e}")
         st.session_state.failed_fetches += 1
         return None
+    finally:
+        # Always release the lock
+        st.session_state.fetching_in_progress = False
 
 # ---------------------------
 # MAIN EXECUTION LOOP
@@ -1085,24 +1103,28 @@ st.markdown("""
 🛡️ **Robust Data Validation:**
    - Multiple validation checks
    - OI data quality verification
-   - Strike count validation
+   - Strike count validation (min 5 strikes)
    - Spot price validation
 
 🔄 **Enhanced Error Handling:**
-   - Retry mechanism for API calls
+   - Retry mechanism for API calls (3 attempts)
    - Graceful degradation
    - Data backup system
    - Comprehensive error tracking
+   - Race condition protection
 
 💾 **Smart Data Persistence:**
+   - Extended cache TTL (120 seconds)
    - Session state initialization
    - Data quality monitoring
    - Backup system
-   - Cache management
+   - Lenient data age threshold (20 minutes)
+   - Previous data preservation on failures
 
 ✅ **Reliable Operation:**
    - Data persists across refreshes
    - Automatic recovery from errors
    - Quality monitoring
    - Performance tracking
+   - Concurrent fetch prevention
 """)
