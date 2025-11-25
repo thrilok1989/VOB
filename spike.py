@@ -10,8 +10,9 @@ st.set_page_config(page_title="Expiry Spike Detector", layout="wide")
 # ---------------------------
 # Helper: Read secrets
 # ---------------------------
-DHAN_API_KEY = st.secrets.get("dhanauth", {}).get("DHAN_API_KEY")
-DHAN_API_SECRET = st.secrets.get("dhanauth", {}).get("DHAN_API_SECRET")
+# DHAN V2 uses Client ID and Access Token
+CLIENT_ID = st.secrets.get("dhanauth", {}).get("CLIENT_ID")
+ACCESS_TOKEN = st.secrets.get("dhanauth", {}).get("ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = st.secrets.get("telegram", {}).get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = st.secrets.get("telegram", {}).get("TELEGRAM_CHAT_ID")
 
@@ -19,8 +20,16 @@ TELEGRAM_CHAT_ID = st.secrets.get("telegram", {}).get("TELEGRAM_CHAT_ID")
 # UI - Sidebar
 # ---------------------------
 st.sidebar.title("Expiry Spike Detector — Settings")
-symbol = st.sidebar.text_input("Symbol (e.g. NIFTY50 index ticker)", value="NIFTY")
-expiry = st.sidebar.text_input("Expiry Date (YYYY-MM-DD)", value="")
+
+# Mapping common Indices to Dhan Scrip Codes (Essential for V2 API)
+INDEX_MAP = {
+    "NIFTY": {"code": "13", "segment": "NSE_IDX"},
+    "BANKNIFTY": {"code": "25", "segment": "NSE_IDX"},
+    "FINNIFTY": {"code": "27", "segment": "NSE_IDX"}
+}
+
+symbol_selection = st.sidebar.selectbox("Symbol", list(INDEX_MAP.keys()), index=0)
+expiry = st.sidebar.text_input("Expiry Date (YYYY-MM-DD)", value=datetime.now().strftime("%Y-%m-%d"))
 refresh_secs = st.sidebar.slider("Refresh interval (seconds)", min_value=5, max_value=60, value=15)
 run_live = st.sidebar.checkbox("Auto-refresh live detection", value=False)
 show_raw = st.sidebar.checkbox("Show raw option chain", value=False)
@@ -28,7 +37,7 @@ threshold_alert = st.sidebar.slider("Alert threshold (score >= )", 10, 100, 70)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Streamlit Secrets needed:**")
-st.sidebar.markdown("`dhanauth.DHAN_API_KEY`, optional `dhanauth.DHAN_API_SECRET` and telegram credentials (optional)")
+st.sidebar.markdown("`dhanauth.CLIENT_ID`, `dhanauth.ACCESS_TOKEN` and telegram credentials.")
 
 # ---------------------------
 # Helper functions
@@ -46,60 +55,96 @@ def send_telegram_message(msg: str):
         return False
 
 
-def fetch_option_chain_dhan(symbol: str, expiry_date: str):
+def fetch_option_chain_dhan(symbol_key: str, expiry_date: str):
     """
-    Fetch option chain using Dhan API.
-    NOTE: Replace endpoint and auth if your Dhan API differs. This is a placeholder structure.
-
-    Dhan API typically requires API key headers and a specific endpoint.
+    Fetch option chain using Dhan API V2.
     """
-    if not DHAN_API_KEY:
-        st.warning("Dhan API key missing in Streamlit secrets. Add dhanauth.DHAN_API_KEY")
+    if not ACCESS_TOKEN or not CLIENT_ID:
+        st.warning("Dhan credentials missing in Streamlit secrets.")
         return None
 
-    # Example placeholder endpoint - adjust to actual Dhan endpoints
-    url = f"https://api.dhan.co/v1/option_chain/{symbol}?expiry={expiry_date}"
-    headers = {"Authorization": f"Bearer {DHAN_API_KEY}"}
+    # Get the Scrip Code and Segment from the mapper
+    scrip_details = INDEX_MAP.get(symbol_key)
+    if not scrip_details:
+        st.error("Unknown Symbol. Please add it to INDEX_MAP in the script.")
+        return None
+
+    url = "https://api.dhan.co/v2/option-chain"
+    
+    headers = {
+        "access-token": ACCESS_TOKEN,
+        "client-id": CLIENT_ID,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    # Dhan V2 Payload Structure
+    payload = {
+        "UnderlyingScripCode": scrip_details["code"],
+        "UnderlyingSeg": scrip_details["segment"],
+        "Expiry": expiry_date
+    }
+
     try:
-        r = requests.get(url, headers=headers, timeout=8)
+        r = requests.post(url, headers=headers, json=payload, timeout=8)
         r.raise_for_status()
         data = r.json()
-        # expected: data['option_chain'] or similar structure
         return data
     except Exception as e:
         st.error(f"Failed to fetch option chain: {e}")
         return None
 
 
-# Utility to normalize option chain into DataFrame
 def normalize_option_chain(raw):
-    # Raw structure varies. Try common shapes, otherwise return None
-    # Expected fields per strike: strike, ce: {ltp, iv, gamma, oi_change, oi, volume}, pe: {...}
+    """
+    Normalize Dhan V2 response into DataFrame.
+    Dhan V2 structure: {'data': {'OC': { 'strike_price': { 'ce': {...}, 'pe': {...} } }}}
+    """
     items = []
     try:
-        chain = raw.get('option_chain') or raw.get('data') or raw
-        for entry in chain:
-            strike = entry.get('strike')
-            ce = entry.get('CE') or entry.get('ce') or entry.get('call') or {}
-            pe = entry.get('PE') or entry.get('pe') or entry.get('put') or {}
+        # Access the nested data structure
+        if 'data' not in raw:
+            return None
+            
+        # Dhan raw data is often dictionary keyed by strike, or list
+        chain_data = raw['data']
+        
+        # If it comes as a dict with specific structure (sometimes OC key is present)
+        if 'OC' in chain_data:
+            chain_data = chain_data['OC']
+            
+        # Iterate through strikes
+        for strike_price, details in chain_data.items():
+            ce = details.get('ce', {})
+            pe = details.get('pe', {})
+            
+            # Note: Dhan API does not natively return Greeks (Gamma, IV, Delta) in standard feed.
+            # We default them to 0.0 to keep the logic running based on Price/OI.
+            
             items.append({
-                'strike': strike,
-                'ce_ltp': ce.get('last_price') or ce.get('ltp') or np.nan,
-                'ce_iv': ce.get('iv') or np.nan,
-                'ce_gamma': ce.get('gamma') or np.nan,
-                'ce_oi': ce.get('oi') or np.nan,
-                'ce_oi_change': ce.get('oi_change') or ce.get('change_in_oi') or 0,
-                'ce_volume': ce.get('volume') or 0,
-                'pe_ltp': pe.get('last_price') or pe.get('ltp') or np.nan,
-                'pe_iv': pe.get('iv') or np.nan,
-                'pe_gamma': pe.get('gamma') or np.nan,
-                'pe_oi': pe.get('oi') or np.nan,
-                'pe_oi_change': pe.get('oi_change') or pe.get('change_in_oi') or 0,
-                'pe_volume': pe.get('volume') or 0
+                'strike': float(strike_price),
+                
+                # Call Data
+                'ce_ltp': float(ce.get('last_price', 0.0)),
+                'ce_iv': float(ce.get('implied_volatility', 0.0)), # Likely 0 unless premium feed
+                'ce_gamma': float(ce.get('gamma', 0.0)),           # Likely 0
+                'ce_oi': float(ce.get('oi', 0.0)),
+                'ce_oi_change': float(ce.get('oi_change', 0.0)),   # Check strictly if API gives 'oi_change' or requires calc
+                'ce_volume': float(ce.get('volume', 0.0)),
+                
+                # Put Data
+                'pe_ltp': float(pe.get('last_price', 0.0)),
+                'pe_iv': float(pe.get('implied_volatility', 0.0)), # Likely 0
+                'pe_gamma': float(pe.get('gamma', 0.0)),           # Likely 0
+                'pe_oi': float(pe.get('oi', 0.0)),
+                'pe_oi_change': float(pe.get('oi_change', 0.0)),
+                'pe_volume': float(pe.get('volume', 0.0))
             })
+            
         df = pd.DataFrame(items).sort_values('strike').reset_index(drop=True)
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"Normalization Error: {e}")
         return None
 
 
@@ -110,6 +155,8 @@ def normalize_option_chain(raw):
 def gamma_sequence_expiry(option_df: pd.DataFrame, spot_price: float):
     # find nearest strike index (atm)
     strikes = option_df['strike'].values
+    if len(strikes) == 0: return None
+    
     atm_idx = int(np.argmin(np.abs(strikes - spot_price)))
     atm = option_df.iloc[atm_idx]
 
@@ -124,6 +171,7 @@ def gamma_sequence_expiry(option_df: pd.DataFrame, spot_price: float):
     pe_ltp = float(atm.get('pe_ltp', 0) or 0)
 
     # 1. gamma pressure (scaled)
+    # NOTE: Since Dhan doesn't return Gamma, this will be 0 unless you calculate it externally.
     gamma_pressure = (abs(ce_gamma) + abs(pe_gamma)) * 10000
 
     # 2. hedge imbalance - absolute difference in OI change across ATM and near strikes
@@ -145,13 +193,14 @@ def gamma_sequence_expiry(option_df: pd.DataFrame, spot_price: float):
     gamma_spread = np.nanstd(total_gamma)
 
     # 7. expected move proxy
-    expected_move = gamma_pressure * (1 + (hedge_imbalance / max(1, (option_df['ce_oi'].fillna(0).abs().sum() + option_df['pe_oi'].fillna(0).abs().sum()))))
+    denominator = (option_df['ce_oi'].fillna(0).abs().sum() + option_df['pe_oi'].fillna(0).abs().sum())
+    expected_move = gamma_pressure * (1 + (hedge_imbalance / max(1, denominator)))
 
     # Build score
     score = 0
     if gamma_pressure > 60: score += 20
     if gamma_pressure > 120: score += 20
-    if hedge_imbalance > 5000: score += 20
+    if hedge_imbalance > 50000: score += 20 # Increased threshold for Index OI
     if iv_crush: score += 15
     if compression: score += 20
     if gamma_flip: score += 25
@@ -162,12 +211,20 @@ def gamma_sequence_expiry(option_df: pd.DataFrame, spot_price: float):
 
     direction = 'NEUTRAL'
     # directional inference: if pe side showing more oi build (positive change), dealers shorting downside -> price likely UP
-    ce_side = (option_df['ce_gamma'].fillna(0).astype(float).values * option_df['ce_oi_change'].fillna(0).astype(float).values).sum()
-    pe_side = (option_df['pe_gamma'].fillna(0).astype(float).values * option_df['pe_oi_change'].fillna(0).astype(float).values).sum()
-    if pe_side > ce_side * 1.1:
-        direction = 'UP'
-    elif ce_side > pe_side * 1.1:
-        direction = 'DOWN'
+    # Fallback to OI Logic if Gamma is 0
+    if ce_gamma == 0 and pe_gamma == 0:
+        # Pure OI Logic
+        if pe_oi_chg > ce_oi_chg:
+             direction = 'UP (OI Based)'
+        elif ce_oi_chg > pe_oi_chg:
+             direction = 'DOWN (OI Based)'
+    else:
+        ce_side = (option_df['ce_gamma'].fillna(0).astype(float).values * option_df['ce_oi_change'].fillna(0).astype(float).values).sum()
+        pe_side = (option_df['pe_gamma'].fillna(0).astype(float).values * option_df['pe_oi_change'].fillna(0).astype(float).values).sum()
+        if pe_side > ce_side * 1.1:
+            direction = 'UP'
+        elif ce_side > pe_side * 1.1:
+            direction = 'DOWN'
 
     return {
         'gamma_pressure': round(float(gamma_pressure), 2),
@@ -179,7 +236,7 @@ def gamma_sequence_expiry(option_df: pd.DataFrame, spot_price: float):
         'expiry_spike_score': int(score),
         'expected_move_points': round(float(expected_move), 2),
         'direction': direction,
-        'atm_strike': int(option_df['strike'].iloc[ int(np.argmin(np.abs(option_df['strike'] - float(option_df['strike'].mean()))) ) ])
+        'atm_strike': int(atm['strike'])
     }
 
 
@@ -187,13 +244,13 @@ def gamma_sequence_expiry(option_df: pd.DataFrame, spot_price: float):
 # Main app flow
 # ---------------------------
 
-st.title("📣 Expiry Day Spike Detector — Dhan API")
-st.markdown("Detect expiry-day sudden moves using Gamma Sequence + Option Chain signals. Designed for NIFTY/BANKNIFTY expiry days.")
+st.title("📣 Expiry Day Spike Detector — Dhan API v2")
+st.markdown("Detect expiry-day sudden moves. **Note:** Dhan API does not return Greeks (Gamma/IV) natively. Signals rely heavily on Price/OI/Compression.")
 
 col1, col2 = st.columns([2, 1])
 with col1:
     st.header("Live Expiry Spike Scan")
-    st.write(f"Symbol: **{symbol}** | Expiry: **{expiry or 'Not set'}**")
+    st.write(f"Symbol: **{symbol_selection}** | Expiry: **{expiry or 'Not set'}**")
 
 with col2:
     st.header("Controls")
@@ -217,20 +274,21 @@ result_area = st.empty()
 raw_area = st.expander("Raw option chain (collapsed)")
 
 # Minimal spot fetch: attempt to get spot from option chain or external
-
-def fetch_spot_from_chain(df):
-    # best effort: find mid of ATM strikes or use underlying field if present
+def fetch_spot_from_chain(df, raw_data):
+    # Try fetching from raw data 'last_price' field if available at root
+    if raw_data and 'last_price' in raw_data:
+        return float(raw_data['last_price'])
+    
+    # Fallback: find mid of ATM strikes
     if df is None or df.empty:
         return None
-    # attempt to guess spot from chain if present
     strikes = df['strike'].values
     return float((strikes.min() + strikes.max()) / 2)
 
 
 # Single-run fetch+compute function
-
 def run_detection_once():
-    raw = fetch_option_chain_dhan(symbol, expiry)
+    raw = fetch_option_chain_dhan(symbol_selection, expiry)
     if raw is None:
         return None, None
     df = normalize_option_chain(raw)
@@ -239,7 +297,7 @@ def run_detection_once():
         return None, raw
 
     # best-effort spot
-    spot = fetch_spot_from_chain(df)
+    spot = fetch_spot_from_chain(df, raw)
     if spot is None:
         # fallback: ask user
         st.warning("Could not infer spot from option chain. Provide spot price in sidebar.")
@@ -264,6 +322,8 @@ if should_run:
         colA.metric("Expiry Spike Score", f"{score}%")
         colB.metric("Direction", gamma['direction'])
         colC.metric("Expected Move (pts)", gamma['expected_move_points'])
+        
+        st.markdown(f"**ATM Strike:** {gamma['atm_strike']}")
 
         st.markdown("**Details**")
         st.write({
@@ -279,33 +339,41 @@ if should_run:
         if score >= threshold_alert:
             st.warning(f"🚨 High expiry spike probability: {score}% — Direction: {gamma['direction']}")
             # send telegram optionally
-            send_telegram_message(f"Expiry Spike Alert for {symbol} ({expiry}) — Score {score}% — Dir: {gamma['direction']} — Expected Move: {gamma['expected_move_points']} pts")
+            send_telegram_message(f"Expiry Spike Alert for {symbol_selection} ({expiry}) — Score {score}% — Dir: {gamma['direction']} — Expected Move: {gamma['expected_move_points']} pts")
 
 # If auto-run enabled, simple loop with sleep (limited iterations to avoid runaway)
 if run_live and expiry:
     max_cycles = 1000
     cycle = 0
+    container = st.empty()
     while cycle < max_cycles:
         gamma, df = run_detection_once()
         if df is not None and show_raw:
             raw_area.dataframe(df)
         if gamma:
-            result_area.metric("Expiry Spike Score", f"{gamma['expiry_spike_score']}%")
-            result_area.write(pd.DataFrame([{
-                'Direction': gamma['direction'],
-                'Expected Move': gamma['expected_move_points'],
-                'Gamma Pressure': gamma['gamma_pressure'],
-                'Hedge Imbalance': gamma['hedge_imbalance'],
-                'Gamma Flip': gamma['gamma_flip']
-            }]))
+            container.empty()
+            with container.container():
+                colA, colB, colC = st.columns(3)
+                colA.metric("Expiry Spike Score", f"{gamma['expiry_spike_score']}%")
+                colB.metric("Direction", gamma['direction'])
+                colC.metric("Expected Move", gamma['expected_move_points'])
+                
+                st.write(pd.DataFrame([{
+                    'Direction': gamma['direction'],
+                    'Expected Move': gamma['expected_move_points'],
+                    'Gamma Pressure': gamma['gamma_pressure'],
+                    'Hedge Imbalance': gamma['hedge_imbalance'],
+                    'Gamma Flip': gamma['gamma_flip']
+                }]))
+            
             if gamma['expiry_spike_score'] >= threshold_alert:
-                st.warning(f"🚨 High expiry spike probability: {gamma['expiry_spike_score']}% — Dir: {gamma['direction']}")
-                send_telegram_message(f"Expiry Spike Alert for {symbol} ({expiry}) — Score {gamma['expiry_spike_score']}% — Dir: {gamma['direction']} — Expected Move: {gamma['expected_move_points']} pts")
+                st.toast(f"🚨 High Spike Prob: {gamma['expiry_spike_score']}%")
+                send_telegram_message(f"Alert {symbol_selection}: Score {gamma['expiry_spike_score']}% — {gamma['direction']}")
+        
         time.sleep(refresh_secs)
         cycle += 1
-        st.experimental_rerun()
+        st.rerun()
 
 # Footer notes
 st.markdown("---")
-st.caption("App uses Dhan API option chain structure — you may need to edit fetch_option_chain_dhan() to match exact Dhan response schema. Adjust thresholds to your taste.")
-
+st.caption("App uses Dhan API v2 option chain structure.")
