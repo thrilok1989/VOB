@@ -32,8 +32,8 @@ def get_ist_time_string():
     return get_ist_time().strftime("%Y-%m-%d %H:%M:%S")
 
 def is_expiry_day():
-    """Check if today is expiry day (Thursday)"""
-    return get_ist_time().weekday() == 3  # Thursday = 3
+    """Check if today is expiry day (Tuesday)"""
+    return get_ist_time().weekday() == 1  # Tuesday = 1
 
 def is_after_1245():
     """Check if current time is after 12:45 PM IST"""
@@ -457,7 +457,7 @@ st.markdown("---")
 market_status = "🟢 MARKET OPEN" if is_market_hours() else "🔴 MARKET CLOSED"
 st.sidebar.markdown(f"**{market_status}**")
 
-# Expiry day status
+# Expiry day status - UPDATED TO TUESDAY
 expiry_status = "📅 EXPIRY DAY" if is_expiry_day() else "📅 REGULAR DAY"
 st.sidebar.markdown(f"**{expiry_status}**")
 
@@ -518,7 +518,7 @@ def run_spike_analysis():
 
 if run_live or st.session_state.fetch_now:
     
-    # Check if we should run spike detection
+    # Check if we should run spike detection - UPDATED TO TUESDAY
     should_run_spike_detection = (
         is_expiry_day() and 
         is_after_1245() and 
@@ -527,7 +527,7 @@ if run_live or st.session_state.fetch_now:
     
     if run_live and not should_run_spike_detection:
         if not is_expiry_day():
-            st.info("📅 Spike detection active on expiry days (Thursdays) only")
+            st.info("📅 Spike detection active on expiry days (Tuesdays) only")  # UPDATED MESSAGE
         elif not is_after_1245():
             st.info("⏰ Spike detection activates after 12:45 PM IST")
         else:
@@ -644,7 +644,7 @@ st.markdown("""
    - Clear direction prediction
 
 ✅ **Auto Operation:**
-   - Runs only on expiry days (Thursdays)
+   - Runs only on expiry days (Tuesdays)  <!-- UPDATED -->
    - Active after 12:45 PM IST
    - Continuous monitoring every 30 seconds
 
