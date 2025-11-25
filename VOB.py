@@ -64,6 +64,17 @@ st.markdown("""
         background: linear-gradient(135deg, #e2e3e5, #d6d8db);
         border: 2px solid #6c757d;
     }
+    .dataframe {
+        width: 100%;
+    }
+    .dataframe thead th {
+        background-color: #1f77b4;
+        color: white;
+        font-weight: bold;
+    }
+    .dataframe tbody tr:nth-child(even) {
+        background-color: #f8f9fa;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -374,43 +385,13 @@ def show_welcome_message():
     st.markdown("""
     ## 📊 Welcome to Technical Bias Analysis Pro!
     
-    This advanced tool analyzes **13 technical indicators** across 3 categories to determine market bias:
-    
-    ### ⚡ Fast Indicators (8)
-    - **Volume Delta** - Up vs Down volume pressure
-    - **HVP** - High Volume Pivots (Support/Resistance)
-    - **VOB** - Volume Order Blocks 
-    - **Order Blocks** - EMA crossover signals
-    - **RSI** - Relative Strength Index momentum
-    - **DMI** - Directional Movement Index trend
-    - **VIDYA** - Variable Index Dynamic Average
-    - **MFI** - Money Flow Index volume
-    
-    ### 📊 Medium Indicators (2)  
-    - **Close vs VWAP** - Price position analysis
-    - **Price vs VWAP** - Trend relationship
-    
-    ### 🐢 Slow Indicators (3)
-    - **Market Breadth** - Overall stock performance
-    
-    ### 🎯 Adaptive Weighting System
-    - **Normal Mode**: Fast(2x), Medium(3x), Slow(5x) - Trending markets
-    - **Reversal Mode**: Fast(5x), Medium(3x), Slow(2x) - Reversal signals
+    This advanced tool analyzes **13 technical indicators** across 3 categories to determine market bias.
     
     **Click the 'Analyze Technical Bias' button in the sidebar to get started!**
     """)
-    
-    # Quick stats
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Indicators", "13")
-    with col2:
-        st.metric("Categories", "3")
-    with col3:
-        st.metric("Analysis Speed", "Real-time")
 
 def display_results(results):
-    """Display the analysis results"""
+    """Display the analysis results with tabulated bias indicators"""
     
     # Overall Bias Header
     bias_class = f"overall-{results['overall_bias'].lower()}"
@@ -472,26 +453,59 @@ def display_results(results):
     
     st.divider()
     
-    # Detailed Indicators
-    st.subheader("🔍 Detailed Indicator Analysis")
+    # TABULATED BIAS INDICATORS
+    st.subheader("📋 All Bias Indicators - Tabulated View")
     
-    # Create tabs for different categories
-    tab1, tab2, tab3 = st.tabs(["⚡ Fast Indicators (8)", "📊 Medium Indicators (2)", "🐢 Slow Indicators (3)"])
+    # Convert bias results to DataFrame
+    bias_df = pd.DataFrame(results['bias_results'])
     
-    with tab1:
-        fast_indicators = [r for r in results['bias_results'] if r['category'] == 'fast']
-        for indicator in fast_indicators:
-            display_indicator_card(indicator)
+    # Add emojis for better visualization
+    bias_df['Bias_Emoji'] = bias_df['bias'].apply(
+        lambda x: "🟢" if x == "BULLISH" else "🔴" if x == "BEARISH" else "⚪"
+    )
     
-    with tab2:
-        medium_indicators = [r for r in results['bias_results'] if r['category'] == 'medium']
-        for indicator in medium_indicators:
-            display_indicator_card(indicator)
+    # Reorder columns for better display
+    bias_df = bias_df[['indicator', 'value', 'Bias_Emoji', 'bias', 'score', 'category']]
     
-    with tab3:
-        slow_indicators = [r for r in results['bias_results'] if r['category'] == 'slow']
-        for indicator in slow_indicators:
-            display_indicator_card(indicator)
+    # Rename columns for better display
+    bias_df.columns = ['Indicator', 'Value', 'Signal', 'Bias', 'Score', 'Category']
+    
+    # Display the table with styling
+    st.dataframe(
+        bias_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Indicator": st.column_config.TextColumn("Indicator", width="medium"),
+            "Value": st.column_config.TextColumn("Value", width="medium"),
+            "Signal": st.column_config.TextColumn("Signal", width="small"),
+            "Bias": st.column_config.TextColumn("Bias", width="small"),
+            "Score": st.column_config.NumberColumn("Score", width="small"),
+            "Category": st.column_config.TextColumn("Category", width="small")
+        }
+    )
+    
+    st.divider()
+    
+    # Category-wise Summary Tables
+    st.subheader("📊 Category-wise Summary")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("#### ⚡ Fast Indicators (8)")
+        fast_df = bias_df[bias_df['Category'] == 'fast'].drop('Category', axis=1)
+        st.dataframe(fast_df, use_container_width=True, hide_index=True)
+    
+    with col2:
+        st.markdown("#### 📊 Medium Indicators (2)")
+        medium_df = bias_df[bias_df['Category'] == 'medium'].drop('Category', axis=1)
+        st.dataframe(medium_df, use_container_width=True, hide_index=True)
+    
+    with col3:
+        st.markdown("#### 🐢 Slow Indicators (3)")
+        slow_df = bias_df[bias_df['Category'] == 'slow'].drop('Category', axis=1)
+        st.dataframe(slow_df, use_container_width=True, hide_index=True)
     
     st.divider()
     
@@ -505,46 +519,23 @@ def display_results(results):
         st.divider()
         st.subheader("🏢 Market Breadth Analysis")
         
-        bullish_stocks = [s for s in results['stock_data'] if s['is_bullish']]
-        bearish_stocks = [s for s in results['stock_data'] if not s['is_bullish']]
+        # Convert stock data to DataFrame for tabulated display
+        stock_df = pd.DataFrame(results['stock_data'])
+        stock_df['Signal'] = stock_df['is_bullish'].apply(lambda x: "🟢" if x else "🔴")
+        stock_df['Status'] = stock_df['is_bullish'].apply(lambda x: "Bullish" if x else "Bearish")
+        stock_df = stock_df[['symbol', 'change_pct', 'Signal', 'Status']]
+        stock_df.columns = ['Stock', 'Change %', 'Signal', 'Status']
         
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([2, 1])
         
         with col1:
-            st.metric("Bullish Stocks", f"{len(bullish_stocks)}/{len(results['stock_data'])}")
-            if bullish_stocks:
-                st.write("**Top Gainers:**")
-                for stock in sorted(bullish_stocks, key=lambda x: x['change_pct'], reverse=True)[:3]:
-                    st.write(f"🟢 {stock['symbol']}: {stock['change_pct']:+.2f}%")
+            st.dataframe(stock_df, use_container_width=True, hide_index=True)
         
         with col2:
-            st.metric("Bearish Stocks", f"{len(bearish_stocks)}/{len(results['stock_data'])}")
-            if bearish_stocks:
-                st.write("**Top Losers:**")
-                for stock in sorted(bearish_stocks, key=lambda x: x['change_pct'])[:3]:
-                    st.write(f"🔴 {stock['symbol']}: {stock['change_pct']:+.2f}%")
-
-def display_indicator_card(indicator):
-    """Display individual indicator card"""
-    bias_class = indicator['bias'].lower()
-    bias_emoji = "🟢" if indicator['bias'] == "BULLISH" else "🔴" if indicator['bias'] == "BEARISH" else "⚪"
-    
-    st.markdown(f"""
-    <div class="bias-card {bias_class}">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div style="flex: 2;">
-                <strong>{indicator['indicator']}</strong>
-                <br>
-                <small style="color: #666;">Value: {indicator['value']}</small>
-            </div>
-            <div style="flex: 1; text-align: right;">
-                {bias_emoji} <strong>{indicator['bias']}</strong>
-                <br>
-                <small>Score: {indicator['score']:.0f}</small>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+            bullish_stocks = len([s for s in results['stock_data'] if s['is_bullish']])
+            total_stocks = len(results['stock_data'])
+            st.metric("Bullish Stocks", f"{bullish_stocks}/{total_stocks}")
+            st.metric("Market Breadth", f"{(bullish_stocks/total_stocks)*100:.1f}%")
 
 def generate_trading_recommendation(results):
     """Generate trading recommendation based on analysis"""
