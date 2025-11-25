@@ -3,9 +3,10 @@ import pandas as pd
 import numpy as np
 import requests
 import time
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import pytz
 
 st.set_page_config(page_title="Expiry Spike Detector", layout="wide")
 
@@ -16,6 +17,19 @@ CLIENT_ID = st.secrets.get("dhanauth", {}).get("CLIENT_ID")
 ACCESS_TOKEN = st.secrets.get("dhanauth", {}).get("ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = st.secrets.get("telegram", {}).get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = st.secrets.get("telegram", {}).get("TELEGRAM_CHAT_ID")
+
+# ---------------------------
+# IST TIMEZONE SETUP
+# ---------------------------
+ist = pytz.timezone('Asia/Kolkata')
+
+def get_ist_time():
+    """Get current time in IST"""
+    return datetime.now(ist)
+
+def get_ist_time_string():
+    """Get current IST time as string"""
+    return get_ist_time().strftime("%Y-%m-%d %H:%M:%S")
 
 # ---------------------------
 # UI - Sidebar
@@ -30,12 +44,12 @@ INDEX_MAP = {
 }
 
 symbol_selection = st.sidebar.selectbox("Symbol", list(INDEX_MAP.keys()), index=0)
-expiry = st.sidebar.text_input("Expiry Date (YYYY-MM-DD)", value=datetime.now().strftime("%Y-%m-%d"))
+expiry = st.sidebar.text_input("Expiry Date (YYYY-MM-DD)", value=get_ist_time().strftime("%Y-%m-%d"))
 refresh_secs = st.sidebar.slider("Refresh interval (seconds)", min_value=30, max_value=300, value=60)
 run_live = st.sidebar.checkbox("🚀 AUTO-RUN & AUTO-REFRESH", value=True)
 show_raw = st.sidebar.checkbox("Show raw option chain", value=False)
 show_charts = st.sidebar.checkbox("Show analysis charts", value=True)
-threshold_alert = st.sidebar.slider("Alert threshold (score >= )", 10, 100, 70)
+threshold_alert = st.sidebar.slider("Alert threshold (score ≥ )", 10, 100, 70)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Streamlit Secrets needed:**")
@@ -58,7 +72,7 @@ if 'consecutive_signals' not in st.session_state:
     st.session_state.consecutive_signals = 0
 
 # ---------------------------
-# GAMMA SEQUENCE ENGINE
+# GAMMA SEQUENCE ENGINE - FIXED
 # ---------------------------
 
 def gamma_sequence_engine(option_chain):
@@ -66,7 +80,8 @@ def gamma_sequence_engine(option_chain):
     Gamma Sequence - Volatility Shock Detection Model
     Detects when market is about to explode with sudden moves
     """
-    if not option_chain or len(option_chain) == 0:
+    # FIX: Proper DataFrame empty check
+    if option_chain is None or (hasattr(option_chain, 'empty') and option_chain.empty):
         return None
     
     try:
@@ -76,12 +91,21 @@ def gamma_sequence_engine(option_chain):
         else:
             chain_list = option_chain
             
-        strikes = np.array([x["strike"] for x in chain_list])
+        # FIX: Check if we have valid data
+        if not chain_list or len(chain_list) == 0:
+            return None
+            
+        strikes = np.array([x.get("strike", 0) for x in chain_list])
         avg_strike = np.mean(strikes)
         atm_index = np.argmin(abs(strikes - avg_strike))
+        
+        # FIX: Check if index is valid
+        if atm_index >= len(chain_list):
+            return None
+            
         atm = chain_list[atm_index]
         
-        # Extract gamma values
+        # Extract gamma values with safe defaults
         ce_gammas = np.array([x.get("ce_gamma", 0) for x in chain_list])
         pe_gammas = np.array([x.get("pe_gamma", 0) for x in chain_list])
         
@@ -140,7 +164,7 @@ def gamma_sequence_engine(option_chain):
         return None
 
 # ---------------------------
-# REVERSAL PROBABILITY ENGINE
+# REVERSAL PROBABILITY ENGINE - FIXED
 # ---------------------------
 
 def reversal_probability_engine(option_chain, spot_price):
@@ -148,13 +172,18 @@ def reversal_probability_engine(option_chain, spot_price):
     Reversal Probability Zone Detection
     Identifies potential trend reversal points
     """
-    if option_chain is None or len(option_chain) == 0:
+    # FIX: Proper DataFrame empty check
+    if option_chain is None or (hasattr(option_chain, 'empty') and option_chain.empty):
         return None
         
     try:
         # Find key strikes
         strikes = option_chain['strike'].values
         atm_idx = int(np.argmin(np.abs(strikes - spot_price)))
+        
+        # FIX: Check if index is valid
+        if atm_idx >= len(option_chain):
+            return None
         
         # Analyze OI concentrations
         max_ce_oi = option_chain['ce_oi'].max()
@@ -291,6 +320,13 @@ def send_telegram_message(msg: str):
     except Exception:
         return False
 
+def is_market_hours():
+    """Check if current time is within IST market hours"""
+    now_ist = get_ist_time().time()
+    market_open = dtime(9, 15)  # 9:15 AM IST
+    market_close = dtime(15, 30)  # 3:30 PM IST
+    return market_open <= now_ist <= market_close
+
 def is_clear_signal(master_bias, threshold):
     """Determine if we have a clear trading signal"""
     if not master_bias:
@@ -303,8 +339,8 @@ def is_clear_signal(master_bias, threshold):
     conditions = [
         score >= threshold,
         "NEUTRAL" not in direction,
-        master_bias['components']['gamma_sequence'].get('gamma_score', 0) >= 60,
-        master_bias['components']['expiry_spike'].get('expiry_spike_score', 0) >= 50
+        master_bias['components']['gamma_sequence'] and master_bias['components']['gamma_sequence'].get('gamma_score', 0) >= 60,
+        master_bias['components']['expiry_spike'] and master_bias['components']['expiry_spike'].get('expiry_spike_score', 0) >= 50
     ]
     
     return all(conditions)
@@ -314,7 +350,7 @@ def check_and_send_alert(master_bias, threshold, symbol):
     if not master_bias:
         return False
     
-    current_time = datetime.now()
+    current_time = get_ist_time()
     
     # Rate limiting: Don't send alerts more than once every 5 minutes
     if st.session_state.last_alert_time:
@@ -335,16 +371,16 @@ def check_and_send_alert(master_bias, threshold, symbol):
         direction = master_bias['overall_direction']
         emoji = master_bias['direction_emoji']
         
-        gamma = master_bias['components']['gamma_sequence']
-        reversal = master_bias['components']['reversal_probability']
-        expiry = master_bias['components']['expiry_spike']
+        gamma = master_bias['components']['gamma_sequence'] or {}
+        reversal = master_bias['components']['reversal_probability'] or {}
+        expiry = master_bias['components']['expiry_spike'] or {}
         
         message = f"""🚨 **CLEAR TRADING SIGNAL DETECTED** 🚨
 
 📊 **Symbol:** {symbol}
 🎯 **Master Bias Score:** {score}
 📈 **Direction:** {emoji} {direction}
-⏰ **Time:** {current_time.strftime('%H:%M:%S')}
+⏰ **Time:** {current_time.strftime('%H:%M:%S IST')}
 
 🔥 **Gamma Sequence**
    - Score: {gamma.get('gamma_score', 0)}/100
@@ -377,11 +413,6 @@ def check_and_send_alert(master_bias, threshold, symbol):
 # ---------------------------
 # HELPER FUNCTIONS
 # ---------------------------
-
-def is_market_hours():
-    """Check if current time is within market hours"""
-    now = datetime.now().time()
-    return (dtime(9, 15) <= now <= dtime(15, 30))
 
 def fetch_option_chain_dhan(symbol_key: str, expiry_date: str):
     """Fetch option chain using Dhan API V2"""
@@ -484,54 +515,61 @@ def normalize_option_chain(raw):
 
 def gamma_sequence_expiry(option_df: pd.DataFrame, spot_price: float):
     """Original expiry spike detection"""
-    if option_df is None or option_df.empty:
+    # FIX: Proper DataFrame empty check
+    if option_df is None or (hasattr(option_df, 'empty') and option_df.empty):
         return None
         
-    strikes = option_df['strike'].values
-    atm_idx = int(np.argmin(np.abs(strikes - spot_price)))
-    if atm_idx >= len(option_df):
-        return None
+    try:
+        strikes = option_df['strike'].values
+        atm_idx = int(np.argmin(np.abs(strikes - spot_price)))
         
-    atm = option_df.iloc[atm_idx]
+        # FIX: Check if index is valid
+        if atm_idx >= len(option_df):
+            return None
+            
+        atm = option_df.iloc[atm_idx]
 
-    ce_gamma = float(atm.get('ce_gamma', 0))
-    pe_gamma = float(atm.get('pe_gamma', 0))
-    ce_oi_chg = float(atm.get('ce_oi_change', 0))
-    pe_oi_chg = float(atm.get('pe_oi_change', 0))
-    
-    # Logic Factors
-    gamma_pressure = (abs(ce_gamma) + abs(pe_gamma)) * 10000
-    hedge_imbalance = abs(ce_oi_chg - pe_oi_chg)
-    
-    gamma_flip = (ce_oi_chg < 0 and pe_oi_chg < 0)
-    
-    straddle_price = atm['ce_ltp'] + atm['pe_ltp']
-    compression = (straddle_price / spot_price) < 0.005 if spot_price > 0 else False
+        ce_gamma = float(atm.get('ce_gamma', 0))
+        pe_gamma = float(atm.get('pe_gamma', 0))
+        ce_oi_chg = float(atm.get('ce_oi_change', 0))
+        pe_oi_chg = float(atm.get('pe_oi_change', 0))
+        
+        # Logic Factors
+        gamma_pressure = (abs(ce_gamma) + abs(pe_gamma)) * 10000
+        hedge_imbalance = abs(ce_oi_chg - pe_oi_chg)
+        
+        gamma_flip = (ce_oi_chg < 0 and pe_oi_chg < 0)
+        
+        straddle_price = atm['ce_ltp'] + atm['pe_ltp']
+        compression = (straddle_price / spot_price) < 0.005 if spot_price > 0 else False
 
-    score = 0
-    if gamma_pressure > 60: score += 20
-    if hedge_imbalance > 50000: score += 20
-    if compression: score += 25
-    if gamma_flip: score += 30
+        score = 0
+        if gamma_pressure > 60: score += 20
+        if hedge_imbalance > 50000: score += 20
+        if compression: score += 25
+        if gamma_flip: score += 30
 
-    direction = 'NEUTRAL'
-    if ce_oi_chg < pe_oi_chg:
-        direction = 'UP'
-    elif ce_oi_chg > pe_oi_chg:
-        direction = 'DOWN'
+        direction = 'NEUTRAL'
+        if ce_oi_chg < pe_oi_chg:
+            direction = 'UP'
+        elif ce_oi_chg > pe_oi_chg:
+            direction = 'DOWN'
 
-    return {
-        'gamma_pressure': round(gamma_pressure, 2),
-        'hedge_imbalance': round(hedge_imbalance, 2),
-        'straddle_compression': compression,
-        'gamma_flip': gamma_flip,
-        'expiry_spike_score': min(int(score), 100),
-        'direction': direction,
-        'direction_strength': round(abs(ce_oi_chg - pe_oi_chg) / max(1, (abs(ce_oi_chg) + abs(pe_oi_chg))) * 100, 1),
-        'atm_strike': int(atm['strike']),
-        'straddle_price': round(straddle_price, 2),
-        'timestamp': datetime.now()
-    }
+        return {
+            'gamma_pressure': round(gamma_pressure, 2),
+            'hedge_imbalance': round(hedge_imbalance, 2),
+            'straddle_compression': compression,
+            'gamma_flip': gamma_flip,
+            'expiry_spike_score': min(int(score), 100),
+            'direction': direction,
+            'direction_strength': round(abs(ce_oi_chg - pe_oi_chg) / max(1, (abs(ce_oi_chg) + abs(pe_oi_chg))) * 100, 1),
+            'atm_strike': int(atm['strike']),
+            'straddle_price': round(straddle_price, 2),
+            'timestamp': get_ist_time()
+        }
+    except Exception as e:
+        st.error(f"Expiry Spike Error: {e}")
+        return None
 
 # ---------------------------
 # TABULATED DISPLAY FUNCTIONS
@@ -553,66 +591,21 @@ def create_master_bias_table(master_bias):
         ],
         "Score": [
             f"{master_bias['master_bias_score']} | {master_bias['direction_emoji']}",
-            f"{components['gamma_sequence'].get('gamma_score', 0)}/100",
-            f"{components['reversal_probability'].get('reversal_score', 0)}/100", 
-            f"{components['expiry_spike'].get('expiry_spike_score', 0)}/100"
+            f"{components['gamma_sequence'].get('gamma_score', 0) if components['gamma_sequence'] else 'N/A'}/100",
+            f"{components['reversal_probability'].get('reversal_score', 0) if components['reversal_probability'] else 'N/A'}/100", 
+            f"{components['expiry_spike'].get('expiry_spike_score', 0) if components['expiry_spike'] else 'N/A'}/100"
         ],
         "Direction": [
             master_bias['overall_direction'],
-            components['gamma_sequence'].get('direction', 'N/A').upper(),
-            components['reversal_probability'].get('bias', 'N/A'),
-            components['expiry_spike'].get('direction', 'N/A')
+            components['gamma_sequence'].get('direction', 'N/A').upper() if components['gamma_sequence'] else 'N/A',
+            components['reversal_probability'].get('bias', 'N/A') if components['reversal_probability'] else 'N/A',
+            components['expiry_spike'].get('direction', 'N/A') if components['expiry_spike'] else 'N/A'
         ],
         "Key Metric": [
-            f"Volatility: {components['gamma_sequence'].get('volatility_warning', 'N/A').upper()}",
-            f"Flip: {components['gamma_sequence'].get('gamma_flip', False)}",
-            f"Call Wall: {components['reversal_probability'].get('call_wall', 'N/A')}",
-            f"Pressure: {components['expiry_spike'].get('gamma_pressure', 0)}"
-        ]
-    }
-    
-    df = pd.DataFrame(data)
-    return df
-
-def create_detailed_metrics_table(master_bias):
-    """Create detailed metrics breakdown"""
-    if not master_bias:
-        return None
-        
-    gamma = master_bias['components']['gamma_sequence']
-    reversal = master_bias['components']['reversal_probability']
-    expiry = master_bias['components']['expiry_spike']
-    
-    data = {
-        "Parameter": [
-            "Expected Move (Points)",
-            "Gamma Spread", 
-            "CE Gamma Flow",
-            "PE Gamma Flow",
-            "Call Wall Strength",
-            "Put Wall Strength",
-            "Hedge Imbalance",
-            "Straddle Compression"
-        ],
-        "Value": [
-            f"{gamma.get('expected_move', 0)} pts",
-            f"{gamma.get('gamma_spread', 0):.4f}",
-            f"{gamma.get('ce_gamma_flow', 0):.0f}",
-            f"{gamma.get('pe_gamma_flow', 0):.0f}",
-            f"{reversal.get('call_wall_strength', 0)}%",
-            f"{reversal.get('put_wall_strength', 0)}%", 
-            f"{expiry.get('hedge_imbalance', 0):,.0f}",
-            f"{'YES' if expiry.get('straddle_compression') else 'NO'}"
-        ],
-        "Interpretation": [
-            "Potential price movement",
-            "Volatility expansion level",
-            "Call side hedging pressure", 
-            "Put side hedging pressure",
-            "Resistance strength",
-            "Support strength",
-            "Positioning imbalance",
-            "ATM options cheapness"
+            f"Volatility: {components['gamma_sequence'].get('volatility_warning', 'N/A').upper() if components['gamma_sequence'] else 'N/A'}",
+            f"Flip: {components['gamma_sequence'].get('gamma_flip', False) if components['gamma_sequence'] else 'N/A'}",
+            f"Call Wall: {components['reversal_probability'].get('call_wall', 'N/A') if components['reversal_probability'] else 'N/A'}",
+            f"Pressure: {components['expiry_spike'].get('gamma_pressure', 0) if components['expiry_spike'] else 'N/A'}"
         ]
     }
     
@@ -626,13 +619,13 @@ def create_detailed_metrics_table(master_bias):
 st.title("🚀 Auto-Run Master Bias Engine — 1 Minute Refresh")
 st.markdown("---")
 
-# Market status
+# Market status with IST
 market_status = "🟢 MARKET OPEN" if is_market_hours() else "🔴 MARKET CLOSED"
 st.sidebar.markdown(f"**{market_status}**")
 
-# Display current time
-current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-st.sidebar.markdown(f"**Last Update:** {current_time}")
+# Display current IST time
+current_ist_time = get_ist_time_string()
+st.sidebar.markdown(f"**Last Update:** {current_ist_time} IST")
 
 # Auto-run status
 if run_live:
@@ -678,7 +671,7 @@ if run_live or st.session_state.fetch_now:
     
     # Market hours check
     if run_live and not is_market_hours():
-        st.warning("⏸️ Market is closed. Auto-refresh paused until market hours.")
+        st.warning("⏸️ Market is closed. Auto-refresh paused until market hours (9:15 AM - 3:30 PM IST).")
         run_live = False
     
     if run_live or st.session_state.fetch_now:
@@ -689,10 +682,10 @@ if run_live or st.session_state.fetch_now:
             
             # Store in history
             st.session_state.analysis_history.append({
-                'timestamp': datetime.now(),
+                'timestamp': get_ist_time(),
                 'master_score': master_bias['master_bias_score'],
                 'direction': master_bias['overall_direction'],
-                'gamma_score': master_bias['components']['gamma_sequence'].get('gamma_score', 0)
+                'gamma_score': master_bias['components']['gamma_sequence'].get('gamma_score', 0) if master_bias['components']['gamma_sequence'] else 0
             })
             st.session_state.analysis_history = st.session_state.analysis_history[-50:]
             
@@ -712,7 +705,7 @@ if run_live or st.session_state.fetch_now:
             )
             
             col2.metric("Direction", f"{master_bias['direction_emoji']} {master_bias['overall_direction']}")
-            col3.metric("Gamma Score", f"{master_bias['components']['gamma_sequence'].get('gamma_score', 0)}/100")
+            col3.metric("Gamma Score", f"{master_bias['components']['gamma_sequence'].get('gamma_score', 0) if master_bias['components']['gamma_sequence'] else 0}/100")
             col4.metric("Spot Price", f"{spot_price:.2f}")
             
             # Alert Status
@@ -729,16 +722,6 @@ if run_live or st.session_state.fetch_now:
             master_table = create_master_bias_table(master_bias)
             if master_table is not None:
                 st.dataframe(master_table, use_container_width=True, hide_index=True)
-            
-            # Detailed Metrics
-            with st.expander("🔍 DETAILED METRICS BREAKDOWN", expanded=True):
-                detailed_table = create_detailed_metrics_table(master_bias)
-                if detailed_table is not None:
-                    st.dataframe(detailed_table, use_container_width=True, hide_index=True)
-                
-                # Raw JSON for debugging
-                if show_raw:
-                    st.json(master_bias)
             
             # Raw data
             if show_raw and df is not None:
@@ -779,6 +762,7 @@ st.markdown("""
 - 📊 Continuous monitoring every 1 minute
 - 📡 Smart Telegram alerts for clear signals  
 - 🔍 2-step signal confirmation to avoid false alarms
-- ⏰ Market hours detection
+- ⏰ IST Market hours detection (9:15 AM - 3:30 PM)
 - 🎯 Multi-engine bias analysis
+- 🕐 All times in IST (India Standard Time)
 """)
