@@ -86,26 +86,26 @@ if 'previous_data' not in st.session_state:
 
 def detect_oi_unwind(oi_now, oi_prev, threshold=80000):
     """Condition 1: Sudden OI Drop (The strongest signal)"""
-    if oi_prev == 0:
+    if oi_prev is None or oi_prev == 0:
         return False, 0
     drop = oi_prev - oi_now
     return drop >= threshold, drop
 
 def detect_volume_spike(cur_vol, prev_vol, multiplier=1.8):
     """Condition 2: ATM Volume Explosion"""
-    if prev_vol == 0:
+    if prev_vol is None or prev_vol == 0:
         return False
     return cur_vol >= prev_vol * multiplier
 
 def detect_vwap_reclaim(price_prev, price_now, vwap):
     """Condition 3: VWAP Reclaim"""
-    if vwap == 0:
+    if vwap == 0 or price_prev is None:
         return False
     return price_prev < vwap and price_now > vwap
 
 def detect_iv_crush(iv_now, iv_prev, percent=5):
     """Condition 4: IV Crush"""
-    if iv_prev == 0:
+    if iv_prev is None or iv_prev == 0:
         return False
     drop = ((iv_prev - iv_now) / iv_prev) * 100
     return drop >= percent
@@ -119,16 +119,29 @@ def calculate_spike_probability(current_data, previous_data, spot_price):
     Main Expiry Spike Detection Function
     Returns: spike_probability (0-100%), direction, signal_details
     """
+    # Default empty signal details
+    default_signal_details = {
+        'oi_signal': False,
+        'volume_signal': False,
+        'vwap_signal': False,
+        'iv_crush_signal': False,
+        'liquidity_signal': False,
+        'ce_oi_drop': 0,
+        'pe_oi_drop': 0,
+        'ce_volume_change': 0,
+        'pe_volume_change': 0
+    }
+    
     if previous_data is None:
-        return 0, "NEUTRAL", {}
+        return 0, "NEUTRAL", default_signal_details
     
     try:
         # Get ATM strike data
         strikes = current_data['strike'].values
         atm_idx = int(np.argmin(np.abs(strikes - spot_price)))
         
-        if atm_idx >= len(current_data):
-            return 0, "NEUTRAL", {}
+        if atm_idx >= len(current_data) or atm_idx >= len(previous_data):
+            return 0, "NEUTRAL", default_signal_details
         
         current_atm = current_data.iloc[atm_idx]
         previous_atm = previous_data.iloc[atm_idx]
@@ -158,9 +171,9 @@ def calculate_spike_probability(current_data, previous_data, spot_price):
         # Condition 3: VWAP Reclaim (using spot price movement)
         # For simplicity, using 5-period average as VWAP proxy
         vwap_signal = detect_vwap_reclaim(
-            previous_data['ce_ltp'].mean(),  # Proxy for previous price
-            current_data['ce_ltp'].mean(),   # Proxy for current price  
-            spot_price                       # Using spot as VWAP proxy
+            previous_data['ce_ltp'].mean() if len(previous_data) > 0 else 0,
+            current_data['ce_ltp'].mean() if len(current_data) > 0 else 0, 
+            spot_price
         )
         
         # Condition 4: IV Crush
@@ -176,8 +189,8 @@ def calculate_spike_probability(current_data, previous_data, spot_price):
         
         # Condition 5: Liquidity Breakout
         # Using recent high/low as liquidity zones
-        recent_high = current_data['strike'].max()
-        recent_low = current_data['strike'].min()
+        recent_high = current_data['strike'].max() if len(current_data) > 0 else spot_price * 1.02
+        recent_low = current_data['strike'].min() if len(current_data) > 0 else spot_price * 0.98
         liquidity_signal = detect_liquidity_break(spot_price, recent_high, recent_low)
         
         # Combine signals into spike probability
@@ -215,7 +228,7 @@ def calculate_spike_probability(current_data, previous_data, spot_price):
         
     except Exception as e:
         st.error(f"Spike Detection Error: {e}")
-        return 0, "NEUTRAL", {}
+        return 0, "NEUTRAL", default_signal_details
 
 # ---------------------------
 # TELEGRAM ALERT SYSTEM
@@ -390,6 +403,50 @@ def is_market_hours():
     return market_open <= now_ist <= market_close
 
 # ---------------------------
+# DISPLAY FUNCTIONS
+# ---------------------------
+
+def create_signal_table(signal_details):
+    """Create table showing signal breakdown"""
+    # Safely get signal values with defaults
+    oi_signal = signal_details.get('oi_signal', False)
+    volume_signal = signal_details.get('volume_signal', False)
+    vwap_signal = signal_details.get('vwap_signal', False)
+    iv_crush_signal = signal_details.get('iv_crush_signal', False)
+    liquidity_signal = signal_details.get('liquidity_signal', False)
+    ce_oi_drop = signal_details.get('ce_oi_drop', 0)
+    pe_oi_drop = signal_details.get('pe_oi_drop', 0)
+    ce_volume_change = signal_details.get('ce_volume_change', 0)
+    pe_volume_change = signal_details.get('pe_volume_change', 0)
+    
+    data = {
+        "Signal": [
+            "OI Unwind",
+            "Volume Spike", 
+            "VWAP Reclaim",
+            "IV Crush",
+            "Liquidity Break"
+        ],
+        "Status": [
+            "✅ TRIGGERED" if oi_signal else "❌ INACTIVE",
+            "✅ TRIGGERED" if volume_signal else "❌ INACTIVE",
+            "✅ TRIGGERED" if vwap_signal else "❌ INACTIVE", 
+            "✅ TRIGGERED" if iv_crush_signal else "❌ INACTIVE",
+            "✅ TRIGGERED" if liquidity_signal else "❌ INACTIVE"
+        ],
+        "Details": [
+            f"CE: {ce_oi_drop:,.0f} | PE: {pe_oi_drop:,.0f}",
+            f"CE: {ce_volume_change:+.0f} | PE: {pe_volume_change:+.0f}",
+            "Price above VWAP" if vwap_signal else "Below VWAP",
+            "IV dropping rapidly" if iv_crush_signal else "IV stable", 
+            "Breaking key levels" if liquidity_signal else "Within range"
+        ]
+    }
+    
+    df = pd.DataFrame(data)
+    return df
+
+# ---------------------------
 # MAIN EXPIRY SPIKE DETECTOR UI
 # ---------------------------
 
@@ -456,39 +513,6 @@ def run_spike_analysis():
     }
 
 # ---------------------------
-# DISPLAY FUNCTIONS
-# ---------------------------
-
-def create_signal_table(signal_details):
-    """Create table showing signal breakdown"""
-    data = {
-        "Signal": [
-            "OI Unwind",
-            "Volume Spike", 
-            "VWAP Reclaim",
-            "IV Crush",
-            "Liquidity Break"
-        ],
-        "Status": [
-            "✅ TRIGGERED" if signal_details['oi_signal'] else "❌ INACTIVE",
-            "✅ TRIGGERED" if signal_details['volume_signal'] else "❌ INACTIVE",
-            "✅ TRIGGERED" if signal_details['vwap_signal'] else "❌ INACTIVE", 
-            "✅ TRIGGERED" if signal_details['iv_crush_signal'] else "❌ INACTIVE",
-            "✅ TRIGGERED" if signal_details['liquidity_signal'] else "❌ INACTIVE"
-        ],
-        "Details": [
-            f"CE: {signal_details['ce_oi_drop']:,.0f} | PE: {signal_details['pe_oi_drop']:,.0f}",
-            f"CE: {signal_details['ce_volume_change']:+.0f} | PE: {signal_details['pe_volume_change']:+.0f}",
-            "Price above VWAP",
-            "IV dropping rapidly", 
-            "Breaking key levels"
-        ]
-    }
-    
-    df = pd.DataFrame(data)
-    return df
-
-# ---------------------------
 # MAIN EXECUTION LOOP
 # ---------------------------
 
@@ -535,28 +559,32 @@ if run_live or st.session_state.fetch_now:
             # Progress bar for visual impact
             st.progress(result['spike_probability'] / 100)
             
-            # Signal breakdown table
-            st.subheader("🔍 Signal Breakdown")
-            signal_table = create_signal_table(result['signal_details'])
-            st.dataframe(signal_table, use_container_width=True, hide_index=True)
-            
-            # Alert system
-            if should_run_spike_detection:
-                if check_and_send_spike_alert(
-                    result['spike_probability'], 
-                    result['direction'],
-                    symbol_selection,
-                    result['signal_details']
-                ):
-                    st.success("📢 SPIKE ALERT SENT TO TELEGRAM!")
+            # Show initial data collection message if no previous data
+            if st.session_state.previous_data is None:
+                st.info("📊 Collecting initial data for comparison... Next refresh will show spike analysis.")
+            else:
+                # Signal breakdown table
+                st.subheader("🔍 Signal Breakdown")
+                signal_table = create_signal_table(result['signal_details'])
+                st.dataframe(signal_table, use_container_width=True, hide_index=True)
                 
-                # Show alert status
-                if result['spike_probability'] >= 70:
-                    st.error("🚨 HIGH PROBABILITY SPIKE DETECTED! Expected within 5-10 minutes.")
-                elif result['spike_probability'] >= 40:
-                    st.warning("⚠️ Moderate spike probability - Monitor closely")
-                else:
-                    st.info("✅ Low spike probability - Market stable")
+                # Alert system
+                if should_run_spike_detection:
+                    if check_and_send_spike_alert(
+                        result['spike_probability'], 
+                        result['direction'],
+                        symbol_selection,
+                        result['signal_details']
+                    ):
+                        st.success("📢 SPIKE ALERT SENT TO TELEGRAM!")
+                    
+                    # Show alert status
+                    if result['spike_probability'] >= 70:
+                        st.error("🚨 HIGH PROBABILITY SPIKE DETECTED! Expected within 5-10 minutes.")
+                    elif result['spike_probability'] >= 40:
+                        st.warning("⚠️ Moderate spike probability - Monitor closely")
+                    else:
+                        st.info("✅ Low spike probability - Market stable")
             
             # Store in history
             st.session_state.analysis_history.append({
