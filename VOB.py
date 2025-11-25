@@ -1,19 +1,4 @@
-"""
-Comprehensive Technical Bias Analysis
-=====================================
-
-Analyzes 13 technical bias indicators with adaptive weighted scoring:
-- 8 Fast Indicators: Volume Delta, HVP, VOB, Order Blocks, RSI, DMI, VIDYA, MFI
-- 2 Medium Indicators: Close vs VWAP, Price vs VWAP  
-- 3 Slow Indicators: Weighted stocks (Daily, 15m, 1h)
-
-Provides:
-- Individual indicator bias signals
-- Overall market bias with confidence scoring
-- Adaptive weighting (Normal vs Reversal modes)
-- Trading recommendations
-"""
-
+import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -23,6 +8,51 @@ from typing import Dict, List, Tuple, Optional
 import pytz
 
 warnings.filterwarnings('ignore')
+
+# Set page config
+st.set_page_config(
+    page_title="Technical Bias Analysis Pro",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .bias-card {
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .bullish {
+        background-color: #d4edda;
+        border-left: 5px solid #28a745;
+    }
+    .bearish {
+        background-color: #f8d7da;
+        border-left: 5px solid #dc3545;
+    }
+    .neutral {
+        background-color: #e2e3e5;
+        border-left: 5px solid #6c757d;
+    }
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 10px;
+        text-align: center;
+        margin: 0.5rem;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 class TechnicalBiasAnalyzer:
     """
@@ -84,7 +114,7 @@ class TechnicalBiasAnalyzer:
             df = ticker.history(period=period, interval=interval)
             
             if df.empty:
-                print(f"Warning: No data for {symbol}")
+                st.warning(f"No data available for {symbol}")
                 return pd.DataFrame()
                 
             # Ensure required columns exist
@@ -95,7 +125,7 @@ class TechnicalBiasAnalyzer:
                 
             return df
         except Exception as e:
-            print(f"Error fetching {symbol}: {e}")
+            st.error(f"Error fetching data for {symbol}: {e}")
             return pd.DataFrame()
     
     # =========================================================================
@@ -419,7 +449,7 @@ class TechnicalBiasAnalyzer:
         Returns:
             Dict with comprehensive bias analysis results
         """
-        print(f"🔍 Analyzing technical bias for {symbol}...")
+        st.info(f"🔍 Analyzing technical bias for {symbol}...")
         
         # Fetch data
         df = self.fetch_data(symbol, period='7d', interval='5m')
@@ -704,140 +734,235 @@ class TechnicalBiasAnalyzer:
             'bearish_bias_pct': bearish_bias_pct
         }
 
-    def generate_trading_recommendation(self, analysis_results: Dict) -> str:
-        """Generate trading recommendation based on bias analysis"""
-        if not analysis_results.get('success'):
-            return "❌ Analysis failed - cannot generate recommendation"
-        
-        overall_bias = analysis_results['overall_bias']
-        confidence = analysis_results['overall_confidence']
-        mode = analysis_results['mode']
-        
-        recommendations = {
-            'BULLISH': {
-                'high': "🐂 STRONG BULLISH - Look for LONG entries on dips with stop loss below support",
-                'medium': "🐂 MODERATE BULLISH - Consider LONG entries with caution, use tighter stops",
-                'low': "⚠️ WEAK BULLISH - Wait for confirmation before entering LONG positions"
-            },
-            'BEARISH': {
-                'high': "🐻 STRONG BEARISH - Look for SHORT entries on rallies with stop loss above resistance", 
-                'medium': "🐻 MODERATE BEARISH - Consider SHORT entries with caution, use tighter stops",
-                'low': "⚠️ WEAK BEARISH - Wait for confirmation before entering SHORT positions"
-            },
-            'NEUTRAL': {
-                'high': "⚖️ STRONG NEUTRAL - Range-bound market, trade support/resistance levels",
-                'medium': "⚖️ MODERATE NEUTRAL - Wait for breakout/breakdown confirmation",
-                'low': "⚖️ WEAK NEUTRAL - Market indecisive, consider staying out"
-            }
-        }
-        
-        # Determine confidence level
-        if confidence >= 70:
-            conf_level = 'high'
-        elif confidence >= 50:
-            conf_level = 'medium'
-        else:
-            conf_level = 'low'
-        
-        base_recommendation = recommendations[overall_bias][conf_level]
-        
-        # Add mode-specific note
-        if mode == "REVERSAL":
-            base_recommendation += " | 🔄 REVERSAL MODE DETECTED - High risk/reward potential"
-        
-        return base_recommendation
-
-    def print_analysis_report(self, analysis_results: Dict):
-        """Print comprehensive analysis report"""
-        if not analysis_results.get('success'):
-            print(f"❌ Analysis failed: {analysis_results.get('error')}")
-            return
-        
-        print("\n" + "="*80)
-        print("🎯 COMPREHENSIVE TECHNICAL BIAS ANALYSIS REPORT")
-        print("="*80)
-        
-        # Header
-        print(f"📊 Symbol: {analysis_results['symbol']}")
-        print(f"💰 Current Price: ₹{analysis_results['current_price']:,.2f}")
-        print(f"⏰ Analysis Time: {analysis_results['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        
-        # Overall Bias
-        bias_emoji = "🐂" if analysis_results['overall_bias'] == "BULLISH" else "🐻" if analysis_results['overall_bias'] == "BEARISH" else "⚖️"
-        print(f"\n{bias_emoji} OVERALL BIAS: {analysis_results['overall_bias']}")
-        print(f"📈 Overall Score: {analysis_results['overall_score']:.1f}")
-        print(f"🎯 Confidence: {analysis_results['overall_confidence']:.1f}%")
-        print(f"🔧 Mode: {analysis_results['mode']}")
-        
-        # Signal Distribution
-        print(f"\n📊 SIGNAL DISTRIBUTION:")
-        print(f"   🟢 Bullish: {analysis_results['bullish_count']}/{analysis_results['total_indicators']}")
-        print(f"   🔴 Bearish: {analysis_results['bearish_count']}/{analysis_results['total_indicators']}") 
-        print(f"   ⚪ Neutral: {analysis_results['neutral_count']}/{analysis_results['total_indicators']}")
-        
-        # Detailed Results
-        print(f"\n📋 DETAILED INDICATOR ANALYSIS:")
-        print("-" * 80)
-        print(f"{'INDICATOR':<25} {'VALUE':<15} {'BIAS':<10} {'SCORE':<8} {'CATEGORY':<10}")
-        print("-" * 80)
-        
-        for result in analysis_results['bias_results']:
-            bias_color = "🟢" if "BULLISH" in result['bias'] else "🔴" if "BEARISH" in result['bias'] else "⚪"
-            print(f"{result['indicator']:<25} {result['value']:<15} {bias_color} {result['bias']:<7} {result['score']:>6.0f} {result['category']:<10}")
-        
-        # Category Summary
-        print(f"\n📈 CATEGORY SUMMARY:")
-        print(f"   ⚡ Fast Indicators:  {analysis_results['fast_bull_pct']:.1f}% Bull | {analysis_results['fast_bear_pct']:.1f}% Bear")
-        print(f"   🐢 Slow Indicators:  {analysis_results['slow_bull_pct']:.1f}% Bull | {analysis_results['slow_bear_pct']:.1f}% Bear")
-        print(f"   📊 Overall Weighted: {analysis_results['bullish_bias_pct']:.1f}% Bull | {analysis_results['bearish_bias_pct']:.1f}% Bear")
-        
-        # Trading Recommendation
-        recommendation = self.generate_trading_recommendation(analysis_results)
-        print(f"\n💡 TRADING RECOMMENDATION:")
-        print(f"   {recommendation}")
-        
-        # Market Breadth
-        if analysis_results['stock_data']:
-            print(f"\n🏢 MARKET BREADTH:")
-            bullish_stocks = [s for s in analysis_results['stock_data'] if s['is_bullish']]
-            bearish_stocks = [s for s in analysis_results['stock_data'] if not s['is_bullish']]
-            print(f"   🟢 Bullish Stocks: {len(bullish_stocks)}")
-            print(f"   🔴 Bearish Stocks: {len(bearish_stocks)}")
-            
-            # Top movers
-            top_gainers = sorted(analysis_results['stock_data'], key=lambda x: x['change_pct'], reverse=True)[:3]
-            top_losers = sorted(analysis_results['stock_data'], key=lambda x: x['change_pct'])[:3]
-            
-            print(f"\n📈 TOP GAINERS:")
-            for stock in top_gainers:
-                print(f"   {stock['symbol']}: {stock['change_pct']:+.2f}%")
-                
-            print(f"\n📉 TOP LOSERS:")  
-            for stock in top_losers:
-                print(f"   {stock['symbol']}: {stock['change_pct']:+.2f}%")
-        
-        print("="*80)
-
 # =============================================================================
-# USAGE EXAMPLE
+# STREAMLIT APP
 # =============================================================================
 
 def main():
-    """Example usage of the Technical Bias Analyzer"""
+    st.markdown('<h1 class="main-header">🎯 Technical Bias Analysis Pro</h1>', unsafe_allow_html=True)
+    st.markdown("### Comprehensive 13-Indicator Market Analysis")
     
-    # Initialize analyzer
-    analyzer = TechnicalBiasAnalyzer()
+    # Sidebar
+    st.sidebar.title("Settings")
+    symbol = st.sidebar.selectbox(
+        "Select Market",
+        ["^NSEI (NIFTY 50)", "^BSESN (SENSEX)", "^DJI (DOW JONES)", "AAPL", "TSLA", "MSFT"],
+        index=0
+    )
     
-    # Analyze NIFTY
-    print("Starting Technical Bias Analysis...")
-    results = analyzer.analyze_technical_bias("^NSEI")  # NIFTY 50
+    # Extract symbol code
+    symbol_code = symbol.split()[0] if ' ' in symbol else symbol
     
-    # Print comprehensive report
-    analyzer.print_analysis_report(results)
+    if st.sidebar.button("🚀 Analyze Technical Bias", type="primary"):
+        with st.spinner("Analyzing market data and calculating indicators..."):
+            analyzer = TechnicalBiasAnalyzer()
+            results = analyzer.analyze_technical_bias(symbol_code)
+            
+            if results['success']:
+                display_results(results)
+            else:
+                st.error(f"Analysis failed: {results.get('error', 'Unknown error')}")
+
+    # Display instructions when no analysis has been run
+    if 'results' not in locals():
+        st.info("""
+        ### 📊 About Technical Bias Analysis Pro
+        
+        This tool analyzes **13 technical indicators** across 3 categories to determine market bias:
+        
+        #### ⚡ Fast Indicators (8)
+        - **Volume Delta** - Up vs Down volume
+        - **HVP** - High Volume Pivots  
+        - **VOB** - Volume Order Blocks
+        - **Order Blocks** - EMA 5/18 crossover
+        - **RSI** - Relative Strength Index
+        - **DMI** - Directional Movement Index
+        - **VIDYA** - Variable Index Dynamic Average
+        - **MFI** - Money Flow Index
+        
+        #### 📊 Medium Indicators (2)
+        - **Close vs VWAP** - Price position relative to VWAP
+        - **Price vs VWAP** - Overall price relationship with VWAP
+        
+        #### 🐢 Slow Indicators (3)  
+        - **Market Breadth** - Weighted stock performance analysis
+        
+        #### 🎯 Adaptive Scoring
+        - **Normal Mode**: Fast(2x), Medium(3x), Slow(5x) weights
+        - **Reversal Mode**: Fast(5x), Medium(3x), Slow(2x) weights
+        - Automatically detects divergence for mode switching
+        
+        **Click the 'Analyze Technical Bias' button to get started!**
+        """)
+
+def display_results(results):
+    """Display the analysis results in Streamlit"""
     
-    # You can also analyze other markets
-    # results_sensex = analyzer.analyze_technical_bias("^BSESN")  # SENSEX
-    # results_dow = analyzer.analyze_technical_bias("^DJI")      # DOW JONES
+    # Header Section
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Current Price", f"₹{results['current_price']:,.2f}")
+    
+    with col2:
+        bias_emoji = "🐂" if results['overall_bias'] == "BULLISH" else "🐻" if results['overall_bias'] == "BEARISH" else "⚖️"
+        st.metric("Overall Bias", f"{bias_emoji} {results['overall_bias']}")
+    
+    with col3:
+        score_color = "green" if results['overall_score'] > 0 else "red" if results['overall_score'] < 0 else "gray"
+        st.metric("Overall Score", f"{results['overall_score']:.1f}")
+    
+    with col4:
+        confidence_color = "green" if results['overall_confidence'] > 70 else "orange" if results['overall_confidence'] > 50 else "red"
+        st.metric("Confidence", f"{results['overall_confidence']:.1f}%")
+    
+    st.divider()
+    
+    # Signal Distribution
+    st.subheader("📊 Signal Distribution")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("🐂 Bullish", f"{results['bullish_count']}/{results['total_indicators']}")
+    
+    with col2:
+        st.metric("🐻 Bearish", f"{results['bearish_count']}/{results['total_indicators']}")
+    
+    with col3:
+        st.metric("⚖️ Neutral", f"{results['neutral_count']}/{results['total_indicators']}")
+    
+    with col4:
+        st.metric("🔧 Mode", results['mode'])
+    
+    st.divider()
+    
+    # Detailed Indicator Analysis
+    st.subheader("📋 Detailed Indicator Analysis")
+    
+    # Create tabs for different categories
+    tab1, tab2, tab3 = st.tabs(["⚡ Fast Indicators (8)", "📊 Medium Indicators (2)", "🐢 Slow Indicators (3)"])
+    
+    with tab1:
+        display_indicator_table([r for r in results['bias_results'] if r['category'] == 'fast'])
+    
+    with tab2:
+        display_indicator_table([r for r in results['bias_results'] if r['category'] == 'medium'])
+    
+    with tab3:
+        display_indicator_table([r for r in results['bias_results'] if r['category'] == 'slow'])
+    
+    st.divider()
+    
+    # Category Summary
+    st.subheader("📈 Category Summary")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Fast Indicators Bullish", f"{results['fast_bull_pct']:.1f}%")
+        st.metric("Fast Indicators Bearish", f"{results['fast_bear_pct']:.1f}%")
+    
+    with col2:
+        st.metric("Slow Indicators Bullish", f"{results['slow_bull_pct']:.1f}%")
+        st.metric("Slow Indicators Bearish", f"{results['slow_bear_pct']:.1f}%")
+    
+    with col3:
+        st.metric("Overall Weighted Bullish", f"{results['bullish_bias_pct']:.1f}%")
+        st.metric("Overall Weighted Bearish", f"{results['bearish_bias_pct']:.1f}%")
+    
+    st.divider()
+    
+    # Trading Recommendation
+    st.subheader("💡 Trading Recommendation")
+    recommendation = generate_trading_recommendation(results)
+    st.info(recommendation)
+    
+    # Market Breadth
+    if results['stock_data']:
+        st.divider()
+        st.subheader("🏢 Market Breadth Analysis")
+        
+        bullish_stocks = [s for s in results['stock_data'] if s['is_bullish']]
+        bearish_stocks = [s for s in results['stock_data'] if not s['is_bullish']]
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Bullish Stocks", f"{len(bullish_stocks)}/{len(results['stock_data'])}")
+            if bullish_stocks:
+                st.write("**Top Gainers:**")
+                for stock in sorted(bullish_stocks, key=lambda x: x['change_pct'], reverse=True)[:3]:
+                    st.write(f"🟢 {stock['symbol']}: {stock['change_pct']:+.2f}%")
+        
+        with col2:
+            st.metric("Bearish Stocks", f"{len(bearish_stocks)}/{len(results['stock_data'])}")
+            if bearish_stocks:
+                st.write("**Top Losers:**")
+                for stock in sorted(bearish_stocks, key=lambda x: x['change_pct'])[:3]:
+                    st.write(f"🔴 {stock['symbol']}: {stock['change_pct']:+.2f}%")
+    
+    # Timestamp
+    st.caption(f"Last updated: {results['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+def display_indicator_table(indicators):
+    """Display indicators in a formatted table"""
+    for indicator in indicators:
+        bias_class = "bullish" if "BULLISH" in indicator['bias'] else "bearish" if "BEARISH" in indicator['bias'] else "neutral"
+        bias_emoji = "🟢" if "BULLISH" in indicator['bias'] else "🔴" if "BEARISH" in indicator['bias'] else "⚪"
+        
+        st.markdown(f"""
+        <div class="bias-card {bias_class}">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <strong>{indicator['indicator']}</strong><br>
+                    <small>Value: {indicator['value']}</small>
+                </div>
+                <div style="text-align: right;">
+                    {bias_emoji} <strong>{indicator['bias']}</strong><br>
+                    <small>Score: {indicator['score']:.0f}</small>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+def generate_trading_recommendation(results):
+    """Generate trading recommendation based on bias analysis"""
+    overall_bias = results['overall_bias']
+    confidence = results['overall_confidence']
+    mode = results['mode']
+    
+    recommendations = {
+        'BULLISH': {
+            'high': "🐂 STRONG BULLISH SIGNAL - Look for LONG entries on dips with stop loss below key support levels",
+            'medium': "🐂 MODERATE BULLISH SIGNAL - Consider LONG entries with caution, use tighter stop losses",
+            'low': "⚠️ WEAK BULLISH SIGNAL - Wait for confirmation before entering LONG positions"
+        },
+        'BEARISH': {
+            'high': "🐻 STRONG BEARISH SIGNAL - Look for SHORT entries on rallies with stop loss above key resistance", 
+            'medium': "🐻 MODERATE BEARISH SIGNAL - Consider SHORT entries with caution, use tighter stop losses",
+            'low': "⚠️ WEAK BEARISH SIGNAL - Wait for confirmation before entering SHORT positions"
+        },
+        'NEUTRAL': {
+            'high': "⚖️ STRONG NEUTRAL SIGNAL - Range-bound market expected, trade support/resistance levels",
+            'medium': "⚖️ MODERATE NEUTRAL SIGNAL - Wait for breakout/breakdown confirmation before taking positions",
+            'low': "⚖️ WEAK NEUTRAL SIGNAL - Market indecisive, consider staying out or using very small position sizes"
+        }
+    }
+    
+    # Determine confidence level
+    if confidence >= 70:
+        conf_level = 'high'
+    elif confidence >= 50:
+        conf_level = 'medium'
+    else:
+        conf_level = 'low'
+    
+    base_recommendation = recommendations[overall_bias][conf_level]
+    
+    # Add mode-specific note
+    if mode == "REVERSAL":
+        base_recommendation += " | 🔄 REVERSAL MODE DETECTED - High risk/reward potential, be prepared for trend changes"
+    
+    return base_recommendation
 
 if __name__ == "__main__":
     main()
