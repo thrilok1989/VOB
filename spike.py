@@ -55,6 +55,7 @@ expiry = st.sidebar.text_input("Expiry Date (YYYY-MM-DD)", value=get_ist_time().
 refresh_secs = st.sidebar.slider("Refresh interval (seconds)", min_value=15, max_value=300, value=30)
 run_live = st.sidebar.checkbox("🚀 AUTO-RUN & AUTO-REFRESH", value=True)
 show_raw = st.sidebar.checkbox("Show raw option chain", value=False)
+show_debug = st.sidebar.checkbox("🐛 Show debug info", value=True)  # NEW: Debug toggle
 threshold_alert = st.sidebar.slider("Alert threshold (score ≥ )", 10, 100, 70)
 
 st.sidebar.markdown("---")
@@ -566,7 +567,7 @@ def master_bias_engine(gamma_data, spike_data):
 # ENHANCED DATA FETCHING WITH RETRY MECHANISM
 # ---------------------------
 
-@st.cache_data(ttl=120, show_spinner=False, persist="disk")  # Persist to disk to survive reruns
+@st.cache_data(ttl=120, show_spinner=False)  # Remove persist="disk" - can cause issues
 def fetch_option_chain_dhan_cached(symbol_key: str, expiry_date: str, attempt=1):
     """Fetch option chain using Dhan API V2 with caching and retry"""
     if not ACCESS_TOKEN or not CLIENT_ID:
@@ -620,6 +621,8 @@ def normalize_option_chain(raw):
     try:
         if not raw or 'data' not in raw:
             st.error("❌ No data in API response")
+            if show_debug:
+                st.write("DEBUG - Raw response:", raw)
             return None, 0
             
         data_block = raw['data']
@@ -627,6 +630,8 @@ def normalize_option_chain(raw):
         
         if not chain_data:
             st.warning("⚠️ No option chain data found in response")
+            if show_debug:
+                st.write("DEBUG - Data block keys:", list(data_block.keys()))
             return None, 0
         
         # Extract spot price with validation
@@ -637,8 +642,13 @@ def normalize_option_chain(raw):
         
         # Validate spot price
         if spot_price == 0:
-            st.warning("⚠️ Spot price is zero - data may be invalid")
+            st.warning("⚠️ Spot price is zero - checking all available fields")
+            if show_debug:
+                st.write("DEBUG - Available price fields:", {k: v for k, v in data_block.items() if 'price' in k.lower() or 'value' in k.lower()})
             return None, 0
+        
+        if show_debug:
+            st.success(f"✅ Spot price detected: {spot_price}")
         
         valid_items = 0
         for strike_price, details in chain_data.items():
@@ -675,9 +685,14 @@ def normalize_option_chain(raw):
                     
             except (ValueError, TypeError) as e:
                 continue
+        
+        if show_debug:
+            st.success(f"✅ Parsed {valid_items} valid strikes")
                 
         if valid_items == 0:
             st.error("❌ No valid option data parsed - all OI values are zero")
+            if show_debug:
+                st.write("DEBUG - Sample chain data:", list(chain_data.items())[:2])
             return None, spot_price
             
         df = pd.DataFrame(items).sort_values('strike').reset_index(drop=True)
@@ -685,12 +700,21 @@ def normalize_option_chain(raw):
         # Final validation
         if not validate_option_chain_data(df):
             st.error("❌ Data validation failed after parsing")
+            if show_debug:
+                st.write("DEBUG - DataFrame shape:", df.shape)
+                st.write("DEBUG - DataFrame head:", df.head())
             return None, spot_price
-            
+        
+        if show_debug:
+            st.success(f"✅ Successfully normalized {len(df)} strikes")
+        
         return df, spot_price
         
     except Exception as e:
         st.error(f"❌ Normalization Error: {e}")
+        if show_debug:
+            import traceback
+            st.code(traceback.format_exc())
         return None, 0
 
 # ---------------------------
@@ -924,18 +948,32 @@ def run_comprehensive_analysis():
     st.session_state.fetching_in_progress = True
     
     try:
-        # Fetch data WITHOUT spinner to prevent blue line issues
+        # Show fetching status
+        status_placeholder = st.empty()
+        status_placeholder.info("🔄 Fetching live option chain data...")
+        
         raw = fetch_option_chain_dhan(symbol_selection, expiry)
         
         if not raw: 
             st.session_state.failed_fetches += 1
-            st.warning("⚠️ API returned no data - keeping previous data")
+            status_placeholder.error("⚠️ API returned no data - keeping previous data")
+            time.sleep(2)
+            status_placeholder.empty()
             return None
         
         df, spot_price = normalize_option_chain(raw)
-        if df is None:
+        
+        status_placeholder.empty()
+        
+        if df is None or df.empty:
             st.session_state.failed_fetches += 1
-            st.warning("⚠️ Failed to parse data - keeping previous data")
+            st.error("⚠️ Failed to parse data - keeping previous data")
+            return None
+        
+        # Validate we got actual data
+        if len(df) == 0:
+            st.session_state.failed_fetches += 1
+            st.error("⚠️ Empty dataframe - keeping previous data")
             return None
         
         # Run all engines
