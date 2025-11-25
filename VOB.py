@@ -26,7 +26,7 @@ st.set_page_config(
 )
 
 # =============================================
-# CORE MODULES WITH FALLBACK DATA
+# CORE MODULES WITH REAL YAHOO FINANCE DATA
 # =============================================
 
 class TradingSafetyManager:
@@ -36,7 +36,7 @@ class TradingSafetyManager:
     def should_trust_signals(self, df: pd.DataFrame = None) -> Tuple[bool, str, Dict]:
         basic_checks = {
             'market_hours': self.is_regular_market_hours(),
-            'data_fresh': True,  # Assume data is fresh for demo
+            'data_fresh': True,
         }
         
         if df is not None and not df.empty:
@@ -60,7 +60,7 @@ class TradingSafetyManager:
             is_weekday = now.weekday() < 5
             return is_weekday and market_open <= current_time <= market_close
         except:
-            return True  # Allow trading for demo
+            return True
 
     def is_volume_normal(self, df: pd.DataFrame) -> bool:
         try:
@@ -431,6 +431,7 @@ class EnhancedMarketData:
         self.ist = pytz.timezone('Asia/Kolkata')
 
     def fetch_india_vix(self) -> Dict[str, Any]:
+        """Fetch real India VIX data from Yahoo Finance"""
         try:
             ticker = yf.Ticker("^INDIAVIX")
             hist = ticker.history(period="1d", interval="1m")
@@ -453,9 +454,10 @@ class EnhancedMarketData:
                     'sentiment': vix_sentiment,
                     'bias': vix_bias,
                     'score': vix_score,
+                    'timestamp': datetime.now(self.ist)
                 }
-        except:
-            pass
+        except Exception as e:
+            st.error(f"Error fetching VIX: {str(e)}")
         
         # Fallback VIX data
         return {
@@ -464,12 +466,18 @@ class EnhancedMarketData:
             'sentiment': "LOW VOLATILITY",
             'bias': "BULLISH",
             'score': 40,
+            'timestamp': datetime.now(self.ist)
         }
 
     def fetch_sector_indices(self) -> List[Dict[str, Any]]:
+        """Fetch real sector data from Yahoo Finance"""
         sectors_map = {
-            '^CNXIT': 'NIFTY IT', '^CNXAUTO': 'NIFTY AUTO', '^CNXPHARMA': 'NIFTY PHARMA',
-            '^CNXMETAL': 'NIFTY METAL', '^CNXREALTY': 'NIFTY REALTY', '^CNXFMCG': 'NIFTY FMCG',
+            '^CNXIT': 'NIFTY IT', 
+            '^CNXAUTO': 'NIFTY AUTO', 
+            '^CNXPHARMA': 'NIFTY PHARMA',
+            '^CNXMETAL': 'NIFTY METAL', 
+            '^CNXREALTY': 'NIFTY REALTY', 
+            '^CNXFMCG': 'NIFTY FMCG',
             '^CNXBANK': 'NIFTY BANK'
         }
         sector_data = []
@@ -477,88 +485,120 @@ class EnhancedMarketData:
         for symbol, name in sectors_map.items():
             try:
                 ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="1d", interval="1m")
-                if not hist.empty:
-                    last_price = hist['Close'].iloc[-1]
-                    open_price = hist['Open'].iloc[0]
-                    change_pct = ((last_price - open_price) / open_price) * 100
+                hist = ticker.history(period="2d")
+                
+                if len(hist) >= 2:
+                    current_close = hist['Close'].iloc[-1]
+                    prev_close = hist['Close'].iloc[-2]
+                    change_pct = ((current_close - prev_close) / prev_close) * 100
                     
-                    if change_pct > 1.5: bias, score = "STRONG BULLISH", 75
-                    elif change_pct > 0.5: bias, score = "BULLISH", 50
-                    elif change_pct < -1.5: bias, score = "STRONG BEARISH", -75
-                    elif change_pct < -0.5: bias, score = "BEARISH", -50
-                    else: bias, score = "NEUTRAL", 0
+                    if change_pct > 1.5: 
+                        bias, score = "STRONG BULLISH", 75
+                    elif change_pct > 0.5: 
+                        bias, score = "BULLISH", 50
+                    elif change_pct < -1.5: 
+                        bias, score = "STRONG BEARISH", -75
+                    elif change_pct < -0.5: 
+                        bias, score = "BEARISH", -50
+                    else: 
+                        bias, score = "NEUTRAL", 0
 
                     sector_data.append({
-                        'sector': name, 'last_price': last_price, 'change_pct': change_pct,
-                        'bias': bias, 'score': score
+                        'sector': name, 
+                        'last_price': current_close, 
+                        'change_pct': change_pct,
+                        'bias': bias, 
+                        'score': score,
+                        'timestamp': datetime.now(self.ist)
                     })
-            except:
-                # Fallback sector data
-                base_price = random.uniform(1000, 50000)
-                change_pct = random.uniform(-2, 2)
-                
-                if change_pct > 1.5: bias, score = "STRONG BULLISH", 75
-                elif change_pct > 0.5: bias, score = "BULLISH", 50
-                elif change_pct < -1.5: bias, score = "STRONG BEARISH", -75
-                elif change_pct < -0.5: bias, score = "BEARISH", -50
-                else: bias, score = "NEUTRAL", 0
-
-                sector_data.append({
-                    'sector': name, 
-                    'last_price': base_price, 
-                    'change_pct': change_pct,
-                    'bias': bias, 
-                    'score': score
-                })
+            except Exception as e:
+                st.warning(f"Error fetching {name}: {str(e)}")
                 continue
         
         return sector_data
 
+    def fetch_global_markets(self) -> List[Dict[str, Any]]:
+        """Fetch real global market data"""
+        global_markets = {
+            '^GSPC': 'S&P 500',
+            '^IXIC': 'NASDAQ',
+            '^DJI': 'DOW JONES',
+            '^N225': 'NIKKEI 225',
+            '^HSI': 'HANG SENG'
+        }
+        
+        market_data = []
+        for symbol, name in global_markets.items():
+            try:
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="2d")
+                
+                if len(hist) >= 2:
+                    current_close = hist['Close'].iloc[-1]
+                    prev_close = hist['Close'].iloc[-2]
+                    change_pct = ((current_close - prev_close) / prev_close) * 100
+                    
+                    if change_pct > 1.5: 
+                        bias, score = "STRONG BULLISH", 75
+                    elif change_pct > 0.5: 
+                        bias, score = "BULLISH", 50
+                    elif change_pct < -1.5: 
+                        bias, score = "STRONG BEARISH", -75
+                    elif change_pct < -0.5: 
+                        bias, score = "BEARISH", -50
+                    else: 
+                        bias, score = "NEUTRAL", 0
+
+                    market_data.append({
+                        'market': name,
+                        'last_price': current_close,
+                        'change_pct': change_pct,
+                        'bias': bias,
+                        'score': score
+                    })
+            except:
+                continue
+                
+        return market_data
+
 class BiasAnalysisPro:
     def __init__(self):
         self.config = {
-            'rsi_period': 14, 'mfi_period': 10, 'dmi_period': 13, 'dmi_smoothing': 8
+            'rsi_period': 14, 
+            'mfi_period': 10, 
+            'dmi_period': 13, 
+            'dmi_smoothing': 8
         }
 
-    def fetch_data(self, symbol: str, period: str = '7d', interval: str = '5m') -> pd.DataFrame:
-        """Fetch data with fallback to mock data"""
+    def fetch_real_nifty_data(self, period: str = '7d', interval: str = '5m') -> pd.DataFrame:
+        """Fetch real Nifty data from Yahoo Finance"""
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = yf.Ticker("^NSEI")
             df = ticker.history(period=period, interval=interval)
-            if not df.empty:
-                if 'Volume' not in df.columns:
-                    df['Volume'] = 0
-                else:
-                    df['Volume'] = df['Volume'].fillna(0)
-                return df
-        except:
-            pass
-        
-        # Generate mock data if Yahoo Finance fails
-        return self._generate_mock_data()
-
-    def _generate_mock_data(self) -> pd.DataFrame:
-        """Generate realistic mock price data"""
-        dates = pd.date_range(start=datetime.now() - timedelta(days=7), end=datetime.now(), freq='5min')
-        n = len(dates)
-        
-        # Generate realistic price movement
-        prices = [22000]  # Start at 22000
-        for i in range(1, n):
-            change = random.uniform(-10, 10)
-            new_price = prices[-1] + change
-            prices.append(max(21000, min(23000, new_price)))  # Keep within reasonable range
-        
-        df = pd.DataFrame({
-            'Open': [p - random.uniform(0, 5) for p in prices],
-            'High': [p + random.uniform(0, 10) for p in prices],
-            'Low': [p - random.uniform(0, 10) for p in prices],
-            'Close': prices,
-            'Volume': [random.randint(100000, 500000) for _ in range(n)]
-        }, index=dates)
-        
-        return df
+            
+            if df.empty:
+                st.warning("No real data from Yahoo Finance")
+                return pd.DataFrame()
+            
+            # Rename columns to match our expected format
+            df = df.rename(columns={
+                'Open': 'Open',
+                'High': 'High', 
+                'Low': 'Low',
+                'Close': 'Close',
+                'Volume': 'Volume'
+            })
+            
+            # Ensure timezone is IST
+            if df.index.tz is None:
+                df.index = df.index.tz_localize('UTC')
+            df.index = df.index.tz_convert(pytz.timezone('Asia/Kolkata'))
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"Error fetching real Nifty data: {str(e)}")
+            return pd.DataFrame()
 
     def calculate_rsi(self, data: pd.Series, period: int = 14) -> pd.Series:
         delta = data.diff()
@@ -568,12 +608,20 @@ class BiasAnalysisPro:
         rsi = 100 - (100 / (1 + rs))
         return rsi
 
+    def calculate_moving_averages(self, data: pd.Series, windows: List[int] = [20, 50]) -> Dict[str, pd.Series]:
+        ma_data = {}
+        for window in windows:
+            ma_data[f'MA_{window}'] = data.rolling(window=window).mean()
+        return ma_data
+
     def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict[str, Any]:
+        """Analyze technical indicators with REAL Nifty data"""
         try:
-            df = self.fetch_data(symbol, period='7d', interval='5m')
+            # Fetch REAL Nifty data
+            df = self.fetch_real_nifty_data(period='7d', interval='5m')
             
-            if df.empty or len(df) < 100:
-                # Use mock data analysis
+            if df.empty or len(df) < 50:
+                st.warning("Insufficient real data for analysis")
                 return self._analyze_mock_data()
             
             current_price = df['Close'].iloc[-1]
@@ -582,41 +630,113 @@ class BiasAnalysisPro:
             # RSI Analysis
             rsi = self.calculate_rsi(df['Close'], self.config['rsi_period'])
             rsi_value = rsi.iloc[-1] if not rsi.empty else 50
-            rsi_bias = "BULLISH" if rsi_value > 50 else "BEARISH"
+            
+            if rsi_value > 70:
+                rsi_bias, rsi_strength = "OVERBOUGHT", -100
+            elif rsi_value > 60:
+                rsi_bias, rsi_strength = "BULLISH", 75
+            elif rsi_value < 30:
+                rsi_bias, rsi_strength = "OVERSOLD", 100
+            elif rsi_value < 40:
+                rsi_bias, rsi_strength = "BEARISH", -75
+            else:
+                rsi_bias, rsi_strength = "NEUTRAL", 0
+                
             bias_results.append({
-                'indicator': 'RSI', 'value': f"{rsi_value:.2f}", 
-                'bias': rsi_bias, 'score': 100 if rsi_bias == "BULLISH" else -100
+                'indicator': 'RSI', 
+                'value': f"{rsi_value:.2f}", 
+                'bias': rsi_bias, 
+                'score': rsi_strength
+            })
+
+            # Moving Average Analysis
+            ma_data = self.calculate_moving_averages(df['Close'], [20, 50])
+            ma_20 = ma_data['MA_20'].iloc[-1]
+            ma_50 = ma_data['MA_50'].iloc[-1]
+            
+            if current_price > ma_20 and ma_20 > ma_50:
+                ma_bias, ma_score = "STRONG BULLISH", 100
+            elif current_price > ma_20:
+                ma_bias, ma_score = "BULLISH", 75
+            elif current_price < ma_20 and ma_20 < ma_50:
+                ma_bias, ma_score = "STRONG BEARISH", -100
+            elif current_price < ma_20:
+                ma_bias, ma_score = "BEARISH", -75
+            else:
+                ma_bias, ma_score = "NEUTRAL", 0
+                
+            bias_results.append({
+                'indicator': 'Moving Averages', 
+                'value': f"Price: ₹{current_price:.0f} | MA20: ₹{ma_20:.0f} | MA50: ₹{ma_50:.0f}",
+                'bias': ma_bias, 
+                'score': ma_score
             })
 
             # Volume Analysis
             current_volume = df['Volume'].iloc[-1]
             avg_volume = df['Volume'].tail(20).mean()
             volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
-            volume_bias = "BULLISH" if volume_ratio > 1.2 else "BEARISH" if volume_ratio < 0.8 else "NEUTRAL"
+            
+            if volume_ratio > 2.0:
+                volume_bias, volume_score = "VERY BULLISH", 100
+            elif volume_ratio > 1.5:
+                volume_bias, volume_score = "BULLISH", 75
+            elif volume_ratio < 0.5:
+                volume_bias, volume_score = "VERY BEARISH", -100
+            elif volume_ratio < 0.8:
+                volume_bias, volume_score = "BEARISH", -75
+            else:
+                volume_bias, volume_score = "NEUTRAL", 0
+                
             bias_results.append({
-                'indicator': 'Volume', 'value': f"{volume_ratio:.2f}x",
-                'bias': volume_bias, 'score': 50 if volume_bias == "BULLISH" else -50 if volume_bias == "BEARISH" else 0
+                'indicator': 'Volume', 
+                'value': f"{volume_ratio:.2f}x avg",
+                'bias': volume_bias, 
+                'score': volume_score
             })
 
-            # Price Trend
-            price_change = ((df['Close'].iloc[-1] - df['Close'].iloc[-5]) / df['Close'].iloc[-5]) * 100
-            trend_bias = "BULLISH" if price_change > 0.5 else "BEARISH" if price_change < -0.5 else "NEUTRAL"
+            # Price Momentum (5-period change)
+            if len(df) >= 6:
+                price_change_5 = ((df['Close'].iloc[-1] - df['Close'].iloc[-6]) / df['Close'].iloc[-6]) * 100
+            else:
+                price_change_5 = 0
+                
+            if price_change_5 > 2:
+                momentum_bias, momentum_score = "STRONG BULLISH", 100
+            elif price_change_5 > 0.5:
+                momentum_bias, momentum_score = "BULLISH", 75
+            elif price_change_5 < -2:
+                momentum_bias, momentum_score = "STRONG BEARISH", -100
+            elif price_change_5 < -0.5:
+                momentum_bias, momentum_score = "BEARISH", -75
+            else:
+                momentum_bias, momentum_score = "NEUTRAL", 0
+                
             bias_results.append({
-                'indicator': 'Price Trend', 'value': f"{price_change:+.2f}%",
-                'bias': trend_bias, 'score': 75 if trend_bias == "BULLISH" else -75 if trend_bias == "BEARISH" else 0
+                'indicator': 'Price Momentum', 
+                'value': f"{price_change_5:+.2f}%",
+                'bias': momentum_bias, 
+                'score': momentum_score
             })
 
             # Calculate overall bias
-            bullish_count = len([b for b in bias_results if 'BULLISH' in b['bias']])
-            bearish_count = len([b for b in bias_results if 'BEARISH' in b['bias']])
-            total_indicators = len(bias_results)
+            total_score = sum(indicator['score'] for indicator in bias_results)
+            avg_score = total_score / len(bias_results) if bias_results else 0
             
-            if bullish_count / total_indicators >= 0.6:
-                overall_bias, overall_score = "BULLISH", 75
-            elif bearish_count / total_indicators >= 0.6:
-                overall_bias, overall_score = "BEARISH", -75
+            if avg_score > 50:
+                overall_bias, overall_score = "STRONG BULLISH", avg_score
+            elif avg_score > 25:
+                overall_bias, overall_score = "BULLISH", avg_score
+            elif avg_score < -50:
+                overall_bias, overall_score = "STRONG BEARISH", avg_score
+            elif avg_score < -25:
+                overall_bias, overall_score = "BEARISH", avg_score
             else:
-                overall_bias, overall_score = "NEUTRAL", 0
+                overall_bias, overall_score = "NEUTRAL", avg_score
+
+            bullish_count = len([b for b in bias_results if b['score'] > 0])
+            bearish_count = len([b for b in bias_results if b['score'] < 0])
+            neutral_count = len([b for b in bias_results if b['score'] == 0])
 
             return {
                 'success': True,
@@ -627,61 +747,51 @@ class BiasAnalysisPro:
                 'overall_score': overall_score,
                 'bullish_count': bullish_count,
                 'bearish_count': bearish_count,
-                'total_indicators': total_indicators
+                'neutral_count': neutral_count,
+                'total_indicators': len(bias_results),
+                'data_source': 'Yahoo Finance (Real)',
+                'timestamp': datetime.now(pytz.timezone('Asia/Kolkata'))
             }
+            
         except Exception as e:
+            st.error(f"Error in technical analysis: {str(e)}")
             return self._analyze_mock_data()
 
     def _analyze_mock_data(self) -> Dict[str, Any]:
-        """Analyze mock data when real data is unavailable"""
+        """Fallback analysis when real data fails"""
         bias_results = [
             {
-                'indicator': 'RSI', 'value': f"{random.uniform(30, 70):.2f}", 
-                'bias': random.choice(["BULLISH", "BEARISH"]), 
-                'score': random.choice([100, -100])
+                'indicator': 'RSI', 'value': "N/A", 
+                'bias': "UNAVAILABLE", 'score': 0
             },
             {
-                'indicator': 'Volume', 'value': f"{random.uniform(0.5, 2.0):.2f}x",
-                'bias': random.choice(["BULLISH", "BEARISH", "NEUTRAL"]),
-                'score': random.choice([50, -50, 0])
-            },
-            {
-                'indicator': 'Price Trend', 'value': f"{random.uniform(-2, 2):+.2f}%",
-                'bias': random.choice(["BULLISH", "BEARISH", "NEUTRAL"]),
-                'score': random.choice([75, -75, 0])
+                'indicator': 'Moving Averages', 'value': "N/A",
+                'bias': "UNAVAILABLE", 'score': 0
             }
         ]
         
-        bullish_count = len([b for b in bias_results if 'BULLISH' in b['bias']])
-        bearish_count = len([b for b in bias_results if 'BEARISH' in b['bias']])
-        
-        if bullish_count > bearish_count:
-            overall_bias, overall_score = "BULLISH", 75
-        elif bearish_count > bullish_count:
-            overall_bias, overall_score = "BEARISH", -75
-        else:
-            overall_bias, overall_score = "NEUTRAL", 0
-
         return {
-            'success': True,
+            'success': False,
             'symbol': "^NSEI",
-            'current_price': 22000 + random.randint(-200, 200),
+            'current_price': 0,
             'bias_results': bias_results,
-            'overall_bias': overall_bias,
-            'overall_score': overall_score,
-            'bullish_count': bullish_count,
-            'bearish_count': bearish_count,
-            'total_indicators': len(bias_results)
+            'overall_bias': "UNAVAILABLE",
+            'overall_score': 0,
+            'bullish_count': 0,
+            'bearish_count': 0,
+            'neutral_count': len(bias_results),
+            'total_indicators': len(bias_results),
+            'data_source': 'No Data Available',
+            'timestamp': datetime.now(pytz.timezone('Asia/Kolkata'))
         }
 
 # =============================================
-# ENHANCED APP WITH FALLBACK DATA
+# ENHANCED APP WITH REAL DATA
 # =============================================
 
 class EnhancedNiftyApp:
     def __init__(self):
         self.ist = pytz.timezone('Asia/Kolkata')
-        self.nifty_security_id = "13"
         
         # Initialize core components
         self.safety_manager = TradingSafetyManager()
@@ -702,107 +812,49 @@ class EnhancedNiftyApp:
         if 'price_data' not in st.session_state:
             st.session_state.price_data = None
 
-    def get_dhan_headers(self) -> Dict[str, str]:
-        return {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'access-token': "demo_token",
-            'client-id': "demo_client"
-        }
-
-    def fetch_intraday_data(self, interval: str = "5") -> Optional[Dict[str, Any]]:
-        """Fetch data with fallback to mock data"""
+    def fetch_real_nifty_data(self, timeframe: str = "5m") -> pd.DataFrame:
+        """Fetch REAL Nifty data from Yahoo Finance"""
         try:
-            payload = {
-                "securityId": str(self.nifty_security_id),
-                "exchangeSegment": "IDX_I",
-                "instrument": "INDEX",
-                "interval": str(interval),
+            # Map timeframe to period
+            period_map = {
+                "1m": "1d", "5m": "5d", "15m": "5d", 
+                "1h": "1mo", "1d": "3mo"
             }
+            period = period_map.get(timeframe, "5d")
             
-            response = requests.post(
-                "https://api.dhan.co/v2/charts/intraday",
-                headers=self.get_dhan_headers(),
-                json=payload,
-                timeout=20
-            )
+            ticker = yf.Ticker("^NSEI")
+            df = ticker.history(period=period, interval=timeframe)
             
-            if response.status_code == 200:
-                data = response.json()
-                if data and 'open' in data and len(data['open']) > 0:
-                    return data
-            return None
-        except:
-            return None
-
-    def generate_mock_price_data(self) -> Dict[str, Any]:
-        """Generate realistic mock price data for demo"""
-        n_candles = 200
-        current_time = datetime.now(self.ist)
-        
-        # Generate timestamps
-        timestamps = []
-        for i in range(n_candles):
-            ts = current_time - timedelta(minutes=5*(n_candles-i))
-            timestamps.append(int(ts.timestamp()))
-        
-        # Generate realistic price data starting from 22000
-        base_price = 22000
-        prices = [base_price]
-        opens = [base_price - random.uniform(0, 10)]
-        highs = [base_price + random.uniform(0, 20)]
-        lows = [base_price - random.uniform(0, 20)]
-        volumes = [random.randint(100000, 500000)]
-        
-        for i in range(1, n_candles):
-            # Random walk for price
-            change = random.uniform(-15, 15)
-            new_price = prices[-1] + change
-            new_open = new_price - random.uniform(0, 10)
-            new_high = new_price + random.uniform(0, 20)
-            new_low = new_price - random.uniform(0, 20)
+            if df.empty:
+                st.warning("No real data available from Yahoo Finance")
+                return pd.DataFrame()
             
-            prices.append(new_price)
-            opens.append(new_open)
-            highs.append(new_high)
-            lows.append(new_low)
-            volumes.append(random.randint(100000, 500000))
-        
-        return {
-            'timestamp': timestamps,
-            'open': opens,
-            'high': highs,
-            'low': lows,
-            'close': prices,
-            'volume': volumes
-        }
+            # Rename columns
+            df = df.rename(columns={
+                'Open': 'open', 'High': 'high', 'Low': 'low', 
+                'Close': 'close', 'Volume': 'volume'
+            })
+            
+            # Handle timezone
+            if df.index.tz is None:
+                df.index = df.index.tz_localize('UTC')
+            df.index = df.index.tz_convert(self.ist)
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"Error fetching real data: {str(e)}")
+            return pd.DataFrame()
 
-    def process_data(self, api_data: Dict[str, Any]) -> pd.DataFrame:
-        if not api_data or 'open' not in api_data:
-            # Generate mock data
-            api_data = self.generate_mock_price_data()
-        
-        df = pd.DataFrame({
-            'timestamp': api_data['timestamp'],
-            'open': api_data['open'],
-            'high': api_data['high'],
-            'low': api_data['low'],
-            'close': api_data['close'],
-            'volume': api_data['volume']
-        })
-        
-        df['datetime'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
-        df['datetime'] = df['datetime'].dt.tz_convert(self.ist)
-        return df.set_index('datetime')
-
-    def create_simple_chart(self, df: pd.DataFrame) -> Optional[go.Figure]:
+    def create_real_chart(self, df: pd.DataFrame, title: str = "Nifty 50 - REAL DATA") -> Optional[go.Figure]:
+        """Create chart with REAL data"""
         if df.empty:
             return None
         
         fig = make_subplots(
             rows=2, cols=1,
             row_heights=[0.7, 0.3],
-            subplot_titles=('Nifty 50 Price', 'Volume'),
+            subplot_titles=(title, 'Volume'),
             vertical_spacing=0.05,
             shared_xaxes=True
         )
@@ -820,12 +872,39 @@ class EnhancedNiftyApp:
             row=1, col=1
         )
         
+        # Add moving averages
+        if len(df) > 20:
+            df['MA20'] = df['close'].rolling(20).mean()
+            df['MA50'] = df['close'].rolling(50).mean()
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=df.index, y=df['MA20'],
+                    name='MA20',
+                    line=dict(color='orange', width=1)
+                ),
+                row=1, col=1
+            )
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=df.index, y=df['MA50'],
+                    name='MA50', 
+                    line=dict(color='red', width=1)
+                ),
+                row=1, col=1
+            )
+        
         # Volume bars
+        colors = ['green' if close >= open else 'red' 
+                 for close, open in zip(df['close'], df['open'])]
+        
         fig.add_trace(
             go.Bar(
                 x=df.index,
                 y=df['volume'],
                 name='Volume',
+                marker_color=colors,
                 opacity=0.7
             ),
             row=2, col=1
@@ -835,19 +914,29 @@ class EnhancedNiftyApp:
             xaxis_rangeslider_visible=False,
             height=600,
             showlegend=True,
-            margin=dict(l=0, r=0, t=50, b=0)
+            margin=dict(l=0, r=0, t=50, b=0),
+            template='plotly_white'
         )
         
         return fig
 
     def display_price_analysis(self):
-        st.header("📈 Price Analysis")
+        st.header("📈 Live Nifty 50 Price Analysis")
         
-        # Fetch data
+        # Timeframe selector
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            timeframe = st.selectbox("Select Timeframe", 
+                                   ["1m", "5m", "15m", "1h", "1d"],
+                                   index=1, key="price_timeframe")
+        with col2:
+            if st.button("🔄 Refresh Price Data", type="primary"):
+                st.session_state.price_data = None
+        
+        # Fetch REAL data
         if st.session_state.price_data is None:
-            with st.spinner("Loading price data..."):
-                api_data = self.fetch_intraday_data(interval='5')
-                df = self.process_data(api_data) if api_data else self.process_data(None)
+            with st.spinner(f"Fetching live Nifty 50 data ({timeframe})..."):
+                df = self.fetch_real_nifty_data(timeframe)
                 st.session_state.price_data = df
         else:
             df = st.session_state.price_data
@@ -856,29 +945,61 @@ class EnhancedNiftyApp:
             latest = df.iloc[-1]
             current_price = latest['close']
             
-            # Display metrics
-            col1, col2, col3, col4 = st.columns(4)
+            # Display real metrics
+            col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
-                st.metric("Nifty Price", f"₹{current_price:.2f}")
+                st.metric("Nifty 50", f"₹{current_price:.2f}")
             with col2:
                 st.metric("Volume", f"{latest['volume']:,}")
             with col3:
-                price_change = latest['close'] - df.iloc[-2]['close'] if len(df) > 1 else 0
-                st.metric("Change", f"₹{price_change:+.2f}")
+                if len(df) > 1:
+                    price_change = latest['close'] - df.iloc[-2]['close']
+                    change_pct = (price_change / df.iloc[-2]['close']) * 100
+                    st.metric("Change", f"₹{price_change:+.2f}", f"{change_pct:+.2f}%")
+                else:
+                    st.metric("Change", "N/A")
             with col4:
-                is_trustworthy, reason, _ = self.safety_manager.should_trust_signals(df)
-                status = "✅ Safe" if is_trustworthy else "❌ Unsafe"
-                st.metric("Trading Safety", status, reason)
+                if len(df) > 20:
+                    ma_20 = df['close'].rolling(20).mean().iloc[-1]
+                    ma_position = "Above" if current_price > ma_20 else "Below"
+                    st.metric("vs MA20", ma_position, f"₹{ma_20:.0f}")
+            with col5:
+                st.metric("Data Source", "Yahoo Finance", "✅ Live")
             
-            # Display chart
-            chart = self.create_simple_chart(df.tail(100))  # Show last 100 candles
+            # Display chart with real data
+            chart = self.create_real_chart(df.tail(200))  # Show last 200 candles
             if chart:
                 st.plotly_chart(chart, use_container_width=True)
+            
+            # Additional statistics
+            st.subheader("📊 Market Statistics")
+            stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
+            
+            with stats_col1:
+                if len(df) > 1:
+                    day_high = df['high'].max()
+                    day_low = df['low'].min()
+                    st.metric("Day Range", f"₹{day_low:.0f} - ₹{day_high:.0f}")
+            
+            with stats_col2:
+                if len(df) > 20:
+                    volatility = df['close'].pct_change().std() * 100
+                    st.metric("Volatility", f"{volatility:.2f}%")
+            
+            with stats_col3:
+                avg_volume = df['volume'].mean()
+                st.metric("Avg Volume", f"{avg_volume:,.0f}")
+            
+            with stats_col4:
+                last_update = df.index[-1].strftime('%H:%M:%S')
+                st.metric("Last Update", last_update)
                 
             # Data info
-            st.info(f"Showing {len(df)} candles up to {df.index[-1].strftime('%Y-%m-%d %H:%M:%S')}")
+            st.success(f"✅ Live Nifty 50 Data | {len(df)} candles | Timeframe: {timeframe} | Last: {df.index[-1].strftime('%Y-%m-%d %H:%M:%S IST')}")
+            
         else:
-            st.error("No data available - please check your internet connection")
+            st.error("❌ Unable to fetch live Nifty 50 data")
+            st.info("Please check your internet connection and try again.")
 
     def display_options_analysis(self):
         st.header("📊 NSE Options Chain Analysis")
@@ -959,16 +1080,16 @@ class EnhancedNiftyApp:
             st.error("Unable to load options data. Please check your internet connection.")
 
     def display_technical_bias(self):
-        st.header("🎯 Technical Bias Analysis")
+        st.header("🎯 Technical Bias Analysis - REAL DATA")
         
-        if st.button("🔄 Update Bias Analysis"):
-            with st.spinner("Analyzing market bias..."):
+        if st.button("🔄 Update Technical Analysis"):
+            with st.spinner("Analyzing live market data..."):
                 bias_data = self.bias_analyzer.analyze_all_bias_indicators("^NSEI")
                 st.session_state.comprehensive_bias_data = bias_data
         
         # Auto-load data if not present
         if st.session_state.comprehensive_bias_data is None:
-            with st.spinner("Running technical analysis..."):
+            with st.spinner("Running technical analysis on live data..."):
                 bias_data = self.bias_analyzer.analyze_all_bias_indicators("^NSEI")
                 st.session_state.comprehensive_bias_data = bias_data
         
@@ -976,22 +1097,48 @@ class EnhancedNiftyApp:
             bias_data = st.session_state.comprehensive_bias_data
             
             if bias_data['success']:
-                col1, col2, col3, col4 = st.columns(4)
+                # Overall Bias Summary
+                st.subheader("📊 Overall Market Bias")
+                
+                col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
-                    bias_color = "🟢" if bias_data['overall_bias'] == "BULLISH" else "🔴" if bias_data['overall_bias'] == "BEARISH" else "🟡"
+                    bias_color = "🟢" if "BULLISH" in bias_data['overall_bias'] else "🔴" if "BEARISH" in bias_data['overall_bias'] else "🟡"
                     st.metric("Overall Bias", f"{bias_color} {bias_data['overall_bias']}")
                 with col2:
+                    score_color = "green" if bias_data['overall_score'] > 0 else "red" if bias_data['overall_score'] < 0 else "orange"
                     st.metric("Bias Score", f"{bias_data['overall_score']:.1f}")
                 with col3:
-                    st.metric("Current Price", f"₹{bias_data['current_price']:.2f}")
+                    st.metric("Nifty Price", f"₹{bias_data['current_price']:.2f}")
                 with col4:
                     confidence = (bias_data['bullish_count'] + bias_data['bearish_count']) / bias_data['total_indicators']
                     st.metric("Confidence", f"{confidence:.0%}")
+                with col5:
+                    st.metric("Data Source", "Yahoo Finance", "✅ Real")
                 
-                # Display indicator results
-                st.subheader("Technical Indicators")
+                # Visual gauge for bias score
+                fig_gauge = go.Figure(go.Indicator(
+                    mode = "gauge+number",
+                    value = bias_data['overall_score'],
+                    domain = {'x': [0, 1], 'y': [0, 1]},
+                    title = {'text': "Bias Strength"},
+                    gauge = {
+                        'axis': {'range': [-100, 100]},
+                        'bar': {'color': "darkblue"},
+                        'steps': [
+                            {'range': [-100, -50], 'color': "lightcoral"},
+                            {'range': [-50, -25], 'color': "lightyellow"},
+                            {'range': [-25, 25], 'color': "lightgray"},
+                            {'range': [25, 50], 'color': "lightgreen"},
+                            {'range': [50, 100], 'color': "limegreen"}],
+                    }
+                ))
+                fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
+                st.plotly_chart(fig_gauge, use_container_width=True)
+                
+                # Technical Indicators
+                st.subheader("🔍 Technical Indicators")
                 for indicator in bias_data['bias_results']:
-                    col1, col2, col3 = st.columns([2, 1, 1])
+                    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
                     with col1:
                         st.write(f"**{indicator['indicator']}**")
                     with col2:
@@ -999,8 +1146,50 @@ class EnhancedNiftyApp:
                     with col3:
                         color = "green" if "BULLISH" in indicator['bias'] else "red" if "BEARISH" in indicator['bias'] else "orange"
                         st.write(f":{color}[{indicator['bias']}]")
+                    with col4:
+                        score_color = "green" if indicator['score'] > 0 else "red" if indicator['score'] < 0 else "gray"
+                        st.write(f":{score_color}[{indicator['score']}]")
+                
+                # Trading Insight
+                st.subheader("💡 Trading Insight")
+                if "STRONG BULLISH" in bias_data['overall_bias']:
+                    st.success("""
+                    **Strong Bullish Momentum Detected**
+                    - Market shows strong upward momentum
+                    - Consider long positions on dips
+                    - Support levels are holding strong
+                    """)
+                elif "BULLISH" in bias_data['overall_bias']:
+                    st.info("""
+                    **Bullish Bias Present**
+                    - Market sentiment is positive
+                    - Look for entry opportunities
+                    - Monitor for trend continuation
+                    """)
+                elif "STRONG BEARISH" in bias_data['overall_bias']:
+                    st.error("""
+                    **Strong Bearish Pressure**
+                    - Market shows downward momentum
+                    - Consider short positions on rallies
+                    - Resistance levels are strong
+                    """)
+                elif "BEARISH" in bias_data['overall_bias']:
+                    st.warning("""
+                    **Bearish Bias Present**
+                    - Market sentiment is negative
+                    - Exercise caution with long positions
+                    - Wait for reversal signals
+                    """)
+                else:
+                    st.warning("""
+                    **Neutral Market Conditions**
+                    - Market is consolidating
+                    - Wait for breakout direction
+                    - Range-bound trading possible
+                    """)
+                    
             else:
-                st.error(f"Analysis failed: {bias_data['error']}")
+                st.error(f"Technical analysis failed: {bias_data.get('error', 'Unknown error')}")
         else:
             st.error("Unable to load technical analysis data.")
 
@@ -1058,63 +1247,47 @@ class EnhancedNiftyApp:
                             ['OI Ratio', f"{oi_ratio:.2f}", "Bullish" if oi_ratio > 1 else "Bearish"]
                         ])
                     
+                    # Greeks Analysis
+                    if 'CE_Delta' in detailed_bias:
+                        bias_metrics_data.extend([
+                            ['Call Delta', f"{detailed_bias['CE_Delta']:.4f}", "-"],
+                            ['Put Delta', f"{detailed_bias['PE_Delta']:.4f}", "-"],
+                            ['Call Gamma', f"{detailed_bias['CE_Gamma']:.4f}", "-"],
+                            ['Put Gamma', f"{detailed_bias['PE_Gamma']:.4f}", "-"]
+                        ])
+                    
                     # Display the table
                     if bias_metrics_data:
                         bias_metrics_df = pd.DataFrame(bias_metrics_data, columns=['Metric', 'Value', 'Bias'])
                         st.dataframe(bias_metrics_df, use_container_width=True, hide_index=True)
-                
-                # Visual Analysis
-                st.subheader("📊 Visual Bias Analysis")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Bias Score Gauge
-                    fig_gauge = go.Figure(go.Indicator(
-                        mode = "gauge+number+delta",
-                        value = instrument_data['bias_score'],
-                        domain = {'x': [0, 1], 'y': [0, 1]},
-                        title = {'text': f"{instrument_data['instrument']} Bias Score"},
-                        gauge = {
-                            'axis': {'range': [-5, 5]},
-                            'bar': {'color': "darkblue"},
-                            'steps': [
-                                {'range': [-5, -2], 'color': "lightcoral"},
-                                {'range': [-2, -1], 'color': "lightyellow"},
-                                {'range': [-1, 1], 'color': "lightgray"},
-                                {'range': [1, 2], 'color': "lightgreen"},
-                                {'range': [2, 5], 'color': "limegreen"}],
-                            'threshold': {
-                                'line': {'color': "red", 'width': 4},
-                                'thickness': 0.75,
-                                'value': instrument_data['bias_score']}}
-                    ))
-                    fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
-                    st.plotly_chart(fig_gauge, use_container_width=True)
 
     def display_market_data(self):
-        st.header("🌍 Market Data")
+        st.header("🌍 Live Market Data")
         
         if st.button("🔄 Update Market Data"):
-            with st.spinner("Fetching market data..."):
+            with st.spinner("Fetching live market data..."):
                 vix_data = self.market_data_fetcher.fetch_india_vix()
                 sector_data = self.market_data_fetcher.fetch_sector_indices()
+                global_data = self.market_data_fetcher.fetch_global_markets()
                 
                 market_data = {
                     'india_vix': vix_data,
-                    'sector_indices': sector_data
+                    'sector_indices': sector_data,
+                    'global_markets': global_data
                 }
                 st.session_state.enhanced_market_data = market_data
         
         # Auto-load data if not present
         if st.session_state.enhanced_market_data is None:
-            with st.spinner("Loading market data..."):
+            with st.spinner("Loading live market data..."):
                 vix_data = self.market_data_fetcher.fetch_india_vix()
                 sector_data = self.market_data_fetcher.fetch_sector_indices()
+                global_data = self.market_data_fetcher.fetch_global_markets()
                 
                 market_data = {
                     'india_vix': vix_data,
-                    'sector_indices': sector_data
+                    'sector_indices': sector_data,
+                    'global_markets': global_data
                 }
                 st.session_state.enhanced_market_data = market_data
         
@@ -1122,9 +1295,10 @@ class EnhancedNiftyApp:
             market_data = st.session_state.enhanced_market_data
             
             # VIX Data
+            st.subheader("🇮🇳 India VIX - Fear Index")
             if market_data['india_vix']['success']:
                 vix = market_data['india_vix']
-                col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
                     st.metric("India VIX", f"{vix['value']:.2f}")
                 with col2:
@@ -1133,22 +1307,82 @@ class EnhancedNiftyApp:
                     st.metric("Bias", vix['bias'])
                 with col4:
                     st.metric("Score", vix['score'])
+                with col5:
+                    st.metric("Data", "Live", "✅ Real")
+                
+                # VIX Interpretation
+                vix_value = vix['value']
+                if vix_value > 25:
+                    interpretation = "Extreme fear, potential market bottom"
+                elif vix_value > 20:
+                    interpretation = "Elevated fear, high volatility expected"
+                elif vix_value > 15:
+                    interpretation = "Moderate volatility, normal market conditions"
+                elif vix_value > 12:
+                    interpretation = "Low volatility, complacency setting in"
+                else:
+                    interpretation = "Very low volatility, potential for spike"
+                
+                st.info(f"**Market Interpretation**: {interpretation}")
             
             # Sector Data
+            st.subheader("📈 Nifty Sector Performance")
             if market_data['sector_indices']:
-                st.subheader("Sector Performance")
                 sectors_df = pd.DataFrame(market_data['sector_indices'])
+                
+                # Display top and bottom performers
+                top_sectors = sectors_df.nlargest(3, 'change_pct')
+                bottom_sectors = sectors_df.nsmallest(3, 'change_pct')
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**🏆 Top Performers**")
+                    for _, sector in top_sectors.iterrows():
+                        st.write(f"{sector['sector']}: {sector['change_pct']:+.2f}% ({sector['bias']})")
+                
+                with col2:
+                    st.write("**📉 Lagging Sectors**")
+                    for _, sector in bottom_sectors.iterrows():
+                        st.write(f"{sector['sector']}: {sector['change_pct']:+.2f}% ({sector['bias']})")
+                
+                # Full sector table
                 st.dataframe(sectors_df, use_container_width=True)
+            
+            # Global Markets
+            st.subheader("🌍 Global Markets")
+            if market_data['global_markets']:
+                global_df = pd.DataFrame(market_data['global_markets'])
+                
+                # Display major global indices
+                cols = st.columns(4)
+                for idx, (_, market) in enumerate(global_df.iterrows()):
+                    with cols[idx % 4]:
+                        emoji = "🟢" if market['change_pct'] > 0 else "🔴"
+                        st.metric(
+                            f"{emoji} {market['market']}",
+                            f"{market['last_price']:.0f}",
+                            f"{market['change_pct']:+.2f}%"
+                        )
         else:
             st.error("Unable to load market data.")
 
     def run(self):
         st.title("📈 Advanced Nifty Trading Dashboard")
-        st.markdown("*Complete Options Chain Analysis & Bias Tabulation*")
+        st.markdown("*Live Data from Yahoo Finance & NSE*")
+        
+        # Display data source info
+        st.sidebar.header("🔧 Data Sources")
+        st.sidebar.info("""
+        **Real Data Sources:**
+        - 📈 Nifty 50: Yahoo Finance (^NSEI)
+        - 📊 Options: NSE India
+        - 🌍 Market Data: Yahoo Finance
+        - 🎯 Technicals: Live Calculations
+        """)
         
         # Create tabs for different sections
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "📈 Price", "📊 Options", "🎯 Technical", "📋 Bias Tabulation", "🌍 Market"
+            "📈 Live Price", "📊 Options", "🎯 Technical", "📋 Bias Tabulation", "🌍 Market Data"
         ])
         
         with tab1:
