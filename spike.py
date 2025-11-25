@@ -5,6 +5,7 @@ import requests
 import time
 from datetime import datetime, time as dtime
 import pytz
+import json
 
 st.set_page_config(page_title="Expiry Spike Detector", layout="wide")
 
@@ -61,40 +62,51 @@ st.sidebar.markdown("**Streamlit Secrets needed:**")
 st.sidebar.markdown("`dhanauth.CLIENT_ID`, `dhanauth.ACCESS_TOKEN`")
 
 # ---------------------------
-# Initialize Session State with PERSISTENT DATA STORAGE
+# ROBUST DATA PERSISTENCE SYSTEM
 # ---------------------------
-if 'last_alert_score' not in st.session_state:
-    st.session_state.last_alert_score = 0
-if 'analysis_history' not in st.session_state:
-    st.session_state.analysis_history = []
-if 'fetch_now' not in st.session_state:
-    st.session_state.fetch_now = True
-if 'last_api_response' not in st.session_state:
-    st.session_state.last_api_response = None
-if 'last_alert_time' not in st.session_state:
-    st.session_state.last_alert_time = None
-if 'consecutive_signals' not in st.session_state:
-    st.session_state.consecutive_signals = 0
 
-# PERSISTENT DATA STORAGE
-if 'previous_data' not in st.session_state:
-    st.session_state.previous_data = None
-if 'data_history' not in st.session_state:
-    st.session_state.data_history = []
-if 'last_fetch_time' not in st.session_state:
-    st.session_state.last_fetch_time = None
-if 'current_oi_data' not in st.session_state:
-    st.session_state.current_oi_data = {}
-if 'current_volume_data' not in st.session_state:
-    st.session_state.current_volume_data = {}
+def initialize_session_state():
+    """Initialize all session state variables with proper defaults"""
+    defaults = {
+        'last_alert_score': 0,
+        'analysis_history': [],
+        'fetch_now': True,
+        'last_api_response': None,
+        'last_alert_time': None,
+        'consecutive_signals': 0,
+        'previous_data': None,
+        'data_history': [],
+        'last_fetch_time': None,
+        'current_oi_data': {},
+        'current_volume_data': {},
+        'data_quality_check': False,
+        'successful_fetches': 0,
+        'failed_fetches': 0
+    }
+    
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+# Initialize session state
+initialize_session_state()
 
 # ---------------------------
-# DATA PERSISTENCE FUNCTIONS
+# ENHANCED DATA PERSISTENCE FUNCTIONS
 # ---------------------------
 
 def save_current_data(current_data, spot_price):
-    """Save current data to session state for next comparison"""
-    if current_data is not None and not current_data.empty:
+    """Save current data to session state with validation"""
+    if current_data is None or current_data.empty:
+        st.warning("⚠️ No valid data to save")
+        return False
+    
+    try:
+        # Validate data before saving
+        if not validate_option_chain_data(current_data):
+            st.warning("⚠️ Data validation failed - not saving")
+            return False
+        
         # Store the current data as previous data for next run
         st.session_state.previous_data = current_data.copy()
         
@@ -102,45 +114,116 @@ def save_current_data(current_data, spot_price):
         st.session_state.last_fetch_time = get_ist_time()
         
         # Store individual OI and volume data for tracking
-        try:
-            strikes = current_data['strike'].values
-            atm_idx = int(np.argmin(np.abs(strikes - spot_price)))
+        strikes = current_data['strike'].values
+        atm_idx = int(np.argmin(np.abs(strikes - spot_price)))
+        
+        if atm_idx < len(current_data):
+            atm_data = current_data.iloc[atm_idx]
             
-            if atm_idx < len(current_data):
-                atm_data = current_data.iloc[atm_idx]
-                
-                st.session_state.current_oi_data = {
-                    'ce_oi': atm_data.get('ce_oi', 0),
-                    'pe_oi': atm_data.get('pe_oi', 0),
-                    'ce_oi_change': atm_data.get('ce_oi_change', 0),
-                    'pe_oi_change': atm_data.get('pe_oi_change', 0),
-                    'timestamp': get_ist_time()
-                }
-                
-                st.session_state.current_volume_data = {
-                    'ce_volume': atm_data.get('ce_volume', 0),
-                    'pe_volume': atm_data.get('pe_volume', 0),
-                    'timestamp': get_ist_time()
-                }
-        except Exception as e:
-            st.warning(f"Could not save current data: {e}")
+            st.session_state.current_oi_data = {
+                'ce_oi': float(atm_data.get('ce_oi', 0)),
+                'pe_oi': float(atm_data.get('pe_oi', 0)),
+                'ce_oi_change': float(atm_data.get('ce_oi_change', 0)),
+                'pe_oi_change': float(atm_data.get('pe_oi_change', 0)),
+                'timestamp': get_ist_time().timestamp()
+            }
+            
+            st.session_state.current_volume_data = {
+                'ce_volume': float(atm_data.get('ce_volume', 0)),
+                'pe_volume': float(atm_data.get('pe_volume', 0)),
+                'timestamp': get_ist_time().timestamp()
+            }
+        
+        st.session_state.successful_fetches += 1
+        st.session_state.data_quality_check = True
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Error saving data: {e}")
+        st.session_state.failed_fetches += 1
+        return False
+
+def validate_option_chain_data(df):
+    """Validate the option chain data for quality"""
+    if df is None or df.empty:
+        return False
+    
+    try:
+        # Check if we have reasonable data
+        required_columns = ['strike', 'ce_oi', 'pe_oi', 'ce_volume', 'pe_volume']
+        
+        for col in required_columns:
+            if col not in df.columns:
+                st.warning(f"Missing column: {col}")
+                return False
+        
+        # Check if OI values are reasonable (not all zeros)
+        total_ce_oi = df['ce_oi'].sum()
+        total_pe_oi = df['pe_oi'].sum()
+        
+        if total_ce_oi == 0 and total_pe_oi == 0:
+            st.warning("⚠️ All OI values are zero - data may be invalid")
+            return False
+        
+        # Check if we have reasonable strike prices
+        strikes = df['strike'].values
+        if len(strikes) < 10:  # Should have at least 10 strikes
+            st.warning("⚠️ Too few strikes - data may be incomplete")
+            return False
+            
+        return True
+        
+    except Exception as e:
+        st.error(f"Data validation error: {e}")
+        return False
 
 def get_previous_data():
-    """Get previous data from session state"""
+    """Get previous data with validation"""
+    if st.session_state.previous_data is None:
+        return None
+    
+    # Validate that previous data is still usable
+    if not validate_option_chain_data(st.session_state.previous_data):
+        st.warning("⚠️ Previous data validation failed")
+        st.session_state.previous_data = None
+        return None
+    
     return st.session_state.previous_data
 
 def has_valid_previous_data():
     """Check if we have valid previous data for comparison"""
-    if st.session_state.previous_data is None:
+    previous_data = get_previous_data()
+    if previous_data is None:
         return False
     
-    # Check if data is not too old (max 5 minutes)
+    # Check if data is not too old (max 10 minutes for better persistence)
     if st.session_state.last_fetch_time:
-        time_diff = (get_ist_time() - st.session_state.last_fetch_time).total_seconds() / 60
-        if time_diff > 5:  # Data older than 5 minutes is considered stale
+        # Handle both datetime and timestamp formats
+        if isinstance(st.session_state.last_fetch_time, (int, float)):
+            last_fetch = datetime.fromtimestamp(st.session_state.last_fetch_time, ist)
+        else:
+            last_fetch = st.session_state.last_fetch_time
+            
+        time_diff = (get_ist_time() - last_fetch).total_seconds() / 60
+        if time_diff > 10:  # Increased to 10 minutes for better persistence
+            st.info("🕒 Previous data is stale, collecting fresh baseline...")
             return False
     
     return True
+
+def backup_session_state():
+    """Create a backup of critical session state data"""
+    try:
+        backup_data = {
+            'previous_data_timestamp': st.session_state.last_fetch_time.timestamp() if st.session_state.last_fetch_time else None,
+            'current_oi_data': st.session_state.current_oi_data,
+            'current_volume_data': st.session_state.current_volume_data,
+            'successful_fetches': st.session_state.successful_fetches,
+            'backup_time': get_ist_time().timestamp()
+        }
+        st.session_state.backup_data = backup_data
+    except Exception as e:
+        st.warning(f"Could not create backup: {e}")
 
 # ---------------------------
 # GAMMA SEQUENCE ENGINE
@@ -471,73 +554,12 @@ def master_bias_engine(gamma_data, spike_data):
     }
 
 # ---------------------------
-# TELEGRAM ALERT SYSTEM
+# ENHANCED DATA FETCHING WITH RETRY MECHANISM
 # ---------------------------
 
-def send_telegram_message(msg: str):
-    """Send alert via Telegram bot"""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return False
-    
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
-    try:
-        response = requests.post(url, json=payload, timeout=5)
-        return response.status_code == 200
-    except Exception:
-        return False
-
-def check_and_send_master_alert(master_bias, threshold, symbol):
-    """Send Telegram alert for high probability signals"""
-    if abs(master_bias['master_bias_score']) < threshold:
-        return False
-    
-    current_time = get_ist_time()
-    
-    # Rate limiting: Max 1 alert every 10 minutes
-    if st.session_state.last_alert_time:
-        time_diff = (current_time - st.session_state.last_alert_time).total_seconds() / 60
-        if time_diff < 10:
-            return False
-    
-    gamma = master_bias['components']['gamma_sequence'] or {}
-    spike = master_bias['components']['expiry_spike'] or {}
-    
-    message = f"""🚨 **MASTER BIAS ALERT** 🚨
-
-📊 **Symbol:** {symbol}
-🎯 **Master Bias Score:** {master_bias['master_bias_score']}
-📈 **Overall Direction:** {master_bias['direction_emoji']} {master_bias['overall_direction']}
-⏰ **Time:** {current_time.strftime('%H:%M:%S IST')}
-
-🔥 **Gamma Sequence:**
-   - Score: {gamma.get('gamma_score', 0)}/100
-   - Pressure: {gamma.get('gamma_pressure', 0)}
-   - Volatility: {gamma.get('volatility_warning', 'N/A').upper()}
-   - Flip: {'✅ YES' if gamma.get('gamma_flip') else '❌ NO'}
-
-⚡ **Expiry Spike:**
-   - Probability: {spike.get('spike_probability', 0)}%
-   - Direction: {spike.get('direction', 'N/A')}
-
-💡 **Expected Move:** {gamma.get('expected_move', 0)} points
-
-**Action:** Consider {master_bias['overall_direction'].split()[-1]} positions with proper risk management."""
-
-    if send_telegram_message(message):
-        st.session_state.last_alert_time = current_time
-        st.session_state.last_alert_score = master_bias['master_bias_score']
-        return True
-    
-    return False
-
-# ---------------------------
-# DATA FETCHING FUNCTIONS
-# ---------------------------
-
-@st.cache_data(ttl=60)  # Cache for 60 seconds
-def fetch_option_chain_dhan_cached(symbol_key: str, expiry_date: str):
-    """Fetch option chain using Dhan API V2 with caching"""
+@st.cache_data(ttl=30, show_spinner=False)  # Reduced cache time for freshness
+def fetch_option_chain_dhan_cached(symbol_key: str, expiry_date: str, attempt=1):
+    """Fetch option chain using Dhan API V2 with caching and retry"""
     if not ACCESS_TOKEN or not CLIENT_ID:
         st.error("❌ Dhan credentials missing in Streamlit secrets.")
         return None
@@ -563,22 +585,28 @@ def fetch_option_chain_dhan_cached(symbol_key: str, expiry_date: str):
     }
 
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=10)
+        r = requests.post(url, headers=headers, json=payload, timeout=15)  # Increased timeout
         if r.status_code == 200:
             return r.json()
         else:
+            if attempt < 3:  # Retry up to 3 times
+                time.sleep(1)
+                return fetch_option_chain_dhan_cached(symbol_key, expiry_date, attempt + 1)
             st.error(f"❌ API Error {r.status_code}: {r.text}")
             return None
     except Exception as e:
+        if attempt < 3:  # Retry up to 3 times
+            time.sleep(1)
+            return fetch_option_chain_dhan_cached(symbol_key, expiry_date, attempt + 1)
         st.error(f"❌ Connection Failed: {e}")
         return None
 
 def fetch_option_chain_dhan(symbol_key: str, expiry_date: str):
-    """Fetch option chain with caching"""
+    """Fetch option chain with caching and retry"""
     return fetch_option_chain_dhan_cached(symbol_key, expiry_date)
 
 def normalize_option_chain(raw):
-    """Normalize Dhan V2 response into DataFrame"""
+    """Normalize Dhan V2 response into DataFrame with enhanced validation"""
     items = []
     try:
         if not raw or 'data' not in raw:
@@ -592,12 +620,18 @@ def normalize_option_chain(raw):
             st.warning("⚠️ No option chain data found in response")
             return None, 0
         
-        # Extract spot price
+        # Extract spot price with validation
         spot_price = (data_block.get('last_price') or 
                      data_block.get('spot_price') or 
                      data_block.get('underlyingValue') or 
                      0)
         
+        # Validate spot price
+        if spot_price == 0:
+            st.warning("⚠️ Spot price is zero - data may be invalid")
+            return None, 0
+        
+        valid_items = 0
         for strike_price, details in chain_data.items():
             if not isinstance(details, dict):
                 continue
@@ -624,15 +658,26 @@ def normalize_option_chain(raw):
                     'pe_oi_change': float(pe.get('oi_change', 0.0)) if pe else 0.0,
                     'pe_volume': float(pe.get('volume', 0.0)) if pe else 0.0
                 }
-                items.append(item)
-            except (ValueError, TypeError):
+                
+                # Only add items with reasonable data
+                if item['ce_oi'] > 0 or item['pe_oi'] > 0:  # At least some OI data
+                    items.append(item)
+                    valid_items += 1
+                    
+            except (ValueError, TypeError) as e:
                 continue
                 
-        if not items:
-            st.error("❌ No valid option data parsed")
+        if valid_items == 0:
+            st.error("❌ No valid option data parsed - all OI values are zero")
             return None, spot_price
             
         df = pd.DataFrame(items).sort_values('strike').reset_index(drop=True)
+        
+        # Final validation
+        if not validate_option_chain_data(df):
+            st.error("❌ Data validation failed after parsing")
+            return None, spot_price
+            
         return df, spot_price
         
     except Exception as e:
@@ -737,15 +782,85 @@ def show_data_status():
     st.sidebar.subheader("📊 Data Status")
     
     if st.session_state.last_fetch_time:
-        time_diff = (get_ist_time() - st.session_state.last_fetch_time).total_seconds() / 60
+        # Handle both datetime and timestamp formats
+        if isinstance(st.session_state.last_fetch_time, (int, float)):
+            last_fetch = datetime.fromtimestamp(st.session_state.last_fetch_time, ist)
+        else:
+            last_fetch = st.session_state.last_fetch_time
+            
+        time_diff = (get_ist_time() - last_fetch).total_seconds() / 60
         st.sidebar.write(f"Last data: {time_diff:.1f} min ago")
         
         if st.session_state.current_oi_data:
             oi_data = st.session_state.current_oi_data
             st.sidebar.write(f"CE OI: {oi_data.get('ce_oi', 0):,.0f}")
             st.sidebar.write(f"PE OI: {oi_data.get('pe_oi', 0):,.0f}")
+        
+        st.sidebar.write(f"Successful: {st.session_state.successful_fetches}")
+        st.sidebar.write(f"Failed: {st.session_state.failed_fetches}")
     else:
         st.sidebar.write("No data collected yet")
+
+# ---------------------------
+# TELEGRAM ALERT SYSTEM
+# ---------------------------
+
+def send_telegram_message(msg: str):
+    """Send alert via Telegram bot"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
+    try:
+        response = requests.post(url, json=payload, timeout=5)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+def check_and_send_master_alert(master_bias, threshold, symbol):
+    """Send Telegram alert for high probability signals"""
+    if abs(master_bias['master_bias_score']) < threshold:
+        return False
+    
+    current_time = get_ist_time()
+    
+    # Rate limiting: Max 1 alert every 10 minutes
+    if st.session_state.last_alert_time:
+        time_diff = (current_time - st.session_state.last_alert_time).total_seconds() / 60
+        if time_diff < 10:
+            return False
+    
+    gamma = master_bias['components']['gamma_sequence'] or {}
+    spike = master_bias['components']['expiry_spike'] or {}
+    
+    message = f"""🚨 **MASTER BIAS ALERT** 🚨
+
+📊 **Symbol:** {symbol}
+🎯 **Master Bias Score:** {master_bias['master_bias_score']}
+📈 **Overall Direction:** {master_bias['direction_emoji']} {master_bias['overall_direction']}
+⏰ **Time:** {current_time.strftime('%H:%M:%S IST')}
+
+🔥 **Gamma Sequence:**
+   - Score: {gamma.get('gamma_score', 0)}/100
+   - Pressure: {gamma.get('gamma_pressure', 0)}
+   - Volatility: {gamma.get('volatility_warning', 'N/A').upper()}
+   - Flip: {'✅ YES' if gamma.get('gamma_flip') else '❌ NO'}
+
+⚡ **Expiry Spike:**
+   - Probability: {spike.get('spike_probability', 0)}%
+   - Direction: {spike.get('direction', 'N/A')}
+
+💡 **Expected Move:** {gamma.get('expected_move', 0)} points
+
+**Action:** Consider {master_bias['overall_direction'].split()[-1]} positions with proper risk management."""
+
+    if send_telegram_message(message):
+        st.session_state.last_alert_time = current_time
+        st.session_state.last_alert_score = master_bias['master_bias_score']
+        return True
+    
+    return False
 
 # ---------------------------
 # MAIN EXPIRY SPIKE DETECTOR UI
@@ -782,51 +897,64 @@ with col1:
 with col2:
     if st.button("🔄 Manual Refresh"):
         st.session_state.fetch_now = True
+    if st.button("🗑️ Clear Data Cache"):
+        st.session_state.previous_data = None
+        st.session_state.last_fetch_time = None
+        st.success("Data cache cleared!")
 
 # Main analysis function
 def run_comprehensive_analysis():
-    """Run all analysis engines"""
-    with st.spinner("🔄 Fetching live option chain data..."):
-        raw = fetch_option_chain_dhan(symbol_selection, expiry)
-    
-    if not raw: 
+    """Run all analysis engines with enhanced error handling"""
+    try:
+        with st.spinner("🔄 Fetching live option chain data..."):
+            raw = fetch_option_chain_dhan(symbol_selection, expiry)
+        
+        if not raw: 
+            st.session_state.failed_fetches += 1
+            return None
+        
+        df, spot_price = normalize_option_chain(raw)
+        if df is None:
+            st.session_state.failed_fetches += 1
+            return None
+        
+        # Run all engines
+        gamma_data = gamma_sequence_engine(df)
+        
+        # Calculate spike probability
+        current_data = df
+        previous_data = get_previous_data()
+        spike_probability, direction, signal_details = calculate_spike_probability(
+            current_data, previous_data, spot_price
+        )
+        
+        spike_data = {
+            'spike_probability': spike_probability,
+            'direction': direction,
+            'signal_details': signal_details
+        }
+        
+        # Master bias engine
+        master_bias = master_bias_engine(gamma_data, spike_data)
+        
+        # Save current data for next comparison
+        if save_current_data(current_data, spot_price):
+            backup_session_state()
+        
+        return {
+            'master_bias': master_bias,
+            'gamma_data': gamma_data,
+            'spike_data': spike_data,
+            'spot_price': spot_price,
+            'option_chain': df,
+            'timestamp': get_ist_time(),
+            'has_previous_data': previous_data is not None
+        }
+        
+    except Exception as e:
+        st.error(f"❌ Comprehensive analysis error: {e}")
+        st.session_state.failed_fetches += 1
         return None
-    
-    df, spot_price = normalize_option_chain(raw)
-    if df is None:
-        return None
-    
-    # Run all engines
-    gamma_data = gamma_sequence_engine(df)
-    
-    # Calculate spike probability
-    current_data = df
-    previous_data = get_previous_data()
-    spike_probability, direction, signal_details = calculate_spike_probability(
-        current_data, previous_data, spot_price
-    )
-    
-    spike_data = {
-        'spike_probability': spike_probability,
-        'direction': direction,
-        'signal_details': signal_details
-    }
-    
-    # Master bias engine
-    master_bias = master_bias_engine(gamma_data, spike_data)
-    
-    # Save current data for next comparison
-    save_current_data(current_data, spot_price)
-    
-    return {
-        'master_bias': master_bias,
-        'gamma_data': gamma_data,
-        'spike_data': spike_data,
-        'spot_price': spot_price,
-        'option_chain': df,
-        'timestamp': get_ist_time(),
-        'has_previous_data': previous_data is not None
-    }
 
 # ---------------------------
 # MAIN EXECUTION LOOP
@@ -860,7 +988,6 @@ if run_live or st.session_state.fetch_now:
             
             # Master Score with color coding
             master_score = result['master_bias']['master_bias_score']
-            score_color = "red" if abs(master_score) >= 7 else "orange" if abs(master_score) >= 4 else "green"
             
             col1.metric(
                 "Master Bias Score", 
@@ -953,31 +1080,29 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("""
-**🎯 Master Bias Engine Features:**
+**🎯 Enhanced Data Persistence Features:**
 
-🔥 **Gamma Sequence Engine:**
-   - Volatility shock detection
-   - Market maker hedging analysis
-   - Gamma flip detection
-   - Expected move calculation
+🛡️ **Robust Data Validation:**
+   - Multiple validation checks
+   - OI data quality verification
+   - Strike count validation
+   - Spot price validation
 
-⚡ **Expiry Spike Detector:**
-   - OI Unwind (Strongest signal)
-   - Volume Explosion
-   - VWAP Reclaim
-   - IV Crush
-   - Liquidity Breakout
+🔄 **Enhanced Error Handling:**
+   - Retry mechanism for API calls
+   - Graceful degradation
+   - Data backup system
+   - Comprehensive error tracking
 
-✅ **Smart Features:**
-   - Data persistence across refreshes
-   - Telegram alerts for high probability moves
-   - Rate limited alerts (max 1 per 10 mins)
-   - IST timezone handling
+💾 **Smart Data Persistence:**
+   - Session state initialization
+   - Data quality monitoring
+   - Backup system
+   - Cache management
 
-✅ **Auto Operation:**
-   - Runs on expiry days (Tuesdays)
-   - Active after 12:45 PM IST
-   - Continuous monitoring every 30 seconds
-
-🎯 **Accuracy:** 85-90% in predicting 30-60 point moves
+✅ **Reliable Operation:**
+   - Data persists across refreshes
+   - Automatic recovery from errors
+   - Quality monitoring
+   - Performance tracking
 """)
