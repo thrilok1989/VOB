@@ -16,6 +16,7 @@ import math
 from scipy.stats import norm
 import plotly.express as px
 from collections import deque
+import hashlib
 
 warnings.filterwarnings('ignore')
 
@@ -2567,6 +2568,12 @@ if 'overall_nifty_score' not in st.session_state:
 if 'atm_detailed_bias' not in st.session_state:
     st.session_state.atm_detailed_bias = None
 
+# Function to generate unique element IDs
+def generate_element_id(prefix: str, content: str) -> str:
+    """Generate unique element ID using hash of content"""
+    content_hash = hashlib.md5(content.encode()).hexdigest()[:8]
+    return f"{prefix}_{content_hash}"
+
 # Function to calculate ATM detailed bias score
 def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
     """Calculate overall ATM bias from detailed bias metrics"""
@@ -2988,7 +2995,8 @@ with tabs[2]:
         # Detect volume order blocks
         bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
         
-        # Create the chart
+        # Create the chart with unique ID
+        chart_id = generate_element_id("price_chart", f"{symbol_input}_{period_input}_{interval_input}")
         fig = make_subplots(
             rows=2, cols=1,
             row_heights=[0.7, 0.3],
@@ -3056,7 +3064,7 @@ with tabs[2]:
             margin=dict(l=0, r=0, t=50, b=0)
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=chart_id)
         
         # Volume Order Blocks Summary
         st.subheader("Volume Order Blocks Analysis")
@@ -3107,8 +3115,9 @@ with tabs[3]:
                 )
         
         # Enhanced detailed analysis for each instrument
-        for instrument_data in bias_data:
-            with st.expander(f"🏦 {instrument_data['instrument']} - Institutional Footprint Analysis", expanded=True):
+        for idx, instrument_data in enumerate(bias_data):
+            expander_id = generate_element_id("instrument_expander", f"{instrument_data['instrument']}_{idx}")
+            with st.expander(f"🏦 {instrument_data['instrument']} - Institutional Footprint Analysis", expanded=True, key=expander_id):
                 
                 # Basic Information
                 col1, col2, col3, col4 = st.columns(4)
@@ -3146,24 +3155,24 @@ with tabs[3]:
                     # Show breakout signals
                     if breakout_data['breakout_analysis'].get('signals'):
                         st.subheader("📈 Breakout Signals")
-                        for signal in breakout_data['breakout_analysis']['signals']:
+                        for signal_idx, signal in enumerate(breakout_data['breakout_analysis']['signals']):
                             if "✅" in signal:
-                                st.success(signal)
+                                st.success(signal, key=f"breakout_success_{idx}_{signal_idx}")
                             elif "❌" in signal:
-                                st.error(signal)
+                                st.error(signal, key=f"breakout_error_{idx}_{signal_idx}")
                             else:
-                                st.warning(signal)
+                                st.warning(signal, key=f"breakout_warning_{idx}_{signal_idx}")
                     
                     # Show reversal signals
                     if breakout_data['reversal_analysis'].get('signals'):
                         st.subheader("🔄 Reversal Signals")
-                        for signal in breakout_data['reversal_analysis']['signals']:
+                        for signal_idx, signal in enumerate(breakout_data['reversal_analysis']['signals']):
                             if "✅" in signal:
-                                st.success(signal)
+                                st.success(signal, key=f"reversal_success_{idx}_{signal_idx}")
                             elif "❌" in signal:
-                                st.error(signal)
+                                st.error(signal, key=f"reversal_error_{idx}_{signal_idx}")
                             else:
-                                st.warning(signal)
+                                st.warning(signal, key=f"reversal_warning_{idx}_{signal_idx}")
                 else:
                     st.warning("Breakout/Reversal analysis not available for this instrument")
                 
@@ -3176,7 +3185,7 @@ with tabs[3]:
                     # Display patterns in a table
                     if inst_analysis.get('patterns'):
                         patterns_df = pd.DataFrame(inst_analysis['patterns'])
-                        st.dataframe(patterns_df, use_container_width=True)
+                        st.dataframe(patterns_df, use_container_width=True, key=f"patterns_{idx}")
                     
                     # Gamma Analysis - COMPREHENSIVE
                     gamma_analysis = inst_analysis.get('gamma_analysis', {})
@@ -3185,13 +3194,13 @@ with tabs[3]:
                     # Gamma Overview
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Gamma Bias", gamma_analysis.get('gamma_bias', 'NEUTRAL'))
+                        st.metric("Gamma Bias", gamma_analysis.get('gamma_bias', 'NEUTRAL'), key=f"gamma_bias_{idx}")
                     with col2:
-                        st.metric("Gamma Score", f"{gamma_analysis.get('gamma_score', 0):.1f}")
+                        st.metric("Gamma Score", f"{gamma_analysis.get('gamma_score', 0):.1f}", key=f"gamma_score_{idx}")
                     with col3:
-                        st.metric("Gamma Profile", gamma_analysis.get('profile', 'Unknown'))
+                        st.metric("Gamma Profile", gamma_analysis.get('profile', 'Unknown'), key=f"gamma_profile_{idx}")
                     with col4:
-                        st.metric("Total Gamma Exposure", f"{gamma_analysis.get('total_gamma_exposure', 0):.0f}")
+                        st.metric("Total Gamma Exposure", f"{gamma_analysis.get('total_gamma_exposure', 0):.0f}", key=f"gamma_exposure_{idx}")
                     
                     # Gamma Zones Analysis
                     if gamma_analysis.get('zones'):
@@ -3205,7 +3214,7 @@ with tabs[3]:
                                 'Strike Range': zone_info['strike_range']
                             })
                         zones_df = pd.DataFrame(zones_data)
-                        st.dataframe(zones_df, use_container_width=True)
+                        st.dataframe(zones_df, use_container_width=True, key=f"zones_{idx}")
                     
                     # Gamma Walls/Resistance Levels
                     if gamma_analysis.get('walls'):
@@ -3219,7 +3228,7 @@ with tabs[3]:
                                 'Strength': wall['strength']
                             })
                         walls_df = pd.DataFrame(walls_data)
-                        st.dataframe(walls_df, use_container_width=True)
+                        st.dataframe(walls_df, use_container_width=True, key=f"walls_{idx}")
                     
                     # Gamma Sequences
                     if gamma_analysis.get('sequence'):
@@ -3227,13 +3236,13 @@ with tabs[3]:
                         st.subheader("📈 Gamma Sequence Patterns")
                         col1, col2, col3, col4 = st.columns(4)
                         with col1:
-                            st.metric("Positive Sequences", len(seq_analysis.get('positive_sequences', [])))
+                            st.metric("Positive Sequences", len(seq_analysis.get('positive_sequences', [])), key=f"pos_seq_{idx}")
                         with col2:
-                            st.metric("Negative Sequences", len(seq_analysis.get('negative_sequences', [])))
+                            st.metric("Negative Sequences", len(seq_analysis.get('negative_sequences', [])), key=f"neg_seq_{idx}")
                         with col3:
-                            st.metric("Longest Positive", seq_analysis.get('longest_positive_seq', 0))
+                            st.metric("Longest Positive", seq_analysis.get('longest_positive_seq', 0), key=f"long_pos_{idx}")
                         with col4:
-                            st.metric("Longest Negative", seq_analysis.get('longest_negative_seq', 0))
+                            st.metric("Longest Negative", seq_analysis.get('longest_negative_seq', 0), key=f"long_neg_{idx}")
                 
                 # Advanced Metrics
                 st.subheader("📈 Advanced Option Metrics")
@@ -3242,35 +3251,35 @@ with tabs[3]:
                 if comp_metrics:
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Synthetic Bias", comp_metrics.get('synthetic_bias', 'N/A'))
+                        st.metric("Synthetic Bias", comp_metrics.get('synthetic_bias', 'N/A'), key=f"synthetic_{idx}")
                     with col2:
-                        st.metric("ATM Buildup", comp_metrics.get('atm_buildup', 'N/A'))
+                        st.metric("ATM Buildup", comp_metrics.get('atm_buildup', 'N/A'), key=f"buildup_{idx}")
                     with col3:
-                        st.metric("Max Pain", f"₹{comp_metrics.get('max_pain_strike', 'N/A')}")
+                        st.metric("Max Pain", f"₹{comp_metrics.get('max_pain_strike', 'N/A')}", key=f"max_pain_{idx}")
                     with col4:
-                        st.metric("Vega Bias", comp_metrics.get('total_vega_bias', 'N/A'))
+                        st.metric("Vega Bias", comp_metrics.get('total_vega_bias', 'N/A'), key=f"vega_{idx}")
                 
                 # Key Levels
                 st.subheader("🎯 Key Trading Levels")
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Call Resistance", f"₹{comp_metrics.get('call_resistance', 'N/A')}")
+                    st.metric("Call Resistance", f"₹{comp_metrics.get('call_resistance', 'N/A')}", key=f"call_res_{idx}")
                 with col2:
-                    st.metric("Put Support", f"₹{comp_metrics.get('put_support', 'N/A')}")
+                    st.metric("Put Support", f"₹{comp_metrics.get('put_support', 'N/A')}", key=f"put_sup_{idx}")
                 with col3:
-                    st.metric("Distance from Max Pain", f"{comp_metrics.get('distance_from_max_pain', 0):.1f}")
+                    st.metric("Distance from Max Pain", f"{comp_metrics.get('distance_from_max_pain', 0):.1f}", key=f"dist_pain_{idx}")
                 
                 # Combined Bias Breakdown
                 st.subheader("⚖️ Combined Bias Breakdown")
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Basic Score", f"{instrument_data.get('bias_score', 0):.2f}")
+                    st.metric("Basic Score", f"{instrument_data.get('bias_score', 0):.2f}", key=f"basic_score_{idx}")
                 with col2:
-                    st.metric("Institutional Score", f"{instrument_data.get('institutional_score', 0):.2f}")
+                    st.metric("Institutional Score", f"{instrument_data.get('institutional_score', 0):.2f}", key=f"inst_score_{idx}")
                 with col3:
-                    st.metric("Gamma Score", f"{instrument_data.get('gamma_score', 0):.2f}")
+                    st.metric("Gamma Score", f"{instrument_data.get('gamma_score', 0):.2f}", key=f"gamma_final_{idx}")
                 with col4:
-                    st.metric("Breakout Score", f"{instrument_data.get('breakout_score', 0):.2f}")
+                    st.metric("Breakout Score", f"{instrument_data.get('breakout_score', 0):.2f}", key=f"breakout_final_{idx}")
     
     else:
         st.info("No option chain data available. Please refresh analysis first.")
@@ -3282,8 +3291,9 @@ with tabs[4]:
     if not st.session_state.market_bias_data:
         st.info("No option chain data available. Please refresh analysis first.")
     else:
-        for instrument_data in st.session_state.market_bias_data:
-            with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True):
+        for idx, instrument_data in enumerate(st.session_state.market_bias_data):
+            tab_id = generate_element_id("bias_tab", f"{instrument_data['instrument']}_{idx}")
+            with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True, key=tab_id):
                 
                 # Basic Information Table
                 st.subheader("📊 Basic Information")
@@ -3302,7 +3312,7 @@ with tabs[4]:
                         f"{instrument_data['pcr_change']:.2f}"
                     ]
                 })
-                st.dataframe(basic_info, use_container_width=True, hide_index=True)
+                st.dataframe(basic_info, use_container_width=True, hide_index=True, key=f"basic_info_{idx}")
                 
                 # ATM Detailed Bias Summary
                 if 'detailed_atm_bias' in instrument_data and instrument_data['detailed_atm_bias']:
@@ -3317,11 +3327,11 @@ with tabs[4]:
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         bias_color = "🟢" if atm_bias == "BULLISH" else "🔴" if atm_bias == "BEARISH" else "🟡"
-                        st.metric("ATM Detailed Bias", f"{bias_color} {atm_bias}")
+                        st.metric("ATM Detailed Bias", f"{bias_color} {atm_bias}", key=f"atm_bias_{idx}")
                     with col2:
-                        st.metric("Bias Score", f"{atm_score:.1f}")
+                        st.metric("Bias Score", f"{atm_score:.1f}", key=f"atm_score_{idx}")
                     with col3:
-                        st.metric("Total Metrics", f"{len([k for k in detailed_bias.keys() if 'Bias' in k])}")
+                        st.metric("Total Metrics", f"{len([k for k in detailed_bias.keys() if 'Bias' in k])}", key=f"atm_metrics_{idx}")
                     
                     # Create comprehensive table for detailed bias
                     st.subheader("🔍 Detailed Bias Metrics Breakdown")
@@ -3348,7 +3358,7 @@ with tabs[4]:
                                 return 'color: orange; font-weight: bold'
                         
                         styled_df = breakdown_df.style.applymap(color_bias, subset=['Value'])
-                        st.dataframe(styled_df, use_container_width=True)
+                        st.dataframe(styled_df, use_container_width=True, key=f"breakdown_{idx}")
                         
                         # Bias distribution
                         st.subheader("📊 Bias Distribution")
@@ -3357,11 +3367,12 @@ with tabs[4]:
                         neutral_count = len([b for b in bias_breakdown if b['Value'] == 'Neutral'])
                         
                         col1, col2, col3 = st.columns(3)
-                        col1.metric("Bullish Metrics", bull_count)
-                        col2.metric("Bearish Metrics", bear_count)
-                        col3.metric("Neutral Metrics", neutral_count)
+                        col1.metric("Bullish Metrics", bull_count, key=f"bull_count_{idx}")
+                        col2.metric("Bearish Metrics", bear_count, key=f"bear_count_{idx}")
+                        col3.metric("Neutral Metrics", neutral_count, key=f"neutral_count_{idx}")
                         
-                        # Create bias distribution chart
+                        # Create bias distribution chart with unique ID
+                        chart_id = generate_element_id("bias_chart", f"{instrument_data['instrument']}_{idx}")
                         fig = px.pie(
                             names=['Bullish', 'Bearish', 'Neutral'],
                             values=[bull_count, bear_count, neutral_count],
@@ -3369,7 +3380,7 @@ with tabs[4]:
                             color=['Bullish', 'Bearish', 'Neutral'],
                             color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444', 'Neutral': '#ffaa00'}
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, key=chart_id)
                 
                 # Breakout/Reversal Analysis - NEW SECTION
                 if 'breakout_reversal_analysis' in instrument_data:
@@ -3380,36 +3391,36 @@ with tabs[4]:
                     # Display key metrics
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Market State", breakout_data['market_state'])
+                        st.metric("Market State", breakout_data['market_state'], key=f"market_state_{idx}")
                     with col2:
-                        st.metric("Overall Score", f"{breakout_data['overall_score']:.1f}")
+                        st.metric("Overall Score", f"{breakout_data['overall_score']:.1f}", key=f"breakout_overall_{idx}")
                     with col3:
                         signal = breakout_data['trading_signal']
-                        st.metric("Trading Signal", signal['action'])
+                        st.metric("Trading Signal", signal['action'], key=f"signal_{idx}")
                     with col4:
-                        st.metric("Confidence", signal['confidence'])
+                        st.metric("Confidence", signal['confidence'], key=f"confidence_{idx}")
                     
                     # Display breakout analysis details
                     st.subheader("📈 Breakout Analysis Details")
                     breakout_analysis = breakout_data['breakout_analysis']
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Breakout Confidence", f"{breakout_analysis.get('breakout_confidence', 0):.1f}%")
+                        st.metric("Breakout Confidence", f"{breakout_analysis.get('breakout_confidence', 0):.1f}%", key=f"breakout_conf_{idx}")
                     with col2:
-                        st.metric("Direction", breakout_analysis.get('direction', 'UNKNOWN'))
+                        st.metric("Direction", breakout_analysis.get('direction', 'UNKNOWN'), key=f"direction_{idx}")
                     with col3:
-                        st.metric("Breakout Type", breakout_analysis.get('breakout_type', 'UNKNOWN'))
+                        st.metric("Breakout Type", breakout_analysis.get('breakout_type', 'UNKNOWN'), key=f"breakout_type_{idx}")
                     
                     # Display reversal analysis details
                     st.subheader("🔄 Reversal Analysis Details")
                     reversal_analysis = breakout_data['reversal_analysis']
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Reversal Confidence", f"{reversal_analysis.get('reversal_confidence', 0):.1f}%")
+                        st.metric("Reversal Confidence", f"{reversal_analysis.get('reversal_confidence', 0):.1f}%", key=f"reversal_conf_{idx}")
                     with col2:
-                        st.metric("Direction", reversal_analysis.get('direction', 'UNKNOWN'))
+                        st.metric("Direction", reversal_analysis.get('direction', 'UNKNOWN'), key=f"rev_direction_{idx}")
                     with col3:
-                        st.metric("Reversal Type", reversal_analysis.get('reversal_type', 'UNKNOWN'))
+                        st.metric("Reversal Type", reversal_analysis.get('reversal_type', 'UNKNOWN'), key=f"reversal_type_{idx}")
                 
                 # Comprehensive Metrics Table
                 if 'comprehensive_metrics' in instrument_data and instrument_data['comprehensive_metrics']:
@@ -3425,7 +3436,7 @@ with tabs[4]:
                             ])
                     
                     comp_df = pd.DataFrame(comp_data, columns=['Metric', 'Value'])
-                    st.dataframe(comp_df, use_container_width=True, hide_index=True)
+                    st.dataframe(comp_df, use_container_width=True, hide_index=True, key=f"comp_metrics_{idx}")
 
 # Footer
 st.markdown("---")
