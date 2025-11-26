@@ -9,6 +9,7 @@ import numpy as np
 import math
 from scipy.stats import norm
 import warnings
+from typing import Dict, List, Optional, Tuple, Any
 
 warnings.filterwarnings('ignore')
 
@@ -83,15 +84,16 @@ class NSEOptionsAnalyzer:
     def fetch_option_chain_data(self, instrument: str) -> Dict[str, Any]:
         """Fetch option chain data from NSE"""
         try:
-            headers = {"User-Agent": "Mozilla/5.0"}
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
             session = requests.Session()
             session.headers.update(headers)
-            session.get("https://www.nseindia.com", timeout=5)
+            session.get("https://www.nseindia.com", timeout=10)
 
             url_instrument = instrument.replace(' ', '%20')
             url = f"https://www.nseindia.com/api/option-chain-indices?symbol={url_instrument}"
 
-            response = session.get(url, timeout=10)
+            response = session.get(url, timeout=15)
+            response.raise_for_status()
             data = response.json()
 
             records = data['records']['data']
@@ -371,6 +373,7 @@ class NSEOptionsAnalyzer:
         try:
             data = self.fetch_option_chain_data(instrument)
             if not data['success']:
+                st.warning(f"Failed to fetch data for {instrument}: {data.get('error', 'Unknown error')}")
                 return None
 
             records = data['records']
@@ -400,11 +403,15 @@ class NSEOptionsAnalyzer:
                     puts.append(pe)
 
             if not calls or not puts:
+                st.warning(f"No valid option data found for {instrument}")
                 return None
 
             df_ce = pd.DataFrame(calls)
             df_pe = pd.DataFrame(puts)
-            df = pd.merge(df_ce, df_pe, on='strikePrice', suffixes=('_CE', '_PE')).sort_values('strikePrice')
+            
+            # Merge calls and puts on strike price
+            df = pd.merge(df_ce, df_pe, on='strikePrice', suffixes=('_CE', '_PE'), how='outer').sort_values('strikePrice')
+            df = df.fillna(0)  # Fill NaN values with 0 for missing options
 
             # Find ATM strike
             atm_range = self.NSE_INSTRUMENTS['indices'].get(instrument, {}).get('atm_range', 200)
@@ -412,19 +419,21 @@ class NSEOptionsAnalyzer:
             df_atm = df[abs(df['strikePrice'] - atm_strike) <= atm_range]
 
             if df_atm.empty:
+                st.warning(f"No ATM data found for {instrument}")
                 return None
 
             # Get ATM row data
             atm_df = df[df['strikePrice'] == atm_strike]
             if not atm_df.empty:
-                atm_ce_price = atm_df['lastPrice_CE'].values[0]
-                atm_pe_price = atm_df['lastPrice_PE'].values[0]
-                atm_ce_oi = atm_df['openInterest_CE'].values[0]
-                atm_pe_oi = atm_df['openInterest_PE'].values[0]
-                atm_ce_change = atm_df['changeinOpenInterest_CE'].values[0]
-                atm_pe_change = atm_df['changeinOpenInterest_PE'].values[0]
-                atm_ce_vega = atm_df['Vega_CE'].values[0]
-                atm_pe_vega = atm_df['Vega_PE'].values[0]
+                atm_row = atm_df.iloc[0]
+                atm_ce_price = atm_row.get('lastPrice_CE', 0)
+                atm_pe_price = atm_row.get('lastPrice_PE', 0)
+                atm_ce_oi = atm_row.get('openInterest_CE', 0)
+                atm_pe_oi = atm_row.get('openInterest_PE', 0)
+                atm_ce_change = atm_row.get('changeinOpenInterest_CE', 0)
+                atm_pe_change = atm_row.get('changeinOpenInterest_PE', 0)
+                atm_ce_vega = atm_row.get('Vega_CE', 0)
+                atm_pe_vega = atm_row.get('Vega_PE', 0)
             else:
                 return None
 
@@ -517,7 +526,7 @@ class NSEOptionsAnalyzer:
             }
 
         except Exception as e:
-            print(f"Error in ATM bias analysis: {e}")
+            st.error(f"Error in ATM bias analysis for {instrument}: {e}")
             return None
 
     def calculate_detailed_atm_bias(self, df_atm: pd.DataFrame, atm_strike: float, spot_price: float) -> Dict[str, Any]:
@@ -528,14 +537,14 @@ class NSEOptionsAnalyzer:
             for _, row in df_atm.iterrows():
                 if row['strikePrice'] == atm_strike:
                     # Calculate per-strike delta and gamma exposure
-                    ce_delta_exp = row['Delta_CE'] * row['openInterest_CE']
-                    pe_delta_exp = row['Delta_PE'] * row['openInterest_PE']
-                    ce_gamma_exp = row['Gamma_CE'] * row['openInterest_CE']
-                    pe_gamma_exp = row['Gamma_PE'] * row['openInterest_PE']
+                    ce_delta_exp = row.get('Delta_CE', 0) * row.get('openInterest_CE', 0)
+                    pe_delta_exp = row.get('Delta_PE', 0) * row.get('openInterest_PE', 0)
+                    ce_gamma_exp = row.get('Gamma_CE', 0) * row.get('openInterest_CE', 0)
+                    pe_gamma_exp = row.get('Gamma_PE', 0) * row.get('openInterest_PE', 0)
 
                     net_delta_exp = ce_delta_exp + pe_delta_exp
                     net_gamma_exp = ce_gamma_exp + pe_gamma_exp
-                    strike_iv_skew = row['impliedVolatility_PE'] - row['impliedVolatility_CE']
+                    strike_iv_skew = row.get('impliedVolatility_PE', 0) - row.get('impliedVolatility_CE', 0)
 
                     delta_exp_bias = "Bullish" if net_delta_exp > 0 else "Bearish" if net_delta_exp < 0 else "Neutral"
                     gamma_exp_bias = "Bullish" if net_gamma_exp > 0 else "Bearish" if net_gamma_exp < 0 else "Neutral"
@@ -545,45 +554,45 @@ class NSEOptionsAnalyzer:
                         "Strike": row['strikePrice'],
                         "Zone": 'ATM',
                         "Level": self.determine_level(row),
-                        "OI_Bias": "Bullish" if row['openInterest_CE'] < row['openInterest_PE'] else "Bearish",
-                        "ChgOI_Bias": "Bullish" if row['changeinOpenInterest_CE'] < row['changeinOpenInterest_PE'] else "Bearish",
-                        "Volume_Bias": "Bullish" if row['totalTradedVolume_CE'] < row['totalTradedVolume_PE'] else "Bearish",
-                        "Delta_Bias": "Bullish" if abs(row['Delta_PE']) > abs(row['Delta_CE']) else "Bearish",
-                        "Gamma_Bias": "Bullish" if row['Gamma_CE'] < row['Gamma_PE'] else "Bearish",
-                        "Premium_Bias": "Bullish" if row['lastPrice_CE'] < row['lastPrice_PE'] else "Bearish",
-                        "AskQty_Bias": "Bullish" if row['askQty_PE'] > row['askQty_CE'] else "Bearish",
-                        "BidQty_Bias": "Bearish" if row['bidQty_PE'] > row['bidQty_CE'] else "Bullish",
-                        "IV_Bias": "Bullish" if row['impliedVolatility_CE'] > row['impliedVolatility_PE'] else "Bearish",
+                        "OI_Bias": "Bullish" if row.get('openInterest_CE', 0) < row.get('openInterest_PE', 0) else "Bearish",
+                        "ChgOI_Bias": "Bullish" if row.get('changeinOpenInterest_CE', 0) < row.get('changeinOpenInterest_PE', 0) else "Bearish",
+                        "Volume_Bias": "Bullish" if row.get('totalTradedVolume_CE', 0) < row.get('totalTradedVolume_PE', 0) else "Bearish",
+                        "Delta_Bias": "Bullish" if abs(row.get('Delta_PE', 0)) > abs(row.get('Delta_CE', 0)) else "Bearish",
+                        "Gamma_Bias": "Bullish" if row.get('Gamma_CE', 0) < row.get('Gamma_PE', 0) else "Bearish",
+                        "Premium_Bias": "Bullish" if row.get('lastPrice_CE', 0) < row.get('lastPrice_PE', 0) else "Bearish",
+                        "AskQty_Bias": "Bullish" if row.get('askQty_PE', 0) > row.get('askQty_CE', 0) else "Bearish",
+                        "BidQty_Bias": "Bearish" if row.get('bidQty_PE', 0) > row.get('bidQty_CE', 0) else "Bullish",
+                        "IV_Bias": "Bullish" if row.get('impliedVolatility_CE', 0) > row.get('impliedVolatility_PE', 0) else "Bearish",
                         "DVP_Bias": self.delta_volume_bias(
-                            row['lastPrice_CE'] - row['lastPrice_PE'],
-                            row['totalTradedVolume_CE'] - row['totalTradedVolume_PE'],
-                            row['changeinOpenInterest_CE'] - row['changeinOpenInterest_PE']
+                            row.get('lastPrice_CE', 0) - row.get('lastPrice_PE', 0),
+                            row.get('totalTradedVolume_CE', 0) - row.get('totalTradedVolume_PE', 0),
+                            row.get('changeinOpenInterest_CE', 0) - row.get('changeinOpenInterest_PE', 0)
                         ),
                         "Delta_Exposure_Bias": delta_exp_bias,
                         "Gamma_Exposure_Bias": gamma_exp_bias,
                         "IV_Skew_Bias": iv_skew_bias,
                         # Raw values for display
-                        "CE_OI": row['openInterest_CE'],
-                        "PE_OI": row['openInterest_PE'],
-                        "CE_Change": row['changeinOpenInterest_CE'],
-                        "PE_Change": row['changeinOpenInterest_PE'],
-                        "CE_Volume": row['totalTradedVolume_CE'],
-                        "PE_Volume": row['totalTradedVolume_PE'],
-                        "CE_Price": row['lastPrice_CE'],
-                        "PE_Price": row['lastPrice_PE'],
-                        "CE_IV": row['impliedVolatility_CE'],
-                        "PE_IV": row['impliedVolatility_PE'],
-                        "Delta_CE": row['Delta_CE'],
-                        "Delta_PE": row['Delta_PE'],
-                        "Gamma_CE": row['Gamma_CE'],
-                        "Gamma_PE": row['Gamma_PE']
+                        "CE_OI": row.get('openInterest_CE', 0),
+                        "PE_OI": row.get('openInterest_PE', 0),
+                        "CE_Change": row.get('changeinOpenInterest_CE', 0),
+                        "PE_Change": row.get('changeinOpenInterest_PE', 0),
+                        "CE_Volume": row.get('totalTradedVolume_CE', 0),
+                        "PE_Volume": row.get('totalTradedVolume_PE', 0),
+                        "CE_Price": row.get('lastPrice_CE', 0),
+                        "PE_Price": row.get('lastPrice_PE', 0),
+                        "CE_IV": row.get('impliedVolatility_CE', 0),
+                        "PE_IV": row.get('impliedVolatility_PE', 0),
+                        "Delta_CE": row.get('Delta_CE', 0),
+                        "Delta_PE": row.get('Delta_PE', 0),
+                        "Gamma_CE": row.get('Gamma_CE', 0),
+                        "Gamma_PE": row.get('Gamma_PE', 0)
                     }
                     break
             
             return detailed_bias
             
         except Exception as e:
-            print(f"Error in detailed ATM bias: {e}")
+            st.error(f"Error in detailed ATM bias: {e}")
             return {}
 
     def get_overall_market_bias(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
@@ -600,7 +609,7 @@ class NSEOptionsAnalyzer:
                         # Update cache
                         self.cached_bias_data[instrument] = bias_data
                 except Exception as e:
-                    print(f"Error fetching {instrument}: {e}")
+                    st.error(f"Error fetching {instrument}: {e}")
                     # Use cached data if available
                     if instrument in self.cached_bias_data:
                         results.append(self.cached_bias_data[instrument])
@@ -644,7 +653,10 @@ class SimplifiedNiftyApp:
                     bias_data = self.options_analyzer.get_overall_market_bias(force_refresh=True)
                     st.session_state.market_bias_data = bias_data
                     st.session_state.last_bias_update = datetime.now(self.ist)
-                    st.success("Options data refreshed!")
+                    if bias_data:
+                        st.success("Options data refreshed!")
+                    else:
+                        st.warning("No data received. Check internet connection.")
         with col3:
             if st.session_state.last_bias_update:
                 st.write(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')}")
@@ -959,7 +971,10 @@ class SimplifiedNiftyApp:
                     bias_data = self.options_analyzer.get_overall_market_bias(force_refresh=True)
                     st.session_state.market_bias_data = bias_data
                     st.session_state.last_bias_update = datetime.now(self.ist)
-                    st.success("Data refreshed!")
+                    if bias_data:
+                        st.success("Data refreshed!")
+                    else:
+                        st.warning("No data received. Check internet connection.")
         
         # Main content - Tabs
         tab1, tab2, tab3 = st.tabs([
@@ -978,7 +993,8 @@ class SimplifiedNiftyApp:
                     bias_data = self.options_analyzer.get_overall_market_bias()
                     st.session_state.market_bias_data = bias_data
                     st.session_state.last_bias_update = current_time
-                    st.rerun()
+                    if bias_data:
+                        st.rerun()
         
         with tab2:
             self.display_option_chain_bias_tabulation()
