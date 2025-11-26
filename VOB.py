@@ -1305,6 +1305,535 @@ class InstitutionalOIAdvanced:
 
 
 # =============================================
+# BREAKOUT & REVERSAL CONFIRMATION ANALYZER
+# =============================================
+
+class BreakoutReversalAnalyzer:
+    """Institutional Breakout & Reversal Confirmation System"""
+    
+    def __init__(self):
+        self.breakout_threshold = 0.6  # 60% confidence for real breakout
+        self.reversal_threshold = 0.7   # 70% confidence for reversal
+        
+    def analyze_breakout_confirmation(self, df_chain: pd.DataFrame, spot_price: float, 
+                                    price_change: float, volume_change: float) -> Dict[str, Any]:
+        """
+        Comprehensive breakout confirmation analysis
+        Returns confidence score 0-100 for breakout validity
+        """
+        try:
+            # Get ATM ±2 strikes for analysis
+            strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0]
+            atm_strikes = df_chain[abs(df_chain['strikePrice'] - spot_price) <= strike_diff * 2].copy()
+            
+            if atm_strikes.empty:
+                return {'breakout_confidence': 0, 'direction': 'UNKNOWN', 'signals': []}
+            
+            # Determine breakout direction
+            is_upside_breakout = price_change > 0
+            direction = "UP" if is_upside_breakout else "DOWN"
+            
+            signals = []
+            total_score = 0
+            max_score = 0
+            
+            # 1. OI Change Analysis (25 points)
+            oi_analysis = self._analyze_oi_pattern(atm_strikes, is_upside_breakout)
+            signals.extend(oi_analysis['signals'])
+            total_score += oi_analysis['score']
+            max_score += 25
+            
+            # 2. Price vs OI Conflict (20 points)
+            conflict_analysis = self._analyze_price_oi_conflict(atm_strikes, is_upside_breakout)
+            signals.extend(conflict_analysis['signals'])
+            total_score += conflict_analysis['score']
+            max_score += 20
+            
+            # 3. IV Behavior Analysis (15 points)
+            iv_analysis = self._analyze_iv_behavior(atm_strikes, is_upside_breakout)
+            signals.extend(iv_analysis['signals'])
+            total_score += iv_analysis['score']
+            max_score += 15
+            
+            # 4. PCR Trend Analysis (15 points)
+            pcr_analysis = self._analyze_pcr_trend(df_chain, is_upside_breakout)
+            signals.extend(pcr_analysis['signals'])
+            total_score += pcr_analysis['score']
+            max_score += 15
+            
+            # 5. Max Pain Movement (10 points)
+            max_pain_analysis = self._analyze_max_pain_movement(df_chain, spot_price, is_upside_breakout)
+            signals.extend(max_pain_analysis['signals'])
+            total_score += max_pain_analysis['score']
+            max_score += 10
+            
+            # 6. Strike OI Wall Breakdown (15 points)
+            wall_analysis = self._analyze_oi_wall_breakdown(atm_strikes, is_upside_breakout)
+            signals.extend(wall_analysis['signals'])
+            total_score += wall_analysis['score']
+            max_score += 15
+            
+            # Calculate final confidence
+            breakout_confidence = (total_score / max_score) * 100 if max_score > 0 else 0
+            
+            # Determine breakout type
+            if breakout_confidence >= 60:
+                breakout_type = "REAL_BREAKOUT"
+            elif breakout_confidence >= 30:
+                breakout_type = "WEAK_BREAKOUT"
+            else:
+                breakout_type = "FAKE_BREAKOUT"
+            
+            return {
+                'breakout_confidence': breakout_confidence,
+                'direction': direction,
+                'breakout_type': breakout_type,
+                'signals': signals,
+                'total_score': total_score,
+                'max_score': max_score
+            }
+            
+        except Exception as e:
+            print(f"Error in breakout analysis: {e}")
+            return {'breakout_confidence': 0, 'direction': 'UNKNOWN', 'signals': []}
+    
+    def analyze_reversal_confirmation(self, df_chain: pd.DataFrame, spot_price: float,
+                                   price_action: Dict) -> Dict[str, Any]:
+        """
+        Comprehensive reversal confirmation analysis
+        Returns confidence score 0-100 for reversal validity
+        """
+        try:
+            strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0]
+            atm_strikes = df_chain[abs(df_chain['strikePrice'] - spot_price) <= strike_diff * 2].copy()
+            
+            if atm_strikes.empty:
+                return {'reversal_confidence': 0, 'direction': 'UNKNOWN', 'signals': []}
+            
+            # Determine if we're looking for top or bottom reversal
+            is_top_reversal = price_action.get('has_upper_wick', False) or price_action.get('is_overbought', False)
+            direction = "TOP_REVERSAL" if is_top_reversal else "BOTTOM_REVERSAL"
+            
+            signals = []
+            total_score = 0
+            max_score = 0
+            
+            # 1. OI Divergence Analysis (30 points)
+            divergence_analysis = self._analyze_oi_divergence(atm_strikes, is_top_reversal)
+            signals.extend(divergence_analysis['signals'])
+            total_score += divergence_analysis['score']
+            max_score += 30
+            
+            # 2. IV Crash Detection (20 points)
+            iv_crash_analysis = self._analyze_iv_crash(atm_strikes)
+            signals.extend(iv_crash_analysis['signals'])
+            total_score += iv_crash_analysis['score']
+            max_score += 20
+            
+            # 3. Writer Defense Analysis (25 points)
+            defense_analysis = self._analyze_writer_defense(df_chain, spot_price, is_top_reversal)
+            signals.extend(defense_analysis['signals'])
+            total_score += defense_analysis['score']
+            max_score += 25
+            
+            # 4. Opposite OI Build (15 points)
+            opposite_oi_analysis = self._analyze_opposite_oi_build(atm_strikes, is_top_reversal)
+            signals.extend(opposite_oi_analysis['signals'])
+            total_score += opposite_oi_analysis['score']
+            max_score += 15
+            
+            # 5. PCR Extremes (10 points)
+            pcr_extreme_analysis = self._analyze_pcr_extremes(df_chain)
+            signals.extend(pcr_extreme_analysis['signals'])
+            total_score += pcr_extreme_analysis['score']
+            max_score += 10
+            
+            # Calculate final confidence
+            reversal_confidence = (total_score / max_score) * 100 if max_score > 0 else 0
+            
+            # Determine reversal strength
+            if reversal_confidence >= 70:
+                reversal_type = "STRONG_REVERSAL"
+            elif reversal_confidence >= 50:
+                reversal_type = "MODERATE_REVERSAL"
+            else:
+                reversal_type = "WEAK_REVERSAL"
+            
+            return {
+                'reversal_confidence': reversal_confidence,
+                'direction': direction,
+                'reversal_type': reversal_type,
+                'signals': signals,
+                'total_score': total_score,
+                'max_score': max_score
+            }
+            
+        except Exception as e:
+            print(f"Error in reversal analysis: {e}")
+            return {'reversal_confidence': 0, 'direction': 'UNKNOWN', 'signals': []}
+    
+    def _analyze_oi_pattern(self, atm_strikes: pd.DataFrame, is_upside: bool) -> Dict:
+        """Analyze OI patterns for breakout confirmation"""
+        signals = []
+        score = 0
+        
+        # Calculate total OI changes
+        total_ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
+        total_pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+        
+        if is_upside:
+            # Upside breakout: CE OI should decrease, PE OI should increase
+            if total_ce_oi_change < 0:
+                signals.append("✅ CE OI decreasing (call sellers running)")
+                score += 10
+            else:
+                signals.append("❌ CE OI increasing (call writers active)")
+            
+            if total_pe_oi_change > 0:
+                signals.append("✅ PE OI increasing (put writers entering)")
+                score += 15
+            else:
+                signals.append("❌ PE OI decreasing (no put writing)")
+        else:
+            # Downside breakout: CE OI should increase, PE OI should decrease
+            if total_ce_oi_change > 0:
+                signals.append("✅ CE OI increasing (call writers attacking)")
+                score += 10
+            else:
+                signals.append("❌ CE OI decreasing (no call writing)")
+            
+            if total_pe_oi_change < 0:
+                signals.append("✅ PE OI decreasing (put sellers exiting)")
+                score += 15
+            else:
+                signals.append("❌ PE OI increasing (put writers defending)")
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_price_oi_conflict(self, atm_strikes: pd.DataFrame, is_upside: bool) -> Dict:
+        """Analyze price vs OI conflict"""
+        signals = []
+        score = 0
+        
+        # Get dominant strike
+        dominant_strike = atm_strikes.loc[atm_strikes['openInterest_CE'].idxmax()] if is_upside else atm_strikes.loc[atm_strikes['openInterest_PE'].idxmax()]
+        
+        if is_upside:
+            # Clean upside: Price ↑, CE OI ↓
+            if dominant_strike['changeinOpenInterest_CE'] < 0:
+                signals.append("✅ Clean breakout: Price ↑ + CE OI ↓ (short covering)")
+                score += 20
+            else:
+                signals.append("❌ Fake breakout: Price ↑ + CE OI ↑ (sellers building wall)")
+        else:
+            # Clean downside: Price ↓, PE OI ↓
+            if dominant_strike['changeinOpenInterest_PE'] < 0:
+                signals.append("✅ Clean breakdown: Price ↓ + PE OI ↓ (put covering)")
+                score += 20
+            else:
+                signals.append("❌ Fake breakdown: Price ↓ + PE OI ↑ (put writers defending)")
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_iv_behavior(self, atm_strikes: pd.DataFrame, is_upside: bool) -> Dict:
+        """Analyze IV behavior for breakout confirmation"""
+        signals = []
+        score = 0
+        
+        avg_ce_iv = atm_strikes['impliedVolatility_CE'].mean()
+        avg_pe_iv = atm_strikes['impliedVolatility_PE'].mean()
+        
+        if is_upside:
+            # Upside: CE IV should rise slightly, PE IV stable/fall
+            if avg_ce_iv > avg_pe_iv:
+                signals.append("✅ CE IV > PE IV (upside momentum)")
+                score += 10
+            else:
+                signals.append("❌ CE IV <= PE IV (weak upside)")
+            
+            if avg_pe_iv < 20:  # Low PE IV indicates no put buying pressure
+                signals.append("✅ Low PE IV (no put hedging)")
+                score += 5
+        else:
+            # Downside: PE IV should rise, CE IV stable/fall
+            if avg_pe_iv > avg_ce_iv:
+                signals.append("✅ PE IV > CE IV (downside momentum)")
+                score += 10
+            else:
+                signals.append("❌ PE IV <= CE IV (weak downside)")
+            
+            if avg_ce_iv < 20:  # Low CE IV indicates no call buying pressure
+                signals.append("✅ Low CE IV (no call hedging)")
+                score += 5
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_pcr_trend(self, df_chain: pd.DataFrame, is_upside: bool) -> Dict:
+        """Analyze PCR trend for breakout direction"""
+        signals = []
+        score = 0
+        
+        total_ce_oi = df_chain['openInterest_CE'].sum()
+        total_pe_oi = df_chain['openInterest_PE'].sum()
+        pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
+        
+        if is_upside:
+            if pcr > 0.8:
+                signals.append(f"✅ PCR {pcr:.2f} > 0.8 (bullish bias)")
+                score += 10
+            elif pcr > 0.6:
+                signals.append(f"⚠️ PCR {pcr:.2f} neutral")
+                score += 5
+            else:
+                signals.append(f"❌ PCR {pcr:.2f} < 0.6 (bearish bias)")
+        else:
+            if pcr < 0.7:
+                signals.append(f"✅ PCR {pcr:.2f} < 0.7 (bearish bias)")
+                score += 10
+            elif pcr < 0.9:
+                signals.append(f"⚠️ PCR {pcr:.2f} neutral")
+                score += 5
+            else:
+                signals.append(f"❌ PCR {pcr:.2f} > 0.9 (bullish bias)")
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_max_pain_movement(self, df_chain: pd.DataFrame, spot_price: float, is_upside: bool) -> Dict:
+        """Analyze max pain movement"""
+        signals = []
+        score = 0
+        
+        # Simple max pain approximation (you can enhance this)
+        max_ce_oi_strike = df_chain.loc[df_chain['openInterest_CE'].idxmax()]['strikePrice']
+        max_pe_oi_strike = df_chain.loc[df_chain['openInterest_PE'].idxmax()]['strikePrice']
+        
+        if is_upside:
+            if max_pe_oi_strike > spot_price:
+                signals.append(f"✅ Max PE OI at ₹{max_pe_oi_strike:.0f} (above spot)")
+                score += 10
+            else:
+                signals.append(f"❌ Max PE OI at ₹{max_pe_oi_strike:.0f} (below spot)")
+        else:
+            if max_ce_oi_strike < spot_price:
+                signals.append(f"✅ Max CE OI at ₹{max_ce_oi_strike:.0f} (below spot)")
+                score += 10
+            else:
+                signals.append(f"❌ Max CE OI at ₹{max_ce_oi_strike:.0f} (above spot)")
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_oi_wall_breakdown(self, atm_strikes: pd.DataFrame, is_upside: bool) -> Dict:
+        """Analyze OI wall breakdown"""
+        signals = []
+        score = 0
+        
+        if is_upside:
+            # Upside: CE OI should unwind, PE OI should build
+            ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
+            pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+            
+            if ce_oi_change < 0:
+                signals.append("✅ CE OI wall breaking (unwinding)")
+                score += 10
+            if pe_oi_change > 0:
+                signals.append("✅ PE OI building (fresh writing)")
+                score += 5
+        else:
+            # Downside: PE OI should unwind, CE OI should build
+            ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
+            pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+            
+            if pe_oi_change < 0:
+                signals.append("✅ PE OI wall breaking (unwinding)")
+                score += 10
+            if ce_oi_change > 0:
+                signals.append("✅ CE OI building (fresh writing)")
+                score += 5
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_oi_divergence(self, atm_strikes: pd.DataFrame, is_top_reversal: bool) -> Dict:
+        """Analyze OI divergence for reversal detection"""
+        signals = []
+        score = 0
+        
+        ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
+        pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+        
+        if is_top_reversal:
+            # Top reversal: Price ↑ but CE OI ↑ (sellers loading)
+            if ce_oi_change > 0 and pe_oi_change < 0:
+                signals.append("✅ OI Divergence: CE OI ↑ + PE OI ↓ (sellers loading)")
+                score += 30
+            else:
+                signals.append("❌ No clear OI divergence pattern")
+        else:
+            # Bottom reversal: Price ↓ but PE OI ↑ (put writers loading)
+            if pe_oi_change > 0 and ce_oi_change < 0:
+                signals.append("✅ OI Divergence: PE OI ↑ + CE OI ↓ (put writers loading)")
+                score += 30
+            else:
+                signals.append("❌ No clear OI divergence pattern")
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_iv_crash(self, atm_strikes: pd.DataFrame) -> Dict:
+        """Analyze IV crash for reversal detection"""
+        signals = []
+        score = 0
+        
+        # Check if IV is collapsing (you might want historical comparison)
+        avg_iv = (atm_strikes['impliedVolatility_CE'].mean() + atm_strikes['impliedVolatility_PE'].mean()) / 2
+        
+        if avg_iv < 15:
+            signals.append(f"✅ IV Crash: Avg IV {avg_iv:.1f}% (smart money exiting)")
+            score += 20
+        elif avg_iv < 20:
+            signals.append(f"⚠️ Moderate IV: {avg_iv:.1f}%")
+            score += 10
+        else:
+            signals.append(f"❌ High IV: {avg_iv:.1f}% (volatility present)")
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_writer_defense(self, df_chain: pd.DataFrame, spot_price: float, is_top_reversal: bool) -> Dict:
+        """Analyze writer defense at key strikes"""
+        signals = []
+        score = 0
+        
+        if is_top_reversal:
+            # Find resistance strike with high CE OI
+            above_spot = df_chain[df_chain['strikePrice'] > spot_price]
+            if not above_spot.empty:
+                resistance_strike = above_spot.nlargest(1, 'openInterest_CE')
+                if not resistance_strike.empty:
+                    strike = resistance_strike['strikePrice'].values[0]
+                    oi = resistance_strike['openInterest_CE'].values[0]
+                    if oi > 1000000:  # 1M+ OI indicates strong resistance
+                        signals.append(f"✅ Writer Defense: ₹{strike:.0f} CE OI {oi:,.0f}")
+                        score += 25
+        else:
+            # Find support strike with high PE OI
+            below_spot = df_chain[df_chain['strikePrice'] < spot_price]
+            if not below_spot.empty:
+                support_strike = below_spot.nlargest(1, 'openInterest_PE')
+                if not support_strike.empty:
+                    strike = support_strike['strikePrice'].values[0]
+                    oi = support_strike['openInterest_PE'].values[0]
+                    if oi > 1000000:  # 1M+ OI indicates strong support
+                        signals.append(f"✅ Writer Defense: ₹{strike:.0f} PE OI {oi:,.0f}")
+                        score += 25
+        
+        if score == 0:
+            signals.append("❌ No strong writer defense detected")
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_opposite_oi_build(self, atm_strikes: pd.DataFrame, is_top_reversal: bool) -> Dict:
+        """Analyze opposite OI build for reversal"""
+        signals = []
+        score = 0
+        
+        ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
+        pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+        
+        if is_top_reversal:
+            # Top reversal: New CE writing happening during uptrend
+            if ce_oi_change > 10000:  # Significant CE writing
+                signals.append(f"✅ Opposite OI: CE writing {ce_oi_change:,.0f} (reversal signal)")
+                score += 15
+            else:
+                signals.append("❌ No significant opposite OI build")
+        else:
+            # Bottom reversal: New PE writing happening during downtrend
+            if pe_oi_change > 10000:  # Significant PE writing
+                signals.append(f"✅ Opposite OI: PE writing {pe_oi_change:,.0f} (reversal signal)")
+                score += 15
+            else:
+                signals.append("❌ No significant opposite OI build")
+        
+        return {'signals': signals, 'score': score}
+    
+    def _analyze_pcr_extremes(self, df_chain: pd.DataFrame) -> Dict:
+        """Analyze PCR extremes for reversal signals"""
+        signals = []
+        score = 0
+        
+        total_ce_oi = df_chain['openInterest_CE'].sum()
+        total_pe_oi = df_chain['openInterest_PE'].sum()
+        pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
+        
+        if pcr > 1.4:
+            signals.append(f"✅ PCR Extreme: {pcr:.2f} > 1.4 (overbought, reversal likely)")
+            score += 10
+        elif pcr < 0.5:
+            signals.append(f"✅ PCR Extreme: {pcr:.2f} < 0.5 (oversold, reversal likely)")
+            score += 10
+        else:
+            signals.append(f"⚠️ PCR Normal: {pcr:.2f}")
+            score += 5
+        
+        return {'signals': signals, 'score': score}
+
+    def get_breakout_reversal_score(self, df_chain: pd.DataFrame, spot_price: float, 
+                                  price_action: Dict) -> Dict[str, Any]:
+        """
+        Combined breakout/reversal scoring system (0-100)
+        """
+        # Analyze breakout first
+        price_change = price_action.get('price_change', 0)
+        volume_change = price_action.get('volume_change', 0)
+        
+        breakout_analysis = self.analyze_breakout_confirmation(df_chain, spot_price, price_change, volume_change)
+        reversal_analysis = self.analyze_reversal_confirmation(df_chain, spot_price, price_action)
+        
+        # Determine overall market state
+        breakout_confidence = breakout_analysis.get('breakout_confidence', 0)
+        reversal_confidence = reversal_analysis.get('reversal_confidence', 0)
+        
+        if breakout_confidence >= 60 and reversal_confidence < 50:
+            market_state = "STRONG_BREAKOUT"
+            overall_score = breakout_confidence
+        elif reversal_confidence >= 70 and breakout_confidence < 40:
+            market_state = "STRONG_REVERSAL"
+            overall_score = reversal_confidence
+        elif breakout_confidence >= 40 and reversal_confidence >= 50:
+            market_state = "CONFLICT_ZONE"
+            overall_score = (breakout_confidence + reversal_confidence) / 2
+        else:
+            market_state = "NEUTRAL_CHOPPY"
+            overall_score = max(breakout_confidence, reversal_confidence)
+        
+        return {
+            'overall_score': overall_score,
+            'market_state': market_state,
+            'breakout_analysis': breakout_analysis,
+            'reversal_analysis': reversal_analysis,
+            'trading_signal': self._generate_trading_signal(market_state, overall_score)
+        }
+    
+    def _generate_trading_signal(self, market_state: str, score: float) -> Dict[str, Any]:
+        """Generate trading signals based on analysis"""
+        if market_state == "STRONG_BREAKOUT":
+            if score >= 70:
+                return {'action': 'STRONG_BUY', 'confidence': 'HIGH', 'message': 'Real breakout confirmed'}
+            else:
+                return {'action': 'MODERATE_BUY', 'confidence': 'MEDIUM', 'message': 'Breakout likely'}
+        
+        elif market_state == "STRONG_REVERSAL":
+            if score >= 75:
+                return {'action': 'STRONG_SELL', 'confidence': 'HIGH', 'message': 'Reversal confirmed'}
+            else:
+                return {'action': 'MODERATE_SELL', 'confidence': 'MEDIUM', 'message': 'Reversal likely'}
+        
+        elif market_state == "CONFLICT_ZONE":
+            return {'action': 'WAIT', 'confidence': 'LOW', 'message': 'Market in conflict, wait for clarity'}
+        
+        else:  # NEUTRAL_CHOPPY
+            return {'action': 'RANGE_TRADE', 'confidence': 'LOW', 'message': 'Market choppy, trade ranges'}
+
+
+# =============================================
 # NSE OPTIONS ANALYZER (FROM SECOND APP)
 # =============================================
 
@@ -1328,6 +1857,7 @@ class NSEOptionsAnalyzer:
         self.refresh_interval = 2  # 2 minutes default refresh
         self.cached_bias_data = {}
         self.institutional_analyzer = InstitutionalOIAdvanced()
+        self.breakout_analyzer = BreakoutReversalAnalyzer()
         
     def set_refresh_interval(self, minutes: int):
         """Set auto-refresh interval"""
@@ -1912,17 +2442,31 @@ class NSEOptionsAnalyzer:
             # Add institutional analysis
             institutional_analysis = self.institutional_analyzer.analyze_atm_institutional_footprint(df_chain, spot)
             
+            # Add breakout/reversal analysis
+            price_action = {
+                'price_change': 0.5,  # Mock data - replace with real price change
+                'volume_change': 15,
+                'has_upper_wick': False,
+                'has_lower_wick': False,
+                'is_overbought': False,
+                'is_oversold': False
+            }
+            
+            breakout_analysis = self.breakout_analyzer.get_breakout_reversal_score(df_chain, spot, price_action)
+            
             # Combine analyses
             enhanced_analysis = basic_analysis.copy()
             enhanced_analysis['institutional_analysis'] = institutional_analysis
+            enhanced_analysis['breakout_reversal_analysis'] = breakout_analysis
             
             # Calculate combined bias score
             basic_score = basic_analysis.get('bias_score', 0)
             institutional_score = institutional_analysis.get('score', 0)
             gamma_score = institutional_analysis.get('gamma_analysis', {}).get('gamma_score', 0)
+            breakout_score = breakout_analysis.get('overall_score', 0)
             
-            # Weighted combined score (30% basic, 40% institutional, 30% gamma)
-            combined_score = (basic_score * 0.3) + (institutional_score * 0.4) + (gamma_score * 0.3)
+            # Weighted combined score (25% basic, 30% institutional, 20% gamma, 25% breakout)
+            combined_score = (basic_score * 0.25) + (institutional_score * 0.3) + (gamma_score * 0.2) + (breakout_score * 0.25)
             
             # Determine combined bias
             if combined_score >= 2:
@@ -1940,6 +2484,7 @@ class NSEOptionsAnalyzer:
             enhanced_analysis['combined_score'] = combined_score
             enhanced_analysis['institutional_score'] = institutional_score
             enhanced_analysis['gamma_score'] = gamma_score
+            enhanced_analysis['breakout_score'] = breakout_score
             
             return enhanced_analysis
             
@@ -1989,6 +2534,7 @@ options_analyzer = NSEOptionsAnalyzer()
 vob_indicator = VolumeOrderBlocks(sensitivity=5)
 gamma_analyzer = GammaSequenceAnalyzer()
 institutional_analyzer = InstitutionalOIAdvanced()
+breakout_analyzer = BreakoutReversalAnalyzer()
 
 # Sidebar inputs
 st.sidebar.header("Data & Symbol")
@@ -2139,7 +2685,7 @@ def calculate_overall_nifty_bias():
     bias_scores = []
     bias_weights = []
     
-    # 1. Technical Analysis Bias (25% weight)
+    # 1. Technical Analysis Bias (20% weight)
     if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
         tech_result = st.session_state['last_result']
         tech_bias = tech_result.get('overall_bias', 'NEUTRAL')
@@ -2151,9 +2697,9 @@ def calculate_overall_nifty_bias():
             bias_scores.append(-1.0)
         else:
             bias_scores.append(0.0)
-        bias_weights.append(0.25)
+        bias_weights.append(0.20)
     
-    # 2. Enhanced Options Chain Bias (35% weight) - INCREASED WEIGHT
+    # 2. Enhanced Options Chain Bias (30% weight)
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY':
@@ -2165,10 +2711,10 @@ def calculate_overall_nifty_bias():
                 normalized_score = max(-1, min(1, options_score / 4))
                 
                 bias_scores.append(normalized_score)
-                bias_weights.append(0.35)
+                bias_weights.append(0.30)
                 break
     
-    # 3. ATM Detailed Bias (20% weight)
+    # 3. ATM Detailed Bias (15% weight)
     if st.session_state.atm_detailed_bias:
         atm_bias = st.session_state.atm_detailed_bias['bias']
         atm_score = st.session_state.atm_detailed_bias['score']
@@ -2179,9 +2725,9 @@ def calculate_overall_nifty_bias():
             bias_scores.append(-1.0)
         else:
             bias_scores.append(0.0)
-        bias_weights.append(0.20)
+        bias_weights.append(0.15)
     
-    # 4. Volume Order Blocks Bias (20% weight)
+    # 4. Volume Order Blocks Bias (15% weight)
     if st.session_state['last_df'] is not None:
         df = st.session_state['last_df']
         bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
@@ -2193,7 +2739,21 @@ def calculate_overall_nifty_bias():
             vob_bias_score = -1.0
         
         bias_scores.append(vob_bias_score)
-        bias_weights.append(0.20)
+        bias_weights.append(0.15)
+    
+    # 5. Breakout/Reversal Analysis (20% weight) - NEW
+    if st.session_state.market_bias_data:
+        for instrument_data in st.session_state.market_bias_data:
+            if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
+                breakout_data = instrument_data['breakout_reversal_analysis']
+                breakout_score = breakout_data.get('overall_score', 0)
+                
+                # Normalize breakout score to -1 to 1 range
+                normalized_breakout_score = max(-1, min(1, breakout_score / 100))
+                
+                bias_scores.append(normalized_breakout_score)
+                bias_weights.append(0.20)
+                break
     
     # Calculate weighted average
     if bias_scores and bias_weights:
@@ -2284,7 +2844,7 @@ with tabs[0]:
                 'Component': 'Technical Analysis',
                 'Bias': tech_result.get('overall_bias', 'NEUTRAL'),
                 'Score': tech_result.get('overall_score', 0),
-                'Weight': '25%',
+                'Weight': '20%',
                 'Confidence': f"{tech_result.get('overall_confidence', 0):.1f}%"
             })
         
@@ -2296,19 +2856,19 @@ with tabs[0]:
                         'Component': 'Options Chain Overall',
                         'Bias': instrument_data.get('combined_bias', 'Neutral'),
                         'Score': instrument_data.get('combined_score', 0),
-                        'Weight': '35%',
+                        'Weight': '30%',
                         'Confidence': 'High' if abs(instrument_data.get('combined_score', 0)) > 2 else 'Medium'
                     })
                     break
         
-        # ATM Detailed Bias Component - NEW
+        # ATM Detailed Bias Component
         if st.session_state.atm_detailed_bias:
             atm_data = st.session_state.atm_detailed_bias
             components_data.append({
                 'Component': 'ATM Detailed Bias',
                 'Bias': atm_data['bias'],
                 'Score': atm_data['score'],
-                'Weight': '20%',
+                'Weight': '15%',
                 'Confidence': f"{abs(atm_data['score']):.1f}%"
             })
         
@@ -2323,9 +2883,26 @@ with tabs[0]:
                 'Component': 'Volume Order Blocks',
                 'Bias': vob_bias,
                 'Score': vob_score,
-                'Weight': '20%',
+                'Weight': '15%',
                 'Confidence': f"Blocks: {len(bullish_blocks)}B/{len(bearish_blocks)}S"
             })
+        
+        # Breakout/Reversal Component - NEW
+        if st.session_state.market_bias_data:
+            for instrument_data in st.session_state.market_bias_data:
+                if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
+                    breakout_data = instrument_data['breakout_reversal_analysis']
+                    breakout_score = breakout_data.get('overall_score', 0)
+                    market_state = breakout_data.get('market_state', 'NEUTRAL_CHOPPY')
+                    
+                    components_data.append({
+                        'Component': 'Breakout/Reversal',
+                        'Bias': market_state.replace('_', ' ').title(),
+                        'Score': breakout_score,
+                        'Weight': '20%',
+                        'Confidence': f"{breakout_score:.1f}%"
+                    })
+                    break
         
         if components_data:
             components_df = pd.DataFrame(components_data)
@@ -2503,7 +3080,7 @@ with tabs[2]:
                 st.write(f"- Lower: ₹{latest_bearish['lower']:.2f}")
                 st.write(f"- Volume: {latest_bearish['volume']:,.0f}")
 
-# OPTION CHAIN TAB - ENHANCED WITH GAMMA SEQUENCES
+# OPTION CHAIN TAB - ENHANCED WITH BREAKOUT/REVERSAL ANALYSIS
 with tabs[3]:
     st.header("📊 NSE Options Chain Analysis - Institutional Footprint")
     
@@ -2543,6 +3120,52 @@ with tabs[3]:
                     st.metric("PCR OI", f"{instrument_data['pcr_oi']:.2f}")
                 with col4:
                     st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}")
+                
+                # BREAKOUT & REVERSAL ANALYSIS - NEW SECTION
+                st.subheader("🔥 Breakout & Reversal Confirmation")
+                
+                if 'breakout_reversal_analysis' in instrument_data:
+                    breakout_data = instrument_data['breakout_reversal_analysis']
+                    
+                    # Display breakout analysis
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Breakout Score", f"{breakout_data['breakout_analysis'].get('breakout_confidence', 0):.1f}%")
+                    with col2:
+                        st.metric("Reversal Score", f"{breakout_data['reversal_analysis'].get('reversal_confidence', 0):.1f}%")
+                    with col3:
+                        st.metric("Overall Score", f"{breakout_data['overall_score']:.1f}")
+                    with col4:
+                        signal = breakout_data['trading_signal']
+                        signal_color = "🟢" if "BUY" in signal['action'] else "🔴" if "SELL" in signal['action'] else "🟡"
+                        st.metric("Trading Signal", f"{signal_color} {signal['action']}")
+                    
+                    # Display market state
+                    st.info(f"**Market State:** {breakout_data['market_state']} | **Message:** {signal['message']}")
+                    
+                    # Show breakout signals
+                    if breakout_data['breakout_analysis'].get('signals'):
+                        st.subheader("📈 Breakout Signals")
+                        for signal in breakout_data['breakout_analysis']['signals']:
+                            if "✅" in signal:
+                                st.success(signal)
+                            elif "❌" in signal:
+                                st.error(signal)
+                            else:
+                                st.warning(signal)
+                    
+                    # Show reversal signals
+                    if breakout_data['reversal_analysis'].get('signals'):
+                        st.subheader("🔄 Reversal Signals")
+                        for signal in breakout_data['reversal_analysis']['signals']:
+                            if "✅" in signal:
+                                st.success(signal)
+                            elif "❌" in signal:
+                                st.error(signal)
+                            else:
+                                st.warning(signal)
+                else:
+                    st.warning("Breakout/Reversal analysis not available for this instrument")
                 
                 # Institutional Analysis Section
                 if 'institutional_analysis' in instrument_data:
@@ -2647,7 +3270,7 @@ with tabs[3]:
                 with col3:
                     st.metric("Gamma Score", f"{instrument_data.get('gamma_score', 0):.2f}")
                 with col4:
-                    st.metric("Combined Score", f"{instrument_data.get('combined_score', 0):.2f}")
+                    st.metric("Breakout Score", f"{instrument_data.get('breakout_score', 0):.2f}")
     
     else:
         st.info("No option chain data available. Please refresh analysis first.")
@@ -2681,7 +3304,7 @@ with tabs[4]:
                 })
                 st.dataframe(basic_info, use_container_width=True, hide_index=True)
                 
-                # ATM Detailed Bias Summary - NEW SECTION
+                # ATM Detailed Bias Summary
                 if 'detailed_atm_bias' in instrument_data and instrument_data['detailed_atm_bias']:
                     st.subheader("🎯 ATM Detailed Bias Analysis")
                     
@@ -2748,6 +3371,46 @@ with tabs[4]:
                         )
                         st.plotly_chart(fig, use_container_width=True)
                 
+                # Breakout/Reversal Analysis - NEW SECTION
+                if 'breakout_reversal_analysis' in instrument_data:
+                    st.subheader("🔥 Breakout & Reversal Analysis")
+                    
+                    breakout_data = instrument_data['breakout_reversal_analysis']
+                    
+                    # Display key metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Market State", breakout_data['market_state'])
+                    with col2:
+                        st.metric("Overall Score", f"{breakout_data['overall_score']:.1f}")
+                    with col3:
+                        signal = breakout_data['trading_signal']
+                        st.metric("Trading Signal", signal['action'])
+                    with col4:
+                        st.metric("Confidence", signal['confidence'])
+                    
+                    # Display breakout analysis details
+                    st.subheader("📈 Breakout Analysis Details")
+                    breakout_analysis = breakout_data['breakout_analysis']
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Breakout Confidence", f"{breakout_analysis.get('breakout_confidence', 0):.1f}%")
+                    with col2:
+                        st.metric("Direction", breakout_analysis.get('direction', 'UNKNOWN'))
+                    with col3:
+                        st.metric("Breakout Type", breakout_analysis.get('breakout_type', 'UNKNOWN'))
+                    
+                    # Display reversal analysis details
+                    st.subheader("🔄 Reversal Analysis Details")
+                    reversal_analysis = breakout_data['reversal_analysis']
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Reversal Confidence", f"{reversal_analysis.get('reversal_confidence', 0):.1f}%")
+                    with col2:
+                        st.metric("Direction", reversal_analysis.get('direction', 'UNKNOWN'))
+                    with col3:
+                        st.metric("Reversal Type", reversal_analysis.get('reversal_type', 'UNKNOWN'))
+                
                 # Comprehensive Metrics Table
                 if 'comprehensive_metrics' in instrument_data and instrument_data['comprehensive_metrics']:
                     st.subheader("🎯 Advanced Option Metrics")
@@ -2766,4 +3429,4 @@ with tabs[4]:
 
 # Footer
 st.markdown("---")
-st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh and Overall Nifty Bias Analysis.")
+st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh, Overall Nifty Bias Analysis, and Institutional Breakout/Reversal Detection.")
