@@ -22,15 +22,6 @@ warnings.filterwarnings('ignore')
 # Indian Standard Time (IST)
 IST = pytz.timezone('Asia/Kolkata')
 
-# Import Dhan API for Indian indices volume data
-try:
-    from dhan_data_fetcher import DhanDataFetcher
-    DHAN_AVAILABLE = True
-except ImportError:
-    DHAN_AVAILABLE = False
-    print("Warning: Dhan API not available. Volume data may be missing for Indian indices.")
-
-
 class BiasAnalysisPro:
     """
     Comprehensive Bias Analysis matching Pine Script indicator EXACTLY
@@ -119,10 +110,6 @@ class BiasAnalysisPro:
             }
         }
 
-    # =========================================================================
-    # DATA FETCHING - MODIFIED FOR 1-DAY 1-MINUTE DATA
-    # =========================================================================
-
     def fetch_data(self, symbol: str, period: str = '1d', interval: str = '1m') -> pd.DataFrame:
         """Fetch data from Yahoo Finance for 1-day 1-minute data"""
         try:
@@ -145,10 +132,6 @@ class BiasAnalysisPro:
         except Exception as e:
             print(f"Error fetching {symbol}: {e}")
             return pd.DataFrame()
-
-    # =========================================================================
-    # TECHNICAL INDICATORS
-    # =========================================================================
 
     def calculate_rsi(self, data: pd.Series, period: int = 14) -> pd.Series:
         """Calculate RSI"""
@@ -376,10 +359,6 @@ class BiasAnalysisPro:
         vob_bearish = cross_dn
 
         return vob_bullish, vob_bearish, ema1.iloc[-1], ema2.iloc[-1]
-
-    # =========================================================================
-    # COMPREHENSIVE BIAS ANALYSIS - MODIFIED FOR 1-MINUTE DATA
-    # =========================================================================
 
     def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict:
         """
@@ -721,11 +700,6 @@ class BiasAnalysisPro:
             'bearish_bias_pct': bearish_bias_pct
         }
 
-
-# =============================================
-# VOLUME ORDER BLOCKS
-# =============================================
-
 class VolumeOrderBlocks:
     """Python implementation of Volume Order Blocks indicator"""
     
@@ -845,10 +819,6 @@ class VolumeOrderBlocks:
         
         return filtered_blocks
 
-# =============================================
-# SIMPLIFIED OPTIONS ANALYZER
-# =============================================
-
 class SimpleOptionsAnalyzer:
     """Simplified options analyzer that won't cause errors"""
     
@@ -872,7 +842,7 @@ class SimpleOptionsAnalyzer:
             return []
 
 # =============================================
-# STREAMLIT APP UI - SIMPLIFIED
+# STREAMLIT APP UI
 # =============================================
 st.set_page_config(page_title="Bias Analysis Pro - Intraday Dashboard", layout="wide", initial_sidebar_state="expanded")
 st.title("📊 Bias Analysis Pro — Intraday 1-Minute Analysis")
@@ -883,13 +853,11 @@ st.markdown(
 # Initialize analyzers
 analysis = BiasAnalysisPro()
 vob_indicator = VolumeOrderBlocks(sensitivity=5)
-options_analyzer = SimpleOptionsAnalyzer()  # Use simplified version
+options_analyzer = SimpleOptionsAnalyzer()
 
-# Sidebar inputs - FIXED FOR INTRADAY
+# Sidebar inputs
 st.sidebar.header("Intraday Settings")
 symbol_input = st.sidebar.text_input("Symbol (Yahoo Finance)", value="^NSEI")
-
-# Remove period and interval selection - fixed to 1-day 1-minute
 st.sidebar.markdown("**Data:** 1-Day • 1-Minute")
 
 # Auto-refresh configuration
@@ -914,6 +882,8 @@ if 'overall_nifty_bias' not in st.session_state:
     st.session_state.overall_nifty_bias = "NEUTRAL"
 if 'overall_nifty_score' not in st.session_state:
     st.session_state.overall_nifty_score = 0
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = datetime.now()
 
 # Function to run complete analysis
 def run_complete_analysis():
@@ -1014,9 +984,6 @@ with col2:
 
 # Auto-refresh logic
 if auto_refresh:
-    if 'last_refresh' not in st.session_state:
-        st.session_state.last_refresh = datetime.now()
-    
     current_time = datetime.now()
     time_diff = (current_time - st.session_state.last_refresh).total_seconds() / 60
     
@@ -1042,7 +1009,7 @@ tabs = st.tabs([
     "1-Minute Chart", "Overall Bias", "Bias Summary"
 ])
 
-# 1-MINUTE CHART TAB (NEW PRIMARY TAB)
+# 1-MINUTE CHART TAB (PRIMARY TAB)
 with tabs[0]:
     st.header("📈 1-Minute Intraday Chart")
     
@@ -1053,7 +1020,8 @@ with tabs[0]:
         
         # Display chart info
         st.subheader(f"Today's 1-Minute Chart - {symbol_input}")
-        st.write(f"**Data Points:** {len(df)} candles | **Last Updated:** {st.session_state['fetch_time'].strftime('%H:%M:%S')} IST")
+        if st.session_state['fetch_time']:
+            st.write(f"**Data Points:** {len(df)} candles | **Last Updated:** {st.session_state['fetch_time'].strftime('%H:%M:%S')} IST")
         
         # Create 1-minute candlestick chart
         fig = make_subplots(
