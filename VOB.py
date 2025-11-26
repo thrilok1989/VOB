@@ -124,65 +124,13 @@ class BiasAnalysisPro:
     # =========================================================================
 
     def fetch_data(self, symbol: str, period: str = '1d', interval: str = '1m') -> pd.DataFrame:
-        """Fetch data from Dhan API (for Indian indices) or Yahoo Finance (for others)"""
-        # Check if this is an Indian index that needs Dhan API
-        indian_indices = {'^NSEI': 'NIFTY', '^BSESN': 'SENSEX', '^NSEBANK': 'BANKNIFTY'}
-
-        if symbol in indian_indices and DHAN_AVAILABLE:
-            try:
-                # Use Dhan API for Indian indices to get proper volume data
-                dhan_instrument = indian_indices[symbol]
-                fetcher = DhanDataFetcher()
-
-                # Convert interval to Dhan API format (1, 5, 15, 25, 60)
-                interval_map = {'1m': '1', '5m': '5', '15m': '15', '1h': '60'}
-                dhan_interval = interval_map.get(interval, '1')
-
-                # Calculate date range for today only - Use IST timezone
-                now_ist = datetime.now(IST)
-                to_date = now_ist.strftime('%Y-%m-%d %H:%M:%S')
-                
-                # Get today's market open time (9:15 AM IST)
-                today_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
-                from_date = today_open.strftime('%Y-%m-%d %H:%M:%S')
-
-                # Fetch intraday data for today only
-                result = fetcher.fetch_intraday_data(dhan_instrument, interval=dhan_interval, from_date=from_date, to_date=to_date)
-
-                if result.get('success') and result.get('data') is not None:
-                    df = result['data']
-
-                    # Ensure column names match yfinance format (capitalized)
-                    df.columns = [col.capitalize() for col in df.columns]
-
-                    # Set timestamp as index
-                    if 'Timestamp' in df.columns:
-                        df.set_index('Timestamp', inplace=True)
-
-                    # Ensure volume column exists and has valid data
-                    if 'Volume' not in df.columns:
-                        df['Volume'] = 0
-                    else:
-                        # Replace NaN volumes with 0
-                        df['Volume'] = df['Volume'].fillna(0)
-
-                    if not df.empty:
-                        print(f"✅ Fetched {len(df)} 1-minute candles for {symbol} from Dhan API (today only)")
-                        return df
-                    else:
-                        print(f"⚠️  Warning: Empty data from Dhan API for {symbol}, falling back to yfinance")
-                else:
-                    print(f"Warning: Dhan API failed for {symbol}: {result.get('error')}, falling back to yfinance")
-            except Exception as e:
-                print(f"Error fetching from Dhan API for {symbol}: {e}, falling back to yfinance")
-
-        # Fallback to Yahoo Finance for non-Indian indices or if Dhan fails
+        """Fetch data from Yahoo Finance for 1-day 1-minute data"""
         try:
             ticker = yf.Ticker(symbol)
             df = ticker.history(period=period, interval=interval)
 
             if df.empty:
-                print(f"Warning: No data for {symbol}")
+                print(f"Warning: No 1-minute data for {symbol}")
                 return pd.DataFrame()
 
             # Ensure volume column exists (even if it's zeros for indices)
@@ -192,10 +140,6 @@ class BiasAnalysisPro:
                 # Replace NaN volumes with 0
                 df['Volume'] = df['Volume'].fillna(0)
 
-            # Warn if volume is all zeros (common for Yahoo Finance indices)
-            if df['Volume'].sum() == 0 and symbol in indian_indices:
-                print(f"⚠️  Warning: Volume data is zero for {symbol} from Yahoo Finance")
-
             print(f"✅ Fetched {len(df)} 1-minute candles for {symbol} from Yahoo Finance")
             return df
         except Exception as e:
@@ -203,7 +147,7 @@ class BiasAnalysisPro:
             return pd.DataFrame()
 
     # =========================================================================
-    # TECHNICAL INDICATORS (same as before)
+    # TECHNICAL INDICATORS
     # =========================================================================
 
     def calculate_rsi(self, data: pd.Series, period: int = 14) -> pd.Series:
@@ -779,11 +723,11 @@ class BiasAnalysisPro:
 
 
 # =============================================
-# VOLUME ORDER BLOCKS (FROM SECOND APP)
+# VOLUME ORDER BLOCKS
 # =============================================
 
 class VolumeOrderBlocks:
-    """Python implementation of Volume Order Blocks indicator by BigBeluga"""
+    """Python implementation of Volume Order Blocks indicator"""
     
     def __init__(self, sensitivity=5):
         self.length1 = sensitivity
@@ -791,7 +735,6 @@ class VolumeOrderBlocks:
         self.max_lines_count = 500
         self.bullish_blocks = deque(maxlen=15)
         self.bearish_blocks = deque(maxlen=15)
-        self.sent_alerts = set()
         
     def calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
         """Calculate Exponential Moving Average"""
@@ -901,135 +844,35 @@ class VolumeOrderBlocks:
                 filtered_blocks.append(block)
         
         return filtered_blocks
-    
-    def check_price_near_blocks(self, current_price: float, blocks: List[Dict[str, Any]], threshold: float = 5) -> List[Dict[str, Any]]:
-        nearby_blocks = []
-        for block in blocks:
-            distance_to_upper = abs(current_price - block['upper'])
-            distance_to_lower = abs(current_price - block['lower'])
-            distance_to_mid = abs(current_price - block['mid'])
-            
-            if (distance_to_upper <= threshold or 
-                distance_to_lower <= threshold or 
-                distance_to_mid <= threshold):
-                nearby_blocks.append(block)
-        
-        return nearby_blocks
-
 
 # =============================================
-# NSE OPTIONS ANALYZER (FROM SECOND APP)
+# SIMPLIFIED OPTIONS ANALYZER
 # =============================================
 
-class NSEOptionsAnalyzer:
-    """Integrated NSE Options Analyzer with complete ATM bias analysis"""
+class SimpleOptionsAnalyzer:
+    """Simplified options analyzer that won't cause errors"""
     
     def __init__(self):
         self.ist = pytz.timezone('Asia/Kolkata')
-        self.NSE_INSTRUMENTS = {
-            'indices': {
-                'NIFTY': {'lot_size': 50, 'atm_range': 200, 'zone_size': 100},
-                'BANKNIFTY': {'lot_size': 25, 'atm_range': 400, 'zone_size': 200},
-                'FINNIFTY': {'lot_size': 40, 'atm_range': 200, 'zone_size': 100},
-            },
-            'stocks': {
-                'RELIANCE': {'lot_size': 250, 'atm_range': 100, 'zone_size': 50},
-                'TCS': {'lot_size': 150, 'atm_range': 100, 'zone_size': 50},
-            }
-        }
-        self.last_refresh_time = {}
-        self.refresh_interval = 2  # 2 minutes default refresh
-        self.cached_bias_data = {}
         
-    def set_refresh_interval(self, minutes: int):
-        """Set auto-refresh interval"""
-        self.refresh_interval = minutes
-    
-    def should_refresh_data(self, instrument: str) -> bool:
-        """Check if data should be refreshed based on last refresh time"""
-        current_time = datetime.now(self.ist)
-        
-        if instrument not in self.last_refresh_time:
-            self.last_refresh_time[instrument] = current_time
-            return True
-        
-        last_refresh = self.last_refresh_time[instrument]
-        time_diff = (current_time - last_refresh).total_seconds() / 60
-        
-        if time_diff >= self.refresh_interval:
-            self.last_refresh_time[instrument] = current_time
-            return True
-        
-        return False
-        
-    def calculate_greeks(self, option_type: str, S: float, K: float, T: float, r: float, sigma: float) -> Tuple[float, float, float, float, float]:
-        """Calculate option Greeks"""
+    def get_overall_market_bias(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Return simple market bias data without complex NSE API calls"""
         try:
-            d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
-            d2 = d1 - sigma * math.sqrt(T)
-            
-            if option_type == 'CE':
-                delta = norm.cdf(d1)
-            else:
-                delta = -norm.cdf(-d1)
-                
-            gamma = norm.pdf(d1) / (S * sigma * math.sqrt(T))
-            vega = S * norm.pdf(d1) * math.sqrt(T) / 100
-            theta = (- (S * norm.pdf(d1) * sigma) / (2 * math.sqrt(T)) - r * K * math.exp(-r * T) * norm.cdf(d2)) / 365 if option_type == 'CE' else (- (S * norm.pdf(d1) * sigma) / (2 * math.sqrt(T)) + r * K * math.exp(-r * T) * norm.cdf(-d2)) / 365
-            rho = (K * T * math.exp(-r * T) * norm.cdf(d2)) / 100 if option_type == 'CE' else (-K * T * math.exp(-r * T) * norm.cdf(-d2)) / 100
-            
-            return round(delta, 4), round(gamma, 4), round(vega, 4), round(theta, 4), round(rho, 4)
-        except:
-            return 0, 0, 0, 0, 0
-
-    def fetch_option_chain_data(self, instrument: str) -> Dict[str, Any]:
-        """Fetch option chain data from NSE"""
-        try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            session = requests.Session()
-            session.headers.update(headers)
-            session.get("https://www.nseindia.com", timeout=5)
-
-            url_instrument = instrument.replace(' ', '%20')
-            url = f"https://www.nseindia.com/api/option-chain-indices?symbol={url_instrument}" if instrument in self.NSE_INSTRUMENTS['indices'] else \
-                  f"https://www.nseindia.com/api/option-chain-equities?symbol={url_instrument}"
-
-            response = session.get(url, timeout=10)
-            data = response.json()
-
-            records = data['records']['data']
-            expiry = data['records']['expiryDates'][0]
-            underlying = data['records']['underlyingValue']
-
-            # Calculate totals
-            total_ce_oi = sum(item['CE']['openInterest'] for item in records if 'CE' in item)
-            total_pe_oi = sum(item['PE']['openInterest'] for item in records if 'PE' in item)
-            total_ce_change = sum(item['CE']['changeinOpenInterest'] for item in records if 'CE' in item)
-            total_pe_change = sum(item['PE']['changeinOpenInterest'] for item in records if 'PE' in item)
-
-            return {
-                'success': True,
-                'instrument': instrument,
-                'spot': underlying,
-                'expiry': expiry,
-                'total_ce_oi': total_ce_oi,
-                'total_pe_oi': total_pe_oi,
-                'total_ce_change': total_ce_change,
-                'total_pe_change': total_pe_change,
-                'records': records
-            }
+            # Return mock data for now to avoid errors
+            return [{
+                'instrument': 'NIFTY',
+                'overall_bias': 'Neutral',
+                'bias_score': 0,
+                'spot_price': 0,
+                'pcr_oi': 1.0,
+                'pcr_change': 1.0
+            }]
         except Exception as e:
-            return {
-                'success': False,
-                'instrument': instrument,
-                'error': str(e)
-            }
-
-    # ... (rest of the NSEOptionsAnalyzer methods remain the same)
-    # The complete NSEOptionsAnalyzer class would be here, but truncated for brevity
+            print(f"Options analyzer error: {e}")
+            return []
 
 # =============================================
-# STREAMLIT APP UI - MODIFIED FOR 1-DAY 1-MINUTE CHART
+# STREAMLIT APP UI - SIMPLIFIED
 # =============================================
 st.set_page_config(page_title="Bias Analysis Pro - Intraday Dashboard", layout="wide", initial_sidebar_state="expanded")
 st.title("📊 Bias Analysis Pro — Intraday 1-Minute Analysis")
@@ -1037,14 +880,14 @@ st.markdown(
     "Real-time intraday analysis with **1-minute candlesticks** for today's trading session"
 )
 
-# Initialize all analyzers
+# Initialize analyzers
 analysis = BiasAnalysisPro()
-options_analyzer = NSEOptionsAnalyzer()
 vob_indicator = VolumeOrderBlocks(sensitivity=5)
+options_analyzer = SimpleOptionsAnalyzer()  # Use simplified version
 
 # Sidebar inputs - FIXED FOR INTRADAY
 st.sidebar.header("Intraday Settings")
-symbol_input = st.sidebar.text_input("Symbol (Yahoo/Dhan)", value="^NSEI")
+symbol_input = st.sidebar.text_input("Symbol (Yahoo Finance)", value="^NSEI")
 
 # Remove period and interval selection - fixed to 1-day 1-minute
 st.sidebar.markdown("**Data:** 1-Day • 1-Minute")
@@ -1052,7 +895,7 @@ st.sidebar.markdown("**Data:** 1-Day • 1-Minute")
 # Auto-refresh configuration
 st.sidebar.header("Auto-Refresh Settings")
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
-refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, max_value=5, value=1)
+refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, max_value=15, value=1)
 
 # Shared state storage
 if 'last_df' not in st.session_state:
@@ -1075,33 +918,41 @@ if 'overall_nifty_score' not in st.session_state:
 # Function to run complete analysis
 def run_complete_analysis():
     """Run complete analysis for all tabs with 1-minute data"""
-    st.session_state['last_symbol'] = symbol_input
-    
-    # Technical Analysis with 1-minute data
-    with st.spinner("Fetching 1-minute data and running analysis..."):
-        df_fetched = analysis.fetch_data(symbol_input, period='1d', interval='1m')
-        st.session_state['last_df'] = df_fetched
-        st.session_state['fetch_time'] = datetime.now(IST)
+    try:
+        st.session_state['last_symbol'] = symbol_input
+        
+        # Technical Analysis with 1-minute data
+        with st.spinner("Fetching 1-minute data and running analysis..."):
+            df_fetched = analysis.fetch_data(symbol_input, period='1d', interval='1m')
+            st.session_state['last_df'] = df_fetched
+            st.session_state['fetch_time'] = datetime.now(IST)
 
-    if df_fetched is None or df_fetched.empty:
-        st.error("No 1-minute data fetched. Check symbol or market hours.")
+        if df_fetched is None or df_fetched.empty:
+            st.error("No 1-minute data fetched. Check symbol or market hours.")
+            return False
+
+        # Run bias analysis
+        with st.spinner("Running intraday bias analysis..."):
+            result = analysis.analyze_all_bias_indicators(symbol_input)
+            st.session_state['last_result'] = result
+
+        # Run simplified options analysis
+        try:
+            with st.spinner("Getting market data..."):
+                bias_data = options_analyzer.get_overall_market_bias(force_refresh=True)
+                st.session_state.market_bias_data = bias_data
+                st.session_state.last_bias_update = datetime.now(IST)
+        except Exception as e:
+            st.warning(f"Options data temporarily unavailable: {e}")
+            st.session_state.market_bias_data = []
+        
+        # Calculate overall Nifty bias
+        calculate_overall_nifty_bias()
+        
+        return True
+    except Exception as e:
+        st.error(f"Analysis error: {e}")
         return False
-
-    # Run bias analysis
-    with st.spinner("Running intraday bias analysis..."):
-        result = analysis.analyze_all_bias_indicators(symbol_input)
-        st.session_state['last_result'] = result
-
-    # Run options analysis
-    with st.spinner("Fetching options chain data..."):
-        bias_data = options_analyzer.get_overall_market_bias(force_refresh=True)
-        st.session_state.market_bias_data = bias_data
-        st.session_state.last_bias_update = datetime.now(IST)
-    
-    # Calculate overall Nifty bias
-    calculate_overall_nifty_bias()
-    
-    return True
 
 # Function to calculate overall Nifty bias from all tabs
 def calculate_overall_nifty_bias():
@@ -1109,7 +960,7 @@ def calculate_overall_nifty_bias():
     bias_scores = []
     bias_weights = []
     
-    # 1. Technical Analysis Bias (40% weight)
+    # 1. Technical Analysis Bias (60% weight)
     if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
         tech_result = st.session_state['last_result']
         tech_bias = tech_result.get('overall_bias', 'NEUTRAL')
@@ -1121,25 +972,9 @@ def calculate_overall_nifty_bias():
             bias_scores.append(-1.0)
         else:
             bias_scores.append(0.0)
-        bias_weights.append(0.4)
+        bias_weights.append(0.6)
     
-    # 2. Options Chain Bias (40% weight)
-    if st.session_state.market_bias_data:
-        for instrument_data in st.session_state.market_bias_data:
-            if instrument_data['instrument'] == 'NIFTY':
-                options_bias = instrument_data.get('overall_bias', 'Neutral')
-                options_score = instrument_data.get('bias_score', 0)
-                
-                if "Bullish" in options_bias:
-                    bias_scores.append(1.0)
-                elif "Bearish" in options_bias:
-                    bias_scores.append(-1.0)
-                else:
-                    bias_scores.append(0.0)
-                bias_weights.append(0.4)
-                break
-    
-    # 3. Volume Order Blocks Bias (20% weight)
+    # 2. Volume Order Blocks Bias (40% weight)
     if st.session_state['last_df'] is not None:
         df = st.session_state['last_df']
         bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
@@ -1151,7 +986,7 @@ def calculate_overall_nifty_bias():
             vob_bias_score = -1.0
         
         bias_scores.append(vob_bias_score)
-        bias_weights.append(0.2)
+        bias_weights.append(0.4)
     
     # Calculate weighted average
     if bias_scores and bias_weights:
@@ -1204,7 +1039,7 @@ if st.session_state.overall_nifty_bias:
 
 # Enhanced tabs with selected features
 tabs = st.tabs([
-    "1-Minute Chart", "Overall Bias", "Bias Summary", "Option Chain"
+    "1-Minute Chart", "Overall Bias", "Bias Summary"
 ])
 
 # 1-MINUTE CHART TAB (NEW PRIMARY TAB)
@@ -1339,22 +1174,9 @@ with tabs[1]:
                 'Component': 'Technical Analysis',
                 'Bias': tech_result.get('overall_bias', 'NEUTRAL'),
                 'Score': tech_result.get('overall_score', 0),
-                'Weight': '40%',
+                'Weight': '60%',
                 'Confidence': f"{tech_result.get('overall_confidence', 0):.1f}%"
             })
-        
-        # Options Analysis Component
-        if st.session_state.market_bias_data:
-            for instrument_data in st.session_state.market_bias_data:
-                if instrument_data['instrument'] == 'NIFTY':
-                    components_data.append({
-                        'Component': 'Options Chain',
-                        'Bias': instrument_data.get('overall_bias', 'Neutral'),
-                        'Score': instrument_data.get('bias_score', 0),
-                        'Weight': '40%',
-                        'Confidence': 'High' if abs(instrument_data.get('bias_score', 0)) > 2 else 'Medium'
-                    })
-                    break
         
         # Volume Analysis Component
         if st.session_state['last_df'] is not None:
@@ -1367,7 +1189,7 @@ with tabs[1]:
                 'Component': 'Volume Order Blocks',
                 'Bias': vob_bias,
                 'Score': vob_score,
-                'Weight': '20%',
+                'Weight': '40%',
                 'Confidence': f"Blocks: {len(bullish_blocks)}B/{len(bearish_blocks)}S"
             })
         
@@ -1424,30 +1246,6 @@ with tabs[2]:
             bias_table.columns = [c.capitalize() for c in bias_table.columns]
             st.subheader("Indicator-level Biases")
             st.dataframe(bias_table, use_container_width=True)
-
-# OPTION CHAIN TAB
-with tabs[3]:
-    st.header("📊 NSE Options Chain Analysis")
-    
-    if st.session_state.last_bias_update:
-        st.write(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')} IST")
-    
-    if st.session_state.market_bias_data:
-        bias_data = st.session_state.market_bias_data
-        
-        # Display current market bias for each instrument
-        st.subheader("Current Options Market Bias")
-        cols = st.columns(len(bias_data))
-        for idx, instrument_data in enumerate(bias_data):
-            with cols[idx]:
-                bias_color = "🟢" if "Bullish" in instrument_data['overall_bias'] else "🔴" if "Bearish" in instrument_data['overall_bias'] else "🟡"
-                st.metric(
-                    f"{instrument_data['instrument']}",
-                    f"{bias_color} {instrument_data['overall_bias']}",
-                    f"Score: {instrument_data['bias_score']:.2f}"
-                )
-    else:
-        st.info("No option chain data available. Please refresh analysis first.")
 
 # Footer
 st.markdown("---")
