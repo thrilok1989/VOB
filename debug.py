@@ -13,6 +13,7 @@ import warnings
 import math
 from scipy.stats import norm
 import yfinance as yf
+from typing import Dict, List, Optional, Tuple, Any
 
 warnings.filterwarnings('ignore')
 
