@@ -23,6 +23,10 @@ warnings.filterwarnings('ignore')
 # Indian Standard Time (IST)
 IST = pytz.timezone('Asia/Kolkata')
 
+# Telegram Configuration - REPLACE WITH YOUR ACTUAL CREDENTIALS
+TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # Replace with your bot token
+TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"  # Replace with your chat ID
+
 # Import Dhan API for Indian indices volume data
 try:
     from dhan_data_fetcher import DhanDataFetcher
@@ -30,6 +34,99 @@ try:
 except ImportError:
     DHAN_AVAILABLE = False
     print("Warning: Dhan API not available. Volume data may be missing for Indian indices.")
+
+
+class TelegramNotifier:
+    """Telegram notification system for bias alerts"""
+    
+    def __init__(self, bot_token: str, chat_id: str):
+        self.bot_token = bot_token
+        self.chat_id = chat_id
+        self.base_url = f"https://api.telegram.org/bot{bot_token}"
+        self.sent_alerts = set()  # Track sent alerts to avoid duplicates
+        
+    def send_message(self, message: str) -> bool:
+        """Send message to Telegram"""
+        try:
+            if not self.bot_token or self.bot_token == "YOUR_TELEGRAM_BOT_TOKEN":
+                print("Telegram bot token not configured")
+                return False
+                
+            url = f"{self.base_url}/sendMessage"
+            payload = {
+                'chat_id': self.chat_id,
+                'text': message,
+                'parse_mode': 'HTML'
+            }
+            
+            response = requests.post(url, json=payload, timeout=10)
+            return response.status_code == 200
+        except Exception as e:
+            print(f"Telegram send error: {e}")
+            return False
+    
+    def send_bias_alert(self, analysis_type: str, bias: str, confidence: float, details: str = "") -> bool:
+        """Send bias alert to Telegram"""
+        timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
+        
+        emoji = "🟢" if "BULL" in bias.upper() else "🔴" if "BEAR" in bias.upper() else "🟡"
+        
+        message = f"""
+<b>{emoji} {analysis_type} BIAS ALERT</b>
+📊 <b>Bias:</b> {bias}
+🎯 <b>Confidence:</b> {confidence:.1f}%
+⏰ <b>Time:</b> {timestamp}
+
+{details}
+        """.strip()
+        
+        # Create alert signature to avoid duplicates
+        alert_signature = f"{analysis_type}_{bias}_{datetime.now().strftime('%Y%m%d%H')}"
+        
+        if alert_signature not in self.sent_alerts:
+            success = self.send_message(message)
+            if success:
+                self.sent_alerts.add(alert_signature)
+                # Clean old alerts (keep only last 24 hours)
+                current_time = datetime.now()
+                self.sent_alerts = {alert for alert in self.sent_alerts 
+                                  if alert.split('_')[-1] >= (current_time - timedelta(hours=24)).strftime('%Y%m%d%H')}
+            return success
+        return False
+    
+    def send_overall_bias_alert(self, biases: Dict[str, str], overall_bias: str, score: float) -> bool:
+        """Send overall bias alert when all components agree"""
+        timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
+        
+        emoji = "🟢" if "BULL" in overall_bias.upper() else "🔴" if "BEAR" in overall_bias.upper() else "🟡"
+        
+        bias_details = "\n".join([f"• {k}: {v}" for k, v in biases.items()])
+        
+        message = f"""
+<b>🚨 COMPLETE BIAS CONFIRMATION ALERT</b>
+
+{emoji} <b>OVERALL BIAS:</b> {overall_bias}
+🎯 <b>Score:</b> {score:.1f}
+⏰ <b>Time:</b> {timestamp}
+
+<b>Component Biases:</b>
+{bias_details}
+
+<b>Action:</b> All analysis components confirm {overall_bias} bias. Consider taking positions accordingly.
+        """.strip()
+        
+        alert_signature = f"OVERALL_{overall_bias}_{datetime.now().strftime('%Y%m%d%H%M')}"
+        
+        if alert_signature not in self.sent_alerts:
+            success = self.send_message(message)
+            if success:
+                self.sent_alerts.add(alert_signature)
+            return success
+        return False
+
+
+# Initialize Telegram notifier
+telegram_notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
 
 
 class BiasAnalysisPro:
@@ -433,13 +530,12 @@ class BiasAnalysisPro:
         return vob_bullish, vob_bearish, ema1.iloc[-1], ema2.iloc[-1]
 
     # =========================================================================
-    # COMPREHENSIVE BIAS ANALYSIS
+    # COMPREHENSIVE BIAS ANALYSIS - WITH CORRECTED LOGIC
     # =========================================================================
 
     def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict:
         """
-        Analyze all 8 bias indicators:
-        Fast (8): Volume Delta, HVP, VOB, Order Blocks, RSI, DMI, VIDYA, MFI
+        Analyze all 8 bias indicators with CORRECTED overall bias calculation
         """
 
         print(f"Fetching data for {symbol}...")
@@ -655,103 +751,64 @@ class BiasAnalysisPro:
         })
 
         # =====================================================================
-        # CALCULATE OVERALL BIAS (MATCHING PINE SCRIPT LOGIC)
+        # CORRECTED OVERALL BIAS CALCULATION
         # =====================================================================
-        fast_bull = 0
-        fast_bear = 0
-        fast_total = 0
-
-        medium_bull = 0
-        medium_bear = 0
-        medium_total = 0
-
-        slow_bull = 0
-        slow_bear = 0
-        slow_total = 0
-
-        bullish_count = 0
-        bearish_count = 0
-        neutral_count = 0
-
+        
+        # Count biases by category
+        fast_bull = sum(1 for b in bias_results if b['category'] == 'fast' and 'BULLISH' in b['bias'])
+        fast_bear = sum(1 for b in bias_results if b['category'] == 'fast' and 'BEARISH' in b['bias'])
+        fast_total = sum(1 for b in bias_results if b['category'] == 'fast')
+        
+        # Calculate weighted scores with CORRECTED logic
+        total_weighted_score = 0
+        total_possible_score = 0
+        
         for bias in bias_results:
-            if 'BULLISH' in bias['bias']:
-                bullish_count += 1
-                if bias['category'] == 'fast':
-                    fast_bull += 1
-                elif bias['category'] == 'medium':
-                    medium_bull += 1
-                elif bias['category'] == 'slow':
-                    slow_bull += 1
-            elif 'BEARISH' in bias['bias']:
-                bearish_count += 1
-                if bias['category'] == 'fast':
-                    fast_bear += 1
-                elif bias['category'] == 'medium':
-                    medium_bear += 1
-                elif bias['category'] == 'slow':
-                    slow_bear += 1
-            else:
-                neutral_count += 1
-
-            if bias['category'] == 'fast':
-                fast_total += 1
-            elif bias['category'] == 'medium':
-                medium_total += 1
-            elif bias['category'] == 'slow':
-                slow_total += 1
-
-        # Calculate percentages
-        fast_bull_pct = (fast_bull / fast_total) * 100 if fast_total > 0 else 0
-        fast_bear_pct = (fast_bear / fast_total) * 100 if fast_total > 0 else 0
-
-        medium_bull_pct = (medium_bull / medium_total) * 100 if medium_total > 0 else 0
-        medium_bear_pct = (medium_bear / medium_total) * 100 if medium_total > 0 else 0
-
-        slow_bull_pct = (slow_bull / slow_total) * 100 if slow_total > 0 else 0
-        slow_bear_pct = (slow_bear / slow_total) * 100 if slow_total > 0 else 0
-
-        # Adaptive weighting (matching Pine Script)
-        # Check for divergence
-        divergence_threshold = self.config['divergence_threshold']
-        bullish_divergence = slow_bull_pct >= 66 and fast_bear_pct >= divergence_threshold
-        bearish_divergence = slow_bear_pct >= 66 and fast_bull_pct >= divergence_threshold
-        divergence_detected = bullish_divergence or bearish_divergence
-
-        # Determine mode
-        if divergence_detected:
-            fast_weight = self.config['reversal_fast_weight']
-            medium_weight = self.config['reversal_medium_weight']
-            slow_weight = self.config['reversal_slow_weight']
-            mode = "REVERSAL"
+            weight = bias['weight']
+            score = bias['score']
+            
+            # Only count non-neutral biases significantly
+            if abs(score) > 0:
+                total_weighted_score += score * weight
+                total_possible_score += 100 * weight  # Maximum possible score for this indicator
+        
+        # Calculate overall bias percentage
+        if total_possible_score > 0:
+            overall_score_percentage = (total_weighted_score / total_possible_score) * 100
         else:
-            fast_weight = self.config['normal_fast_weight']
-            medium_weight = self.config['normal_medium_weight']
-            slow_weight = self.config['normal_slow_weight']
-            mode = "NORMAL"
-
-        # Calculate weighted scores
-        bullish_signals = (fast_bull * fast_weight) + (medium_bull * medium_weight) + (slow_bull * slow_weight)
-        bearish_signals = (fast_bear * fast_weight) + (medium_bear * medium_weight) + (slow_bear * slow_weight)
-        total_signals = (fast_total * fast_weight) + (medium_total * medium_weight) + (slow_total * slow_weight)
-
-        bullish_bias_pct = (bullish_signals / total_signals) * 100 if total_signals > 0 else 0
-        bearish_bias_pct = (bearish_signals / total_signals) * 100 if total_signals > 0 else 0
-
-        # Determine overall bias
+            overall_score_percentage = 0
+        
+        # CORRECTED: Determine overall bias based on STRONG consensus, not just one strong signal
         bias_strength = self.config['bias_strength']
-
-        if bullish_bias_pct >= bias_strength:
+        
+        # Check for strong consensus (majority of indicators agree)
+        total_indicators = len(bias_results)
+        bullish_indicators = sum(1 for b in bias_results if 'BULLISH' in b['bias'])
+        bearish_indicators = sum(1 for b in bias_results if 'BEARISH' in b['bias'])
+        
+        bullish_percentage = (bullish_indicators / total_indicators) * 100
+        bearish_percentage = (bearish_indicators / total_indicators) * 100
+        
+        # REQUIRE STRONG CONSENSUS: At least 60% of indicators must agree
+        if bullish_percentage >= 60 and overall_score_percentage > 0:
             overall_bias = "BULLISH"
-            overall_score = bullish_bias_pct
-            overall_confidence = min(100, bullish_bias_pct)
-        elif bearish_bias_pct >= bias_strength:
-            overall_bias = "BEARISH"
-            overall_score = -bearish_bias_pct
-            overall_confidence = min(100, bearish_bias_pct)
+            overall_score = overall_score_percentage
+        elif bearish_percentage >= 60 and overall_score_percentage < 0:
+            overall_bias = "BEARISH" 
+            overall_score = overall_score_percentage
         else:
-            overall_bias = "NEUTRAL"
-            overall_score = 0
-            overall_confidence = 100 - max(bullish_bias_pct, bearish_bias_pct)
+            # If no strong consensus, use weighted score with higher threshold
+            if overall_score_percentage >= bias_strength:
+                overall_bias = "BULLISH"
+                overall_score = overall_score_percentage
+            elif overall_score_percentage <= -bias_strength:
+                overall_bias = "BEARISH"
+                overall_score = overall_score_percentage
+            else:
+                overall_bias = "NEUTRAL"
+                overall_score = 0
+
+        overall_confidence = min(100, abs(overall_score_percentage))
 
         return {
             'success': True,
@@ -762,18 +819,14 @@ class BiasAnalysisPro:
             'overall_bias': overall_bias,
             'overall_score': overall_score,
             'overall_confidence': overall_confidence,
-            'bullish_count': bullish_count,
-            'bearish_count': bearish_count,
-            'neutral_count': neutral_count,
-            'total_indicators': len(bias_results),
+            'bullish_count': bullish_indicators,
+            'bearish_count': bearish_indicators,
+            'neutral_count': total_indicators - (bullish_indicators + bearish_indicators),
+            'total_indicators': total_indicators,
             'stock_data': stock_data,
-            'mode': mode,
-            'fast_bull_pct': fast_bull_pct,
-            'fast_bear_pct': fast_bear_pct,
-            'slow_bull_pct': slow_bull_pct,
-            'slow_bear_pct': slow_bear_pct,
-            'bullish_bias_pct': bullish_bias_pct,
-            'bearish_bias_pct': bearish_bias_pct
+            'bullish_percentage': bullish_percentage,
+            'bearish_percentage': bearish_percentage,
+            'weighted_score_percentage': overall_score_percentage
         }
 
 
@@ -2520,61 +2573,9 @@ class NSEOptionsAnalyzer:
 
 
 # =============================================
-# STREAMLIT APP UI (ENTRY) - ENHANCED
+# HELPER FUNCTIONS FOR OVERALL BIAS CALCULATION
 # =============================================
-st.set_page_config(page_title="Bias Analysis Pro - Complete Dashboard", layout="wide", initial_sidebar_state="expanded")
-st.title("📊 Bias Analysis Pro — Complete Single-file App")
-st.markdown(
-    "This Streamlit app wraps the **BiasAnalysisPro** engine (Pine → Python) and shows bias summary, "
-    "price action, option chain analysis, and bias tabulation."
-)
 
-# Initialize all analyzers
-analysis = BiasAnalysisPro()
-options_analyzer = NSEOptionsAnalyzer()
-vob_indicator = VolumeOrderBlocks(sensitivity=5)
-gamma_analyzer = GammaSequenceAnalyzer()
-institutional_analyzer = InstitutionalOIAdvanced()
-breakout_analyzer = BreakoutReversalAnalyzer()
-
-# Sidebar inputs
-st.sidebar.header("Data & Symbol")
-symbol_input = st.sidebar.text_input("Symbol (Yahoo/Dhan)", value="^NSEI")
-period_input = st.sidebar.selectbox("Period", options=['1d', '5d', '7d', '1mo'], index=2)
-interval_input = st.sidebar.selectbox("Interval", options=['1m', '5m', '15m', '1h'], index=1)
-
-# Auto-refresh configuration
-st.sidebar.header("Auto-Refresh Settings")
-auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
-refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, max_value=10, value=1)
-
-# Shared state storage
-if 'last_df' not in st.session_state:
-    st.session_state['last_df'] = None
-if 'last_result' not in st.session_state:
-    st.session_state['last_result'] = None
-if 'last_symbol' not in st.session_state:
-    st.session_state['last_symbol'] = None
-if 'fetch_time' not in st.session_state:
-    st.session_state['fetch_time'] = None
-if 'market_bias_data' not in st.session_state:
-    st.session_state.market_bias_data = None
-if 'last_bias_update' not in st.session_state:
-    st.session_state.last_bias_update = None
-if 'overall_nifty_bias' not in st.session_state:
-    st.session_state.overall_nifty_bias = "NEUTRAL"
-if 'overall_nifty_score' not in st.session_state:
-    st.session_state.overall_nifty_score = 0
-if 'atm_detailed_bias' not in st.session_state:
-    st.session_state.atm_detailed_bias = None
-
-# Function to generate unique element IDs
-def generate_element_id(prefix: str, content: str) -> str:
-    """Generate unique element ID using hash of content"""
-    content_hash = hashlib.md5(content.encode()).hexdigest()[:8]
-    return f"{prefix}_{content_hash}"
-
-# Function to calculate ATM detailed bias score
 def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
     """Calculate overall ATM bias from detailed bias metrics"""
     if not detailed_bias_data:
@@ -2629,64 +2630,40 @@ def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
     
     return bias, normalized_score
 
-# Function to run complete analysis
-def run_complete_analysis():
-    """Run complete analysis for all tabs"""
-    st.session_state['last_symbol'] = symbol_input
+
+def check_and_send_bias_alerts(technical_bias: str, technical_confidence: float,
+                              options_bias: str, options_score: float,
+                              atm_bias: str, atm_score: float,
+                              breakout_bias: str, breakout_score: float,
+                              overall_bias: str, overall_score: float) -> bool:
+    """
+    Check if all biases agree and send Telegram alert
+    Returns True if alert was sent
+    """
+    # Define what constitutes bullish/bearish for each component
+    biases = {
+        'Technical Analysis': technical_bias,
+        'Options Chain': options_bias, 
+        'ATM Analysis': atm_bias,
+        'Breakout/Reversal': breakout_bias
+    }
     
-    # Technical Analysis
-    with st.spinner("Fetching data and running technical analysis..."):
-        df_fetched = analysis.fetch_data(symbol_input, period=period_input, interval=interval_input)
-        st.session_state['last_df'] = df_fetched
-        st.session_state['fetch_time'] = datetime.now(IST)
-
-    if df_fetched is None or df_fetched.empty:
-        st.error("No data fetched. Check symbol or network.")
-        return False
-
-    # Run bias analysis
-    with st.spinner("Running full bias analysis..."):
-        result = analysis.analyze_all_bias_indicators(symbol_input)
-        st.session_state['last_result'] = result
-
-    # Run ENHANCED options analysis with institutional footprint
-    with st.spinner("Running institutional footprint analysis..."):
-        enhanced_bias_data = []
-        instruments = list(options_analyzer.NSE_INSTRUMENTS['indices'].keys())
+    # Check if all components agree on direction
+    all_bullish = all('BULL' in bias.upper() for bias in biases.values())
+    all_bearish = all('BEAR' in bias.upper() for bias in biases.values())
+    
+    if all_bullish or all_bearish:
+        # Calculate average confidence
+        confidences = [technical_confidence, abs(options_score), abs(atm_score), breakout_score]
+        avg_confidence = sum(confidences) / len(confidences)
         
-        for instrument in instruments:
-            try:
-                bias_data = options_analyzer.analyze_comprehensive_institutional_bias(instrument)
-                if bias_data:
-                    enhanced_bias_data.append(bias_data)
-            except Exception as e:
-                print(f"Error in enhanced analysis for {instrument}: {e}")
-                # Fallback to basic analysis
-                basic_data = options_analyzer.analyze_comprehensive_atm_bias(instrument)
-                if basic_data:
-                    enhanced_bias_data.append(basic_data)
-        
-        st.session_state.market_bias_data = enhanced_bias_data
-        st.session_state.last_bias_update = datetime.now(IST)
+        # Only send if confidence is reasonable
+        if avg_confidence >= 60:
+            return telegram_notifier.send_overall_bias_alert(biases, overall_bias, overall_score)
     
-    # Calculate ATM detailed bias
-    if st.session_state.market_bias_data:
-        for instrument_data in st.session_state.market_bias_data:
-            if instrument_data['instrument'] == 'NIFTY' and 'detailed_atm_bias' in instrument_data:
-                atm_bias, atm_score = calculate_atm_detailed_bias(instrument_data['detailed_atm_bias'])
-                st.session_state.atm_detailed_bias = {
-                    'bias': atm_bias,
-                    'score': atm_score,
-                    'details': instrument_data['detailed_atm_bias']
-                }
-                break
-    
-    # Calculate overall Nifty bias
-    calculate_overall_nifty_bias()
-    
-    return True
+    return False
 
-# Function to calculate overall Nifty bias from all tabs
+
 def calculate_overall_nifty_bias():
     """Calculate overall Nifty bias by combining all analysis methods"""
     bias_scores = []
@@ -2777,20 +2754,206 @@ def calculate_overall_nifty_bias():
         st.session_state.overall_nifty_bias = overall_bias
         st.session_state.overall_nifty_score = weighted_score * 100
 
+
+def run_complete_analysis():
+    """Run complete analysis for all tabs with Telegram notifications"""
+    st.session_state['last_symbol'] = symbol_input
+    
+    # Technical Analysis
+    with st.spinner("Fetching data and running technical analysis..."):
+        df_fetched = analysis.fetch_data(symbol_input, period=period_input, interval=interval_input)
+        st.session_state['last_df'] = df_fetched
+        st.session_state['fetch_time'] = datetime.now(IST)
+
+    if df_fetched is None or df_fetched.empty:
+        st.error("No data fetched. Check symbol or network.")
+        return False
+
+    # Run bias analysis
+    with st.spinner("Running full bias analysis..."):
+        result = analysis.analyze_all_bias_indicators(symbol_input)
+        st.session_state['last_result'] = result
+        
+        # Send technical bias alert if strong
+        if result.get('success') and result.get('overall_confidence', 0) >= 70:
+            telegram_notifier.send_bias_alert(
+                "TECHNICAL ANALYSIS", 
+                result['overall_bias'],
+                result['overall_confidence'],
+                f"Symbol: {result['symbol']}\nPrice: ₹{result['current_price']:.2f}"
+            )
+
+    # Run ENHANCED options analysis
+    with st.spinner("Running institutional footprint analysis..."):
+        enhanced_bias_data = []
+        instruments = list(options_analyzer.NSE_INSTRUMENTS['indices'].keys())
+        
+        for instrument in instruments:
+            try:
+                bias_data = options_analyzer.analyze_comprehensive_institutional_bias(instrument)
+                if bias_data:
+                    enhanced_bias_data.append(bias_data)
+                    
+                    # Send options bias alert if strong
+                    combined_score = bias_data.get('combined_score', 0)
+                    if abs(combined_score) >= 3:  # Strong bias
+                        telegram_notifier.send_bias_alert(
+                            f"OPTIONS CHAIN - {instrument}",
+                            bias_data.get('combined_bias', 'NEUTRAL'),
+                            abs(combined_score) * 25,  # Convert to percentage
+                            f"Spot: ₹{bias_data['spot_price']:.2f}\nPCR: {bias_data['pcr_oi']:.2f}"
+                        )
+                        
+            except Exception as e:
+                print(f"Error in enhanced analysis for {instrument}: {e}")
+                basic_data = options_analyzer.analyze_comprehensive_atm_bias(instrument)
+                if basic_data:
+                    enhanced_bias_data.append(basic_data)
+        
+        st.session_state.market_bias_data = enhanced_bias_data
+        st.session_state.last_bias_update = datetime.now(IST)
+    
+    # Calculate ATM detailed bias
+    if st.session_state.market_bias_data:
+        for instrument_data in st.session_state.market_bias_data:
+            if instrument_data['instrument'] == 'NIFTY' and 'detailed_atm_bias' in instrument_data:
+                atm_bias, atm_score = calculate_atm_detailed_bias(instrument_data['detailed_atm_bias'])
+                st.session_state.atm_detailed_bias = {
+                    'bias': atm_bias,
+                    'score': atm_score,
+                    'details': instrument_data['detailed_atm_bias']
+                }
+                break
+    
+    # Calculate overall Nifty bias
+    calculate_overall_nifty_bias()
+    
+    # Check for complete bias confirmation and send Telegram alert
+    if (st.session_state.overall_nifty_bias and 
+        st.session_state.overall_nifty_bias != "NEUTRAL" and
+        st.session_state['last_result'] and 
+        st.session_state.market_bias_data):
+        
+        # Get all component biases
+        tech_result = st.session_state['last_result']
+        technical_bias = tech_result.get('overall_bias', 'NEUTRAL')
+        technical_confidence = tech_result.get('overall_confidence', 0)
+        
+        options_bias = "NEUTRAL"
+        options_score = 0
+        atm_bias = "NEUTRAL" 
+        atm_score = 0
+        breakout_bias = "NEUTRAL"
+        breakout_score = 0
+        
+        for instrument_data in st.session_state.market_bias_data:
+            if instrument_data['instrument'] == 'NIFTY':
+                options_bias = instrument_data.get('combined_bias', 'Neutral')
+                options_score = instrument_data.get('combined_score', 0)
+                
+                if 'breakout_reversal_analysis' in instrument_data:
+                    breakout_data = instrument_data['breakout_reversal_analysis']
+                    breakout_bias = breakout_data.get('market_state', 'NEUTRAL_CHOPPY')
+                    breakout_score = breakout_data.get('overall_score', 0)
+                break
+        
+        if st.session_state.atm_detailed_bias:
+            atm_bias = st.session_state.atm_detailed_bias['bias']
+            atm_score = st.session_state.atm_detailed_bias['score']
+        
+        # Check if all biases agree
+        check_and_send_bias_alerts(
+            technical_bias, technical_confidence,
+            options_bias, options_score,
+            atm_bias, atm_score,
+            breakout_bias, breakout_score,
+            st.session_state.overall_nifty_bias,
+            st.session_state.overall_nifty_score
+        )
+    
+    return True
+
+
+# =============================================
+# STREAMLIT APP UI
+# =============================================
+
+# Initialize all analyzers
+analysis = BiasAnalysisPro()
+options_analyzer = NSEOptionsAnalyzer()
+vob_indicator = VolumeOrderBlocks(sensitivity=5)
+gamma_analyzer = GammaSequenceAnalyzer()
+institutional_analyzer = InstitutionalOIAdvanced()
+breakout_analyzer = BreakoutReversalAnalyzer()
+
+# Streamlit UI setup
+st.set_page_config(page_title="Bias Analysis Pro - Complete Dashboard", layout="wide", initial_sidebar_state="expanded")
+st.title("📊 Bias Analysis Pro — Complete Single-file App")
+st.markdown(
+    "This Streamlit app wraps the **BiasAnalysisPro** engine (Pine → Python) and shows bias summary, "
+    "price action, option chain analysis, and bias tabulation."
+)
+
+# Sidebar inputs
+st.sidebar.header("Data & Symbol")
+symbol_input = st.sidebar.text_input("Symbol (Yahoo/Dhan)", value="^NSEI")
+period_input = st.sidebar.selectbox("Period", options=['1d', '5d', '7d', '1mo'], index=2)
+interval_input = st.sidebar.selectbox("Interval", options=['1m', '5m', '15m', '1h'], index=1)
+
+# Auto-refresh configuration
+st.sidebar.header("Auto-Refresh Settings")
+auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
+refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, max_value=10, value=1)
+
+# Telegram configuration
+st.sidebar.header("Telegram Alerts")
+telegram_enabled = st.sidebar.checkbox("Enable Telegram Alerts", value=True)
+if telegram_enabled:
+    st.sidebar.info("Alerts will be sent when all analysis components agree on bias direction")
+
+# Shared state storage
+if 'last_df' not in st.session_state:
+    st.session_state['last_df'] = None
+if 'last_result' not in st.session_state:
+    st.session_state['last_result'] = None
+if 'last_symbol' not in st.session_state:
+    st.session_state['last_symbol'] = None
+if 'fetch_time' not in st.session_state:
+    st.session_state['fetch_time'] = None
+if 'market_bias_data' not in st.session_state:
+    st.session_state.market_bias_data = None
+if 'last_bias_update' not in st.session_state:
+    st.session_state.last_bias_update = None
+if 'overall_nifty_bias' not in st.session_state:
+    st.session_state.overall_nifty_bias = "NEUTRAL"
+if 'overall_nifty_score' not in st.session_state:
+    st.session_state.overall_nifty_score = 0
+if 'atm_detailed_bias' not in st.session_state:
+    st.session_state.atm_detailed_bias = None
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = datetime.now()
+if 'analysis_count' not in st.session_state:
+    st.session_state.analysis_count = 0
+
+# Function to generate unique element IDs
+def generate_element_id(prefix: str, content: str) -> str:
+    """Generate unique element ID using hash of content"""
+    content_hash = hashlib.md5(content.encode()).hexdigest()[:8]
+    return f"{prefix}_{content_hash}"
+
 # Refresh button
 col1, col2 = st.sidebar.columns([2, 1])
 with col1:
     if st.button("🔄 Refresh Analysis", type="primary", use_container_width=True):
         if run_complete_analysis():
             st.sidebar.success("Analysis refreshed!")
+            st.session_state.analysis_count += 1
 with col2:
     st.sidebar.metric("Auto-Refresh", "ON" if auto_refresh else "OFF")
+    st.sidebar.metric("Run Count", st.session_state.analysis_count)
 
-# Auto-refresh logic
+# Auto-refresh logic - FIXED to run automatically
 if auto_refresh:
-    if 'last_refresh' not in st.session_state:
-        st.session_state.last_refresh = datetime.now()
-    
     current_time = datetime.now()
     time_diff = (current_time - st.session_state.last_refresh).total_seconds() / 60
     
@@ -2798,7 +2961,14 @@ if auto_refresh:
         with st.spinner("Auto-refreshing analysis..."):
             if run_complete_analysis():
                 st.session_state.last_refresh = current_time
+                st.session_state.analysis_count += 1
                 st.rerun()
+
+# Display refresh status
+if st.session_state.fetch_time:
+    time_since_refresh = (datetime.now(IST) - st.session_state.fetch_time).total_seconds() / 60
+    st.sidebar.write(f"Last refresh: {st.session_state.fetch_time.strftime('%H:%M:%S')} IST")
+    st.sidebar.write(f"Minutes since: {time_since_refresh:.1f}m")
 
 # Display overall Nifty bias prominently
 st.sidebar.markdown("---")
@@ -2816,7 +2986,7 @@ tabs = st.tabs([
     "Overall Bias", "Bias Summary", "Price Action", "Option Chain", "Bias Tabulation"
 ])
 
-# OVERALL BIAS TAB (NEW)
+# OVERALL BIAS TAB
 with tabs[0]:
     st.header("🎯 Overall Nifty Bias Analysis")
     
@@ -2894,7 +3064,7 @@ with tabs[0]:
                 'Confidence': f"Blocks: {len(bullish_blocks)}B/{len(bearish_blocks)}S"
             })
         
-        # Breakout/Reversal Component - NEW
+        # Breakout/Reversal Component
         if st.session_state.market_bias_data:
             for instrument_data in st.session_state.market_bias_data:
                 if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
@@ -3088,7 +3258,7 @@ with tabs[2]:
                 st.write(f"- Lower: ₹{latest_bearish['lower']:.2f}")
                 st.write(f"- Volume: {latest_bearish['volume']:,.0f}")
 
-# OPTION CHAIN TAB - ENHANCED WITH BREAKOUT/REVERSAL ANALYSIS
+# OPTION CHAIN TAB
 with tabs[3]:
     st.header("📊 NSE Options Chain Analysis - Institutional Footprint")
     
@@ -3130,7 +3300,7 @@ with tabs[3]:
                 with col4:
                     st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}")
                 
-                # BREAKOUT & REVERSAL ANALYSIS - NEW SECTION
+                # BREAKOUT & REVERSAL ANALYSIS
                 st.subheader("🔥 Breakout & Reversal Confirmation")
                 
                 if 'breakout_reversal_analysis' in instrument_data:
@@ -3187,7 +3357,7 @@ with tabs[3]:
                         patterns_df = pd.DataFrame(inst_analysis['patterns'])
                         st.dataframe(patterns_df, use_container_width=True, key=f"patterns_{idx}")
                     
-                    # Gamma Analysis - COMPREHENSIVE
+                    # Gamma Analysis
                     gamma_analysis = inst_analysis.get('gamma_analysis', {})
                     st.subheader("γ Gamma Sequencing Analysis")
                     
@@ -3284,7 +3454,7 @@ with tabs[3]:
     else:
         st.info("No option chain data available. Please refresh analysis first.")
 
-# BIAS TABULATION TAB - ENHANCED
+# BIAS TABULATION TAB
 with tabs[4]:
     st.header("📋 Comprehensive Bias Tabulation")
     
@@ -3382,7 +3552,7 @@ with tabs[4]:
                         )
                         st.plotly_chart(fig, use_container_width=True, key=chart_id)
                 
-                # Breakout/Reversal Analysis - NEW SECTION
+                # Breakout/Reversal Analysis
                 if 'breakout_reversal_analysis' in instrument_data:
                     st.subheader("🔥 Breakout & Reversal Analysis")
                     
@@ -3438,6 +3608,14 @@ with tabs[4]:
                     comp_df = pd.DataFrame(comp_data, columns=['Metric', 'Value'])
                     st.dataframe(comp_df, use_container_width=True, hide_index=True, key=f"comp_metrics_{idx}")
 
-# Footer
+# Run initial analysis automatically when app starts
+if st.session_state.analysis_count == 0:
+    with st.spinner("Running initial analysis..."):
+        if run_complete_analysis():
+            st.session_state.analysis_count = 1
+            st.rerun()
+
+# Footer with refresh status
 st.markdown("---")
-st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh, Overall Nifty Bias Analysis, and Institutional Breakout/Reversal Detection.")
+refresh_status = "🟢 Auto-refresh ACTIVE" if auto_refresh else "🟡 Auto-refresh INACTIVE"
+st.caption(f"BiasAnalysisPro — {refresh_status} | Interval: {refresh_interval} min | Run Count: {st.session_state.analysis_count}")
