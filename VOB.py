@@ -10,7 +10,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any, Union
 import yfinance as yf
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
