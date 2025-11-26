@@ -10,6 +10,7 @@ import math
 from scipy.stats import norm
 import warnings
 from typing import Dict, List, Optional, Tuple, Any
+import yfinance as yf
 
 warnings.filterwarnings('ignore')
 
@@ -621,13 +622,41 @@ class NSEOptionsAnalyzer:
         return results
 
 # =============================================
-# SIMPLIFIED NIFTY APP
+# PRICE DATA FETCHER FOR CHARTS
+# =============================================
+
+class PriceDataFetcher:
+    """Fetch real price data for charts"""
+    
+    def __init__(self):
+        self.ist = pytz.timezone('Asia/Kolkata')
+    
+    def fetch_nifty_data(self, period: str = '5d', interval: str = '5m') -> pd.DataFrame:
+        """Fetch Nifty 50 data from Yahoo Finance"""
+        try:
+            ticker = yf.Ticker("^NSEI")
+            df = ticker.history(period=period, interval=interval)
+            
+            if df.empty:
+                return pd.DataFrame()
+            
+            # Convert index to IST timezone
+            df.index = df.index.tz_convert(self.ist)
+            
+            return df
+        except Exception as e:
+            st.error(f"Error fetching price data: {e}")
+            return pd.DataFrame()
+
+# =============================================
+# SIMPLIFIED NIFTY APP WITH PROPER CHARTS
 # =============================================
 
 class SimplifiedNiftyApp:
     def __init__(self):
         self.ist = pytz.timezone('Asia/Kolkata')
         self.options_analyzer = NSEOptionsAnalyzer()
+        self.price_fetcher = PriceDataFetcher()
         
         # Initialize session state
         self.init_session_state()
@@ -638,6 +667,123 @@ class SimplifiedNiftyApp:
             st.session_state.market_bias_data = None
         if 'last_bias_update' not in st.session_state:
             st.session_state.last_bias_update = None
+        if 'price_data' not in st.session_state:
+            st.session_state.price_data = None
+        if 'selected_timeframe' not in st.session_state:
+            st.session_state.selected_timeframe = '5m'
+
+    def fetch_and_process_price_data(self, interval: str = '5m'):
+        """Fetch and process price data for charts"""
+        try:
+            # Map interval to period for Yahoo Finance
+            period_map = {
+                '1m': '1d', '2m': '1d', '5m': '5d', '15m': '5d',
+                '30m': '5d', '1h': '1mo', '1d': '3mo'
+            }
+            period = period_map.get(interval, '5d')
+            
+            df = self.price_fetcher.fetch_nifty_data(period=period, interval=interval)
+            
+            if not df.empty:
+                st.session_state.price_data = df
+                st.session_state.selected_timeframe = interval
+                return True
+            return False
+        except Exception as e:
+            st.error(f"Error processing price data: {e}")
+            return False
+
+    def create_comprehensive_chart(self, df: pd.DataFrame, interval: str) -> go.Figure:
+        """Create comprehensive candlestick chart with volume"""
+        if df.empty:
+            # Return empty figure if no data
+            fig = go.Figure()
+            fig.update_layout(title="No data available", height=600)
+            return fig
+        
+        # Create subplots
+        fig = make_subplots(
+            rows=2, cols=1,
+            row_heights=[0.7, 0.3],
+            subplot_titles=(f'NIFTY 50 - {interval} Chart', 'Volume'),
+            vertical_spacing=0.05,
+            shared_xaxes=True
+        )
+        
+        # Candlestick chart
+        fig.add_trace(
+            go.Candlestick(
+                x=df.index,
+                open=df['Open'],
+                high=df['High'],
+                low=df['Low'],
+                close=df['Close'],
+                name='NIFTY 50',
+                increasing_line_color='#00ff88',
+                decreasing_line_color='#ff4444'
+            ),
+            row=1, col=1
+        )
+        
+        # Add moving averages
+        if len(df) > 20:
+            df['MA20'] = df['Close'].rolling(window=20).mean()
+            fig.add_trace(
+                go.Scatter(
+                    x=df.index,
+                    y=df['MA20'],
+                    line=dict(color='orange', width=1.5),
+                    name='MA 20'
+                ),
+                row=1, col=1
+            )
+        
+        if len(df) > 50:
+            df['MA50'] = df['Close'].rolling(window=50).mean()
+            fig.add_trace(
+                go.Scatter(
+                    x=df.index,
+                    y=df['MA50'],
+                    line=dict(color='blue', width=1.5),
+                    name='MA 50'
+                ),
+                row=1, col=1
+            )
+        
+        # Volume bars with color coding
+        colors = ['#00ff88' if close >= open_ else '#ff4444' 
+                 for close, open_ in zip(df['Close'], df['Open'])]
+        
+        fig.add_trace(
+            go.Bar(
+                x=df.index,
+                y=df['Volume'],
+                name='Volume',
+                marker_color=colors,
+                opacity=0.7
+            ),
+            row=2, col=1
+        )
+        
+        # Update layout
+        fig.update_layout(
+            xaxis_rangeslider_visible=False,
+            template='plotly_dark',
+            height=800,
+            showlegend=True,
+            margin=dict(l=0, r=0, t=50, b=0),
+            title=f"NIFTY 50 Price Action - {interval}",
+            xaxis_title="Time",
+            yaxis_title="Price",
+            xaxis2_title="Time",
+            yaxis2_title="Volume"
+        )
+        
+        # Update axes
+        fig.update_xaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)')
+        fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)')
+        
+        return fig
 
     def display_comprehensive_options_analysis(self):
         """Display comprehensive NSE Options Analysis with detailed ATM bias tabulation"""
@@ -863,101 +1009,33 @@ class SimplifiedNiftyApp:
                     
                     comp_df = pd.DataFrame(comp_data, columns=['Metric', 'Value'])
                     st.dataframe(comp_df, use_container_width=True, hide_index=True)
-                
-                # Visual Analysis
-                st.subheader("📊 Visual Bias Analysis")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Bias Score Gauge
-                    fig = go.Figure(go.Indicator(
-                        mode = "gauge+number+delta",
-                        value = instrument_data['bias_score'],
-                        domain = {'x': [0, 1], 'y': [0, 1]},
-                        title = {'text': f"{instrument_data['instrument']} Bias Score"},
-                        gauge = {
-                            'axis': {'range': [-10, 10]},
-                            'bar': {'color': "darkblue"},
-                            'steps': [
-                                {'range': [-10, -4], 'color': "lightcoral"},
-                                {'range': [-4, -2], 'color': "lightyellow"},
-                                {'range': [-2, 2], 'color': "lightgray"},
-                                {'range': [2, 4], 'color': "lightgreen"},
-                                {'range': [4, 10], 'color': "limegreen"}],
-                            'threshold': {
-                                'line': {'color': "red", 'width': 4},
-                                'thickness': 0.75,
-                                'value': instrument_data['bias_score']}}
-                    ))
-                    fig.update_layout(height=300)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    # PCR Analysis
-                    pcr_data = {
-                        'Metric': ['PCR OI', 'PCR Change OI'],
-                        'Value': [instrument_data['pcr_oi'], instrument_data['pcr_change']],
-                        'Interpretation': [
-                            'Bullish' if instrument_data['pcr_oi'] > 1.0 else 'Bearish',
-                            'Bullish' if instrument_data['pcr_change'] > 1.0 else 'Bearish'
-                        ]
-                    }
-                    pcr_df = pd.DataFrame(pcr_data)
-                    st.dataframe(pcr_df, use_container_width=True, hide_index=True)
-                
-                # Trading Levels
-                if 'comprehensive_metrics' in instrument_data:
-                    comp_metrics = instrument_data['comprehensive_metrics']
-                    st.subheader("🎯 Key Trading Levels")
-                    
-                    levels_data = []
-                    if 'call_resistance' in comp_metrics and comp_metrics['call_resistance']:
-                        levels_data.append(['Call Resistance', f"₹{comp_metrics['call_resistance']:.0f}"])
-                    if 'put_support' in comp_metrics and comp_metrics['put_support']:
-                        levels_data.append(['Put Support', f"₹{comp_metrics['put_support']:.0f}"])
-                    if 'max_pain_strike' in comp_metrics and comp_metrics['max_pain_strike']:
-                        levels_data.append(['Max Pain', f"₹{comp_metrics['max_pain_strike']:.0f}"])
-                    
-                    levels_data.append(['Current Spot', f"₹{instrument_data['spot_price']:.0f}"])
-                    
-                    levels_df = pd.DataFrame(levels_data, columns=['Level', 'Price'])
-                    st.dataframe(levels_df, use_container_width=True, hide_index=True)
-
-    def create_simple_chart(self):
-        """Create a simple placeholder chart"""
-        # Sample data for demonstration
-        dates = pd.date_range(start='2024-01-01', periods=100, freq='D')
-        prices = 22000 + np.cumsum(np.random.randn(100) * 100)
-        
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatter(
-            x=dates,
-            y=prices,
-            mode='lines',
-            name='Nifty 50',
-            line=dict(color='#00ff88', width=2)
-        ))
-        
-        fig.update_layout(
-            title="Nifty 50 Price Chart",
-            xaxis_title="Date",
-            yaxis_title="Price",
-            template='plotly_dark',
-            height=400
-        )
-        
-        return fig
 
     def run(self):
-        """Main application with simplified features"""
+        """Main application with proper price action charts"""
         st.title("📈 Nifty Options Analysis Dashboard")
         st.markdown("*Options Chain Analysis & ATM Bias Tabulation*")
         
         # Sidebar settings
         with st.sidebar:
             st.header("⚙️ Settings")
+            
+            # Chart settings
+            st.subheader("📈 Chart Settings")
+            timeframe = st.selectbox(
+                "Timeframe",
+                ['1m', '2m', '5m', '15m', '30m', '1h', '1d'],
+                index=2  # Default to 5m
+            )
+            
+            if st.button("🔄 Refresh Chart", type="secondary"):
+                with st.spinner("Fetching latest price data..."):
+                    if self.fetch_and_process_price_data(timeframe):
+                        st.success("Chart data refreshed!")
+                    else:
+                        st.error("Failed to fetch chart data")
+            
+            # Options settings
+            st.subheader("📊 Options Settings")
             refresh_interval = st.slider(
                 "Refresh Interval (minutes)",
                 min_value=1,
@@ -968,23 +1046,77 @@ class SimplifiedNiftyApp:
             
             if st.button("🔄 Refresh All Data", type="primary"):
                 with st.spinner("Refreshing all data..."):
+                    # Refresh price data
+                    self.fetch_and_process_price_data(timeframe)
+                    
+                    # Refresh options data
                     bias_data = self.options_analyzer.get_overall_market_bias(force_refresh=True)
                     st.session_state.market_bias_data = bias_data
                     st.session_state.last_bias_update = datetime.now(self.ist)
+                    
                     if bias_data:
-                        st.success("Data refreshed!")
+                        st.success("All data refreshed!")
                     else:
-                        st.warning("No data received. Check internet connection.")
+                        st.warning("Options data not available. Check internet connection.")
         
         # Main content - Tabs
         tab1, tab2, tab3 = st.tabs([
-            "📊 Options Analysis", "📋 Bias Tabulation", "📈 Price Chart"
+            "📈 Price Action", "📊 Options Analysis", "📋 Bias Tabulation"
         ])
         
         with tab1:
+            st.header("📈 NIFTY 50 Price Action")
+            
+            # Fetch price data if not available
+            if st.session_state.price_data is None:
+                with st.spinner("Loading price data..."):
+                    self.fetch_and_process_price_data(timeframe)
+            
+            # Display chart
+            if st.session_state.price_data is not None:
+                df = st.session_state.price_data
+                
+                # Display current price metrics
+                if not df.empty:
+                    latest = df.iloc[-1]
+                    prev_close = df.iloc[-2]['Close'] if len(df) > 1 else latest['Close']
+                    price_change = latest['Close'] - prev_close
+                    price_change_pct = (price_change / prev_close) * 100
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric(
+                            "Current Price",
+                            f"₹{latest['Close']:.2f}",
+                            f"{price_change:+.2f} ({price_change_pct:+.2f}%)"
+                        )
+                    with col2:
+                        st.metric("Open", f"₹{latest['Open']:.2f}")
+                    with col3:
+                        st.metric("High", f"₹{latest['High']:.2f}")
+                    with col4:
+                        st.metric("Low", f"₹{latest['Low']:.2f}")
+                
+                # Create and display chart
+                chart = self.create_comprehensive_chart(df, timeframe)
+                st.plotly_chart(chart, use_container_width=True)
+                
+                # Chart info
+                st.info(f"""
+                **Chart Features:**
+                - **Candlestick Chart**: Real-time NIFTY 50 price action
+                - **Moving Averages**: 20-period and 50-period moving averages
+                - **Volume Bars**: Color-coded volume (green for up, red for down)
+                - **Timeframe**: {timeframe} intervals
+                - **Auto-refresh**: Manual refresh available in sidebar
+                """)
+            else:
+                st.error("Unable to load price data. Please check your internet connection.")
+        
+        with tab2:
             self.display_comprehensive_options_analysis()
             
-            # Auto-refresh logic
+            # Auto-refresh logic for options data
             current_time = datetime.now(self.ist)
             if (st.session_state.last_bias_update is None or 
                 (current_time - st.session_state.last_bias_update).total_seconds() > self.options_analyzer.refresh_interval * 60):
@@ -996,20 +1128,8 @@ class SimplifiedNiftyApp:
                     if bias_data:
                         st.rerun()
         
-        with tab2:
-            self.display_option_chain_bias_tabulation()
-        
         with tab3:
-            st.header("📈 Nifty 50 Price Chart")
-            chart = self.create_simple_chart()
-            st.plotly_chart(chart, use_container_width=True)
-            
-            st.info("""
-            **Chart Features:**
-            - Real-time Nifty 50 price visualization
-            - Technical analysis overlay (coming soon)
-            - Support and resistance levels from options data
-            """)
+            self.display_option_chain_bias_tabulation()
 
 # Run the app
 if __name__ == "__main__":
