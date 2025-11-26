@@ -1,0 +1,72 @@
+# Streamlit Configuration
+# Optimized to prevent blur/loading overlay during refresh
+
+[client]
+# Disable the hamburger menu
+showSidebarNavigation = false
+
+# Show error details
+showErrorDetails = false
+
+# Toolbar mode (minimal/developer/viewer/auto)
+toolbarMode = "minimal"
+
+# Gather usage stats
+gatherUsageStats = false
+
+[server]
+# Enable CORS for better performance
+enableCORS = false
+
+# Enable XSRF protection
+enableXsrfProtection = true
+
+# Max upload size (MB)
+maxUploadSize = 200
+
+# Enable WebSocket compression
+enableWebsocketCompression = true
+
+# Run on save (for development)
+runOnSave = false
+
+# File watcher type
+fileWatcherType = "auto"
+
+[runner]
+# Magic enabled
+magicEnabled = true
+
+# Fast reruns - this prevents full page reload
+fastReruns = true
+
+# Enforce serializable session state
+enforceSerializableSessionState = false
+
+# Post script GC
+postScriptGC = true
+
+[theme]
+# Optional: Define a custom theme
+primaryColor = "#089981"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+font = "sans serif"
+
+[logger]
+# Set logging level
+level = "error"
+
+# Message format
+messageFormat = "%(asctime)s %(message)s"
+
+[browser]
+# Gather usage stats
+gatherUsageStats = false
+
+# Server address
+serverAddress = "localhost"
+
+# Server port
+serverPort = 8501
