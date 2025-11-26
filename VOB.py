@@ -1556,6 +1556,63 @@ if 'overall_nifty_bias' not in st.session_state:
     st.session_state.overall_nifty_bias = "NEUTRAL"
 if 'overall_nifty_score' not in st.session_state:
     st.session_state.overall_nifty_score = 0
+if 'atm_detailed_bias' not in st.session_state:
+    st.session_state.atm_detailed_bias = None
+
+# Function to calculate ATM detailed bias score
+def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
+    """Calculate overall ATM bias from detailed bias metrics"""
+    if not detailed_bias_data:
+        return "NEUTRAL", 0
+    
+    bias_scores = []
+    bias_weights = []
+    
+    # Define bias mappings with weights
+    bias_mappings = {
+        'OI_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 2.0},
+        'ChgOI_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 2.0},
+        'Volume_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
+        'Delta_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
+        'Gamma_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.0},
+        'Premium_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.0},
+        'AskQty_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.0},
+        'BidQty_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.0},
+        'IV_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
+        'DVP_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
+        'Delta_Exposure_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 2.0},
+        'Gamma_Exposure_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
+        'IV_Skew_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5}
+    }
+    
+    # Calculate weighted scores
+    total_weight = 0
+    total_score = 0
+    
+    for bias_key, mapping in bias_mappings.items():
+        if bias_key in detailed_bias_data:
+            bias_value = detailed_bias_data[bias_key]
+            if bias_value in mapping:
+                score = mapping[bias_value]
+                weight = mapping['weight']
+                total_score += score * weight
+                total_weight += weight
+    
+    if total_weight == 0:
+        return "NEUTRAL", 0
+    
+    # Normalize score to -100 to 100 range
+    normalized_score = (total_score / total_weight) * 100
+    
+    # Determine bias direction
+    if normalized_score > 15:
+        bias = "BULLISH"
+    elif normalized_score < -15:
+        bias = "BEARISH"
+    else:
+        bias = "NEUTRAL"
+    
+    return bias, normalized_score
 
 # Function to run complete analysis
 def run_complete_analysis():
@@ -1583,6 +1640,18 @@ def run_complete_analysis():
         st.session_state.market_bias_data = bias_data
         st.session_state.last_bias_update = datetime.now(IST)
     
+    # Calculate ATM detailed bias
+    if bias_data:
+        for instrument_data in bias_data:
+            if instrument_data['instrument'] == 'NIFTY' and 'detailed_atm_bias' in instrument_data:
+                atm_bias, atm_score = calculate_atm_detailed_bias(instrument_data['detailed_atm_bias'])
+                st.session_state.atm_detailed_bias = {
+                    'bias': atm_bias,
+                    'score': atm_score,
+                    'details': instrument_data['detailed_atm_bias']
+                }
+                break
+    
     # Calculate overall Nifty bias
     calculate_overall_nifty_bias()
     
@@ -1594,7 +1663,7 @@ def calculate_overall_nifty_bias():
     bias_scores = []
     bias_weights = []
     
-    # 1. Technical Analysis Bias (40% weight)
+    # 1. Technical Analysis Bias (30% weight)
     if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
         tech_result = st.session_state['last_result']
         tech_bias = tech_result.get('overall_bias', 'NEUTRAL')
@@ -1606,9 +1675,9 @@ def calculate_overall_nifty_bias():
             bias_scores.append(-1.0)
         else:
             bias_scores.append(0.0)
-        bias_weights.append(0.4)
+        bias_weights.append(0.3)
     
-    # 2. Options Chain Bias (40% weight)
+    # 2. Options Chain Overall Bias (25% weight)
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY':
@@ -1621,10 +1690,23 @@ def calculate_overall_nifty_bias():
                     bias_scores.append(-1.0)
                 else:
                     bias_scores.append(0.0)
-                bias_weights.append(0.4)
+                bias_weights.append(0.25)
                 break
     
-    # 3. Volume Order Blocks Bias (20% weight)
+    # 3. ATM Detailed Bias (25% weight) - NEW
+    if st.session_state.atm_detailed_bias:
+        atm_bias = st.session_state.atm_detailed_bias['bias']
+        atm_score = st.session_state.atm_detailed_bias['score']
+        
+        if atm_bias == "BULLISH":
+            bias_scores.append(1.0)
+        elif atm_bias == "BEARISH":
+            bias_scores.append(-1.0)
+        else:
+            bias_scores.append(0.0)
+        bias_weights.append(0.25)
+    
+    # 4. Volume Order Blocks Bias (20% weight)
     if st.session_state['last_df'] is not None:
         df = st.session_state['last_df']
         bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
@@ -1727,7 +1809,7 @@ with tabs[0]:
                 'Component': 'Technical Analysis',
                 'Bias': tech_result.get('overall_bias', 'NEUTRAL'),
                 'Score': tech_result.get('overall_score', 0),
-                'Weight': '40%',
+                'Weight': '30%',
                 'Confidence': f"{tech_result.get('overall_confidence', 0):.1f}%"
             })
         
@@ -1736,13 +1818,24 @@ with tabs[0]:
             for instrument_data in st.session_state.market_bias_data:
                 if instrument_data['instrument'] == 'NIFTY':
                     components_data.append({
-                        'Component': 'Options Chain',
+                        'Component': 'Options Chain Overall',
                         'Bias': instrument_data.get('overall_bias', 'Neutral'),
                         'Score': instrument_data.get('bias_score', 0),
-                        'Weight': '40%',
+                        'Weight': '25%',
                         'Confidence': 'High' if abs(instrument_data.get('bias_score', 0)) > 2 else 'Medium'
                     })
                     break
+        
+        # ATM Detailed Bias Component - NEW
+        if st.session_state.atm_detailed_bias:
+            atm_data = st.session_state.atm_detailed_bias
+            components_data.append({
+                'Component': 'ATM Detailed Bias',
+                'Bias': atm_data['bias'],
+                'Score': atm_data['score'],
+                'Weight': '25%',
+                'Confidence': f"{abs(atm_data['score']):.1f}%"
+            })
         
         # Volume Analysis Component
         if st.session_state['last_df'] is not None:
@@ -1996,7 +2089,7 @@ with tabs[3]:
     else:
         st.info("No option chain data available. Please refresh analysis first.")
 
-# BIAS TABULATION TAB
+# BIAS TABULATION TAB - ENHANCED
 with tabs[4]:
     st.header("📋 Comprehensive Bias Tabulation")
     
@@ -2025,27 +2118,72 @@ with tabs[4]:
                 })
                 st.dataframe(basic_info, use_container_width=True, hide_index=True)
                 
-                # Detailed ATM Bias Table
+                # ATM Detailed Bias Summary - NEW SECTION
                 if 'detailed_atm_bias' in instrument_data and instrument_data['detailed_atm_bias']:
-                    st.subheader("🔍 Detailed ATM Bias Analysis")
+                    st.subheader("🎯 ATM Detailed Bias Analysis")
+                    
                     detailed_bias = instrument_data['detailed_atm_bias']
                     
+                    # Calculate overall ATM detailed bias
+                    atm_bias, atm_score = calculate_atm_detailed_bias(detailed_bias)
+                    
+                    # Display ATM detailed bias summary
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        bias_color = "🟢" if atm_bias == "BULLISH" else "🔴" if atm_bias == "BEARISH" else "🟡"
+                        st.metric("ATM Detailed Bias", f"{bias_color} {atm_bias}")
+                    with col2:
+                        st.metric("Bias Score", f"{atm_score:.1f}")
+                    with col3:
+                        st.metric("Total Metrics", f"{len([k for k in detailed_bias.keys() if 'Bias' in k])}")
+                    
                     # Create comprehensive table for detailed bias
-                    bias_metrics = []
-                    bias_values = []
+                    st.subheader("🔍 Detailed Bias Metrics Breakdown")
                     
+                    bias_breakdown = []
                     for key, value in detailed_bias.items():
-                        if key not in ['Strike', 'Zone', 'CE_OI', 'PE_OI', 'CE_Change', 'PE_Change', 
-                                     'CE_Volume', 'PE_Volume', 'CE_Price', 'PE_Price', 'CE_IV', 'PE_IV',
-                                     'Delta_CE', 'Delta_PE', 'Gamma_CE', 'Gamma_PE']:
-                            bias_metrics.append(key.replace('_', ' ').title())
-                            bias_values.append(str(value))
+                        if 'Bias' in key:
+                            bias_breakdown.append({
+                                'Metric': key.replace('_', ' ').title(),
+                                'Value': value,
+                                'Score': 1 if value == 'Bullish' else -1 if value == 'Bearish' else 0
+                            })
                     
-                    detailed_df = pd.DataFrame({
-                        'Metric': bias_metrics,
-                        'Value': bias_values
-                    })
-                    st.dataframe(detailed_df, use_container_width=True, hide_index=True)
+                    if bias_breakdown:
+                        breakdown_df = pd.DataFrame(bias_breakdown)
+                        
+                        # Add color formatting
+                        def color_bias(val):
+                            if val == 'Bullish':
+                                return 'color: green; font-weight: bold'
+                            elif val == 'Bearish':
+                                return 'color: red; font-weight: bold'
+                            else:
+                                return 'color: orange; font-weight: bold'
+                        
+                        styled_df = breakdown_df.style.applymap(color_bias, subset=['Value'])
+                        st.dataframe(styled_df, use_container_width=True)
+                        
+                        # Bias distribution
+                        st.subheader("📊 Bias Distribution")
+                        bull_count = len([b for b in bias_breakdown if b['Value'] == 'Bullish'])
+                        bear_count = len([b for b in bias_breakdown if b['Value'] == 'Bearish'])
+                        neutral_count = len([b for b in bias_breakdown if b['Value'] == 'Neutral'])
+                        
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Bullish Metrics", bull_count)
+                        col2.metric("Bearish Metrics", bear_count)
+                        col3.metric("Neutral Metrics", neutral_count)
+                        
+                        # Create bias distribution chart
+                        fig = px.pie(
+                            names=['Bullish', 'Bearish', 'Neutral'],
+                            values=[bull_count, bear_count, neutral_count],
+                            title="ATM Bias Distribution",
+                            color=['Bullish', 'Bearish', 'Neutral'],
+                            color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444', 'Neutral': '#ffaa00'}
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
                 
                 # Comprehensive Metrics Table
                 if 'comprehensive_metrics' in instrument_data and instrument_data['comprehensive_metrics']:
