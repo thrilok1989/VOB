@@ -10,7 +10,6 @@ import math
 from scipy.stats import norm
 import warnings
 from typing import Dict, List, Optional, Tuple, Any
-import yfinance as yf
 
 warnings.filterwarnings('ignore')
 
@@ -622,34 +621,100 @@ class NSEOptionsAnalyzer:
         return results
 
 # =============================================
-# PRICE DATA FETCHER FOR CHARTS
+# PRICE DATA FETCHER USING NSE API (SAME AS OLD APP)
 # =============================================
 
 class PriceDataFetcher:
-    """Fetch real price data for charts"""
+    """Fetch real price data for charts using NSE API"""
     
     def __init__(self):
         self.ist = pytz.timezone('Asia/Kolkata')
     
-    def fetch_nifty_data(self, period: str = '5d', interval: str = '5m') -> pd.DataFrame:
-        """Fetch Nifty 50 data from Yahoo Finance"""
+    def fetch_nifty_intraday_data(self, symbol: str = "NIFTY 50") -> pd.DataFrame:
+        """Fetch Nifty 50 intraday data from NSE API"""
         try:
-            ticker = yf.Ticker("^NSEI")
-            df = ticker.history(period=period, interval=interval)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive"
+            }
             
-            if df.empty:
-                return pd.DataFrame()
+            session = requests.Session()
+            session.headers.update(headers)
             
-            # Convert index to IST timezone
-            df.index = df.index.tz_convert(self.ist)
+            # Get Nifty index data
+            url = "https://www.nseindia.com/api/chart-databyindex?index=NIFTY%2050"
+            response = session.get(url, timeout=10)
             
-            return df
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Process the data into DataFrame
+                timestamps = data['grapthData']
+                
+                df_data = []
+                for ts_data in timestamps:
+                    timestamp = datetime.fromtimestamp(ts_data[0] / 1000, tz=self.ist)
+                    price = ts_data[1]
+                    df_data.append({'timestamp': timestamp, 'close': price})
+                
+                df = pd.DataFrame(df_data)
+                df.set_index('timestamp', inplace=True)
+                
+                # Add OHLC data (for intraday, we approximate OHLC from close prices)
+                if len(df) > 0:
+                    df['open'] = df['close'].shift(1)
+                    df['high'] = df[['open', 'close']].max(axis=1)
+                    df['low'] = df[['open', 'close']].min(axis=1)
+                    df['volume'] = 0  # NSE doesn't provide volume for indices in this endpoint
+                    
+                    # Handle first row
+                    df.iloc[0, df.columns.get_loc('open')] = df.iloc[0]['close']
+                    df.iloc[0, df.columns.get_loc('high')] = df.iloc[0]['close']
+                    df.iloc[0, df.columns.get_loc('low')] = df.iloc[0]['close']
+                
+                return df
+            else:
+                st.warning(f"NSE API returned status code: {response.status_code}")
+                return self.generate_sample_data()
+                
         except Exception as e:
-            st.error(f"Error fetching price data: {e}")
-            return pd.DataFrame()
+            st.warning(f"Error fetching NSE data: {e}. Using sample data.")
+            return self.generate_sample_data()
+    
+    def generate_sample_data(self) -> pd.DataFrame:
+        """Generate sample price data when API fails"""
+        dates = pd.date_range(start=datetime.now() - timedelta(days=5), 
+                             end=datetime.now(), 
+                             freq='5min', 
+                             tz=self.ist)
+        
+        # Generate realistic Nifty-like prices
+        np.random.seed(42)
+        base_price = 22000
+        returns = np.random.normal(0, 0.001, len(dates))
+        prices = base_price * (1 + np.cumsum(returns))
+        
+        df = pd.DataFrame({
+            'timestamp': dates,
+            'open': prices * (1 + np.random.normal(0, 0.0005, len(dates))),
+            'high': prices * (1 + np.abs(np.random.normal(0, 0.001, len(dates)))),
+            'low': prices * (1 - np.abs(np.random.normal(0, 0.001, len(dates)))),
+            'close': prices,
+            'volume': np.random.randint(100000, 500000, len(dates))
+        })
+        df.set_index('timestamp', inplace=True)
+        
+        # Ensure OHLC consistency
+        df['high'] = df[['open', 'high', 'close']].max(axis=1)
+        df['low'] = df[['open', 'low', 'close']].min(axis=1)
+        
+        return df
 
 # =============================================
-# SIMPLIFIED NIFTY APP WITH PROPER CHARTS
+# SIMPLIFIED NIFTY APP WITH PROPER CHARTS (SAME AS OLD APP)
 # =============================================
 
 class SimplifiedNiftyApp:
@@ -670,23 +735,15 @@ class SimplifiedNiftyApp:
         if 'price_data' not in st.session_state:
             st.session_state.price_data = None
         if 'selected_timeframe' not in st.session_state:
-            st.session_state.selected_timeframe = '5m'
+            st.session_state.selected_timeframe = '5min'
 
-    def fetch_and_process_price_data(self, interval: str = '5m'):
+    def fetch_and_process_price_data(self):
         """Fetch and process price data for charts"""
         try:
-            # Map interval to period for Yahoo Finance
-            period_map = {
-                '1m': '1d', '2m': '1d', '5m': '5d', '15m': '5d',
-                '30m': '5d', '1h': '1mo', '1d': '3mo'
-            }
-            period = period_map.get(interval, '5d')
-            
-            df = self.price_fetcher.fetch_nifty_data(period=period, interval=interval)
+            df = self.price_fetcher.fetch_nifty_intraday_data()
             
             if not df.empty:
                 st.session_state.price_data = df
-                st.session_state.selected_timeframe = interval
                 return True
             return False
         except Exception as e:
@@ -694,14 +751,14 @@ class SimplifiedNiftyApp:
             return False
 
     def create_comprehensive_chart(self, df: pd.DataFrame, interval: str) -> go.Figure:
-        """Create comprehensive candlestick chart with volume"""
+        """Create comprehensive candlestick chart with volume - EXACTLY LIKE OLD APP"""
         if df.empty:
             # Return empty figure if no data
             fig = go.Figure()
             fig.update_layout(title="No data available", height=600)
             return fig
         
-        # Create subplots
+        # Create subplots - EXACTLY like old app
         fig = make_subplots(
             rows=2, cols=1,
             row_heights=[0.7, 0.3],
@@ -710,24 +767,26 @@ class SimplifiedNiftyApp:
             shared_xaxes=True
         )
         
-        # Candlestick chart
+        # Candlestick chart - EXACT colors and styling from old app
         fig.add_trace(
             go.Candlestick(
                 x=df.index,
-                open=df['Open'],
-                high=df['High'],
-                low=df['Low'],
-                close=df['Close'],
+                open=df['open'],
+                high=df['high'],
+                low=df['low'],
+                close=df['close'],
                 name='NIFTY 50',
-                increasing_line_color='#00ff88',
-                decreasing_line_color='#ff4444'
+                increasing_line_color='#00ff88',  # Same green as old app
+                decreasing_line_color='#ff4444',  # Same red as old app
+                increasing_fillcolor='#00ff88',
+                decreasing_fillcolor='#ff4444'
             ),
             row=1, col=1
         )
         
-        # Add moving averages
+        # Add moving averages - EXACTLY like old app
         if len(df) > 20:
-            df['MA20'] = df['Close'].rolling(window=20).mean()
+            df['MA20'] = df['close'].rolling(window=20).mean()
             fig.add_trace(
                 go.Scatter(
                     x=df.index,
@@ -739,7 +798,7 @@ class SimplifiedNiftyApp:
             )
         
         if len(df) > 50:
-            df['MA50'] = df['Close'].rolling(window=50).mean()
+            df['MA50'] = df['close'].rolling(window=50).mean()
             fig.add_trace(
                 go.Scatter(
                     x=df.index,
@@ -750,14 +809,14 @@ class SimplifiedNiftyApp:
                 row=1, col=1
             )
         
-        # Volume bars with color coding
+        # Volume bars with color coding - EXACTLY like old app
         colors = ['#00ff88' if close >= open_ else '#ff4444' 
-                 for close, open_ in zip(df['Close'], df['Open'])]
+                 for close, open_ in zip(df['close'], df['open'])]
         
         fig.add_trace(
             go.Bar(
                 x=df.index,
-                y=df['Volume'],
+                y=df['volume'],
                 name='Volume',
                 marker_color=colors,
                 opacity=0.7
@@ -765,7 +824,7 @@ class SimplifiedNiftyApp:
             row=2, col=1
         )
         
-        # Update layout
+        # Update layout - EXACTLY like old app
         fig.update_layout(
             xaxis_rangeslider_visible=False,
             template='plotly_dark',
@@ -776,12 +835,27 @@ class SimplifiedNiftyApp:
             xaxis_title="Time",
             yaxis_title="Price",
             xaxis2_title="Time",
-            yaxis2_title="Volume"
+            yaxis2_title="Volume",
+            font=dict(size=12),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)'
         )
         
-        # Update axes
-        fig.update_xaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)')
-        fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.3)')
+        # Update axes - EXACTLY like old app
+        fig.update_xaxes(
+            showgrid=True, 
+            gridcolor='rgba(128,128,128,0.3)',
+            showspikes=True,
+            spikethickness=1,
+            spikecolor="white"
+        )
+        fig.update_yaxes(
+            showgrid=True, 
+            gridcolor='rgba(128,128,128,0.3)',
+            showspikes=True,
+            spikethickness=1,
+            spikecolor="white"
+        )
         
         return fig
 
@@ -1023,13 +1097,13 @@ class SimplifiedNiftyApp:
             st.subheader("📈 Chart Settings")
             timeframe = st.selectbox(
                 "Timeframe",
-                ['1m', '2m', '5m', '15m', '30m', '1h', '1d'],
-                index=2  # Default to 5m
+                ['5min', '15min', '30min', '1hour'],
+                index=0
             )
             
             if st.button("🔄 Refresh Chart", type="secondary"):
                 with st.spinner("Fetching latest price data..."):
-                    if self.fetch_and_process_price_data(timeframe):
+                    if self.fetch_and_process_price_data():
                         st.success("Chart data refreshed!")
                     else:
                         st.error("Failed to fetch chart data")
@@ -1047,7 +1121,7 @@ class SimplifiedNiftyApp:
             if st.button("🔄 Refresh All Data", type="primary"):
                 with st.spinner("Refreshing all data..."):
                     # Refresh price data
-                    self.fetch_and_process_price_data(timeframe)
+                    self.fetch_and_process_price_data()
                     
                     # Refresh options data
                     bias_data = self.options_analyzer.get_overall_market_bias(force_refresh=True)
@@ -1070,7 +1144,7 @@ class SimplifiedNiftyApp:
             # Fetch price data if not available
             if st.session_state.price_data is None:
                 with st.spinner("Loading price data..."):
-                    self.fetch_and_process_price_data(timeframe)
+                    self.fetch_and_process_price_data()
             
             # Display chart
             if st.session_state.price_data is not None:
@@ -1079,23 +1153,23 @@ class SimplifiedNiftyApp:
                 # Display current price metrics
                 if not df.empty:
                     latest = df.iloc[-1]
-                    prev_close = df.iloc[-2]['Close'] if len(df) > 1 else latest['Close']
-                    price_change = latest['Close'] - prev_close
+                    prev_close = df.iloc[-2]['close'] if len(df) > 1 else latest['close']
+                    price_change = latest['close'] - prev_close
                     price_change_pct = (price_change / prev_close) * 100
                     
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.metric(
                             "Current Price",
-                            f"₹{latest['Close']:.2f}",
+                            f"₹{latest['close']:.2f}",
                             f"{price_change:+.2f} ({price_change_pct:+.2f}%)"
                         )
                     with col2:
-                        st.metric("Open", f"₹{latest['Open']:.2f}")
+                        st.metric("Open", f"₹{latest['open']:.2f}")
                     with col3:
-                        st.metric("High", f"₹{latest['High']:.2f}")
+                        st.metric("High", f"₹{latest['high']:.2f}")
                     with col4:
-                        st.metric("Low", f"₹{latest['Low']:.2f}")
+                        st.metric("Low", f"₹{latest['low']:.2f}")
                 
                 # Create and display chart
                 chart = self.create_comprehensive_chart(df, timeframe)
