@@ -1534,6 +1534,11 @@ symbol_input = st.sidebar.text_input("Symbol (Yahoo/Dhan)", value="^NSEI")
 period_input = st.sidebar.selectbox("Period", options=['1d', '5d', '7d', '1mo'], index=2)
 interval_input = st.sidebar.selectbox("Interval", options=['1m', '5m', '15m', '1h'], index=1)
 
+# Auto-refresh configuration
+st.sidebar.header("Auto-Refresh Settings")
+auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
+refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, max_value=10, value=1)
+
 # Shared state storage
 if 'last_df' not in st.session_state:
     st.session_state['last_df'] = None
@@ -1547,33 +1552,247 @@ if 'market_bias_data' not in st.session_state:
     st.session_state.market_bias_data = None
 if 'last_bias_update' not in st.session_state:
     st.session_state.last_bias_update = None
+if 'overall_nifty_bias' not in st.session_state:
+    st.session_state.overall_nifty_bias = "NEUTRAL"
+if 'overall_nifty_score' not in st.session_state:
+    st.session_state.overall_nifty_score = 0
 
-# Fetch & Analyze button
-with st.sidebar:
-    if st.button("Fetch Data & Run Analysis"):
-        st.session_state['last_symbol'] = symbol_input
-        with st.spinner("Fetching data (this may take a few seconds)..."):
-            df_fetched = analysis.fetch_data(symbol_input, period=period_input, interval=interval_input)
-            st.session_state['last_df'] = df_fetched
-            st.session_state['fetch_time'] = datetime.now(IST)
+# Function to run complete analysis
+def run_complete_analysis():
+    """Run complete analysis for all tabs"""
+    st.session_state['last_symbol'] = symbol_input
+    
+    # Technical Analysis
+    with st.spinner("Fetching data and running technical analysis..."):
+        df_fetched = analysis.fetch_data(symbol_input, period=period_input, interval=interval_input)
+        st.session_state['last_df'] = df_fetched
+        st.session_state['fetch_time'] = datetime.now(IST)
 
-        if df_fetched is None or df_fetched.empty:
-            st.error("No data fetched. Check symbol or network.")
+    if df_fetched is None or df_fetched.empty:
+        st.error("No data fetched. Check symbol or network.")
+        return False
+
+    # Run bias analysis
+    with st.spinner("Running full bias analysis..."):
+        result = analysis.analyze_all_bias_indicators(symbol_input)
+        st.session_state['last_result'] = result
+
+    # Run options analysis
+    with st.spinner("Fetching options chain data..."):
+        bias_data = options_analyzer.get_overall_market_bias(force_refresh=True)
+        st.session_state.market_bias_data = bias_data
+        st.session_state.last_bias_update = datetime.now(IST)
+    
+    # Calculate overall Nifty bias
+    calculate_overall_nifty_bias()
+    
+    return True
+
+# Function to calculate overall Nifty bias from all tabs
+def calculate_overall_nifty_bias():
+    """Calculate overall Nifty bias by combining all analysis methods"""
+    bias_scores = []
+    bias_weights = []
+    
+    # 1. Technical Analysis Bias (40% weight)
+    if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
+        tech_result = st.session_state['last_result']
+        tech_bias = tech_result.get('overall_bias', 'NEUTRAL')
+        tech_score = tech_result.get('overall_score', 0)
+        
+        if tech_bias == "BULLISH":
+            bias_scores.append(1.0)
+        elif tech_bias == "BEARISH":
+            bias_scores.append(-1.0)
         else:
-            with st.spinner("Running full bias analysis..."):
-                result = analysis.analyze_all_bias_indicators(symbol_input)
-                st.session_state['last_result'] = result
+            bias_scores.append(0.0)
+        bias_weights.append(0.4)
+    
+    # 2. Options Chain Bias (40% weight)
+    if st.session_state.market_bias_data:
+        for instrument_data in st.session_state.market_bias_data:
+            if instrument_data['instrument'] == 'NIFTY':
+                options_bias = instrument_data.get('overall_bias', 'Neutral')
+                options_score = instrument_data.get('bias_score', 0)
+                
+                if "Bullish" in options_bias:
+                    bias_scores.append(1.0)
+                elif "Bearish" in options_bias:
+                    bias_scores.append(-1.0)
+                else:
+                    bias_scores.append(0.0)
+                bias_weights.append(0.4)
+                break
+    
+    # 3. Volume Order Blocks Bias (20% weight)
+    if st.session_state['last_df'] is not None:
+        df = st.session_state['last_df']
+        bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
+        
+        vob_bias_score = 0
+        if len(bullish_blocks) > len(bearish_blocks):
+            vob_bias_score = 1.0
+        elif len(bearish_blocks) > len(bullish_blocks):
+            vob_bias_score = -1.0
+        
+        bias_scores.append(vob_bias_score)
+        bias_weights.append(0.2)
+    
+    # Calculate weighted average
+    if bias_scores and bias_weights:
+        total_weight = sum(bias_weights)
+        weighted_score = sum(score * weight for score, weight in zip(bias_scores, bias_weights)) / total_weight
+        
+        if weighted_score > 0.1:
+            overall_bias = "BULLISH"
+        elif weighted_score < -0.1:
+            overall_bias = "BEARISH"
+        else:
+            overall_bias = "NEUTRAL"
+        
+        st.session_state.overall_nifty_bias = overall_bias
+        st.session_state.overall_nifty_score = weighted_score * 100
+
+# Refresh button
+col1, col2 = st.sidebar.columns([2, 1])
+with col1:
+    if st.button("🔄 Refresh Analysis", type="primary", use_container_width=True):
+        if run_complete_analysis():
+            st.sidebar.success("Analysis refreshed!")
+with col2:
+    st.sidebar.metric("Auto-Refresh", "ON" if auto_refresh else "OFF")
+
+# Auto-refresh logic
+if auto_refresh:
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = datetime.now()
+    
+    current_time = datetime.now()
+    time_diff = (current_time - st.session_state.last_refresh).total_seconds() / 60
+    
+    if time_diff >= refresh_interval:
+        with st.spinner("Auto-refreshing analysis..."):
+            if run_complete_analysis():
+                st.session_state.last_refresh = current_time
+                st.rerun()
+
+# Display overall Nifty bias prominently
+st.sidebar.markdown("---")
+st.sidebar.header("Overall Nifty Bias")
+if st.session_state.overall_nifty_bias:
+    bias_color = "🟢" if st.session_state.overall_nifty_bias == "BULLISH" else "🔴" if st.session_state.overall_nifty_bias == "BEARISH" else "🟡"
+    st.sidebar.metric(
+        "NIFTY 50 Bias",
+        f"{bias_color} {st.session_state.overall_nifty_bias}",
+        f"Score: {st.session_state.overall_nifty_score:.1f}"
+    )
 
 # Enhanced tabs with selected features
 tabs = st.tabs([
-    "Bias Summary", "Price Action", "Option Chain", "Bias Tabulation"
+    "Overall Bias", "Bias Summary", "Price Action", "Option Chain", "Bias Tabulation"
 ])
 
-# BIAS SUMMARY TAB
+# OVERALL BIAS TAB (NEW)
 with tabs[0]:
-    st.subheader("Overall Bias Summary")
+    st.header("🎯 Overall Nifty Bias Analysis")
+    
+    if not st.session_state.overall_nifty_bias:
+        st.info("No analysis run yet. Click **Refresh Analysis** to get started.")
+    else:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            # Display overall bias with color coding
+            if st.session_state.overall_nifty_bias == "BULLISH":
+                st.success(f"## 🟢 OVERALL NIFTY BIAS: BULLISH")
+                st.metric("Bias Score", f"{st.session_state.overall_nifty_score:.1f}", delta="Bullish")
+            elif st.session_state.overall_nifty_bias == "BEARISH":
+                st.error(f"## 🔴 OVERALL NIFTY BIAS: BEARISH")
+                st.metric("Bias Score", f"{st.session_state.overall_nifty_score:.1f}", delta="Bearish", delta_color="inverse")
+            else:
+                st.warning(f"## 🟡 OVERALL NIFTY BIAS: NEUTRAL")
+                st.metric("Bias Score", f"{st.session_state.overall_nifty_score:.1f}")
+        
+        st.markdown("---")
+        
+        # Breakdown of bias components
+        st.subheader("Bias Components Breakdown")
+        
+        components_data = []
+        
+        # Technical Analysis Component
+        if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
+            tech_result = st.session_state['last_result']
+            components_data.append({
+                'Component': 'Technical Analysis',
+                'Bias': tech_result.get('overall_bias', 'NEUTRAL'),
+                'Score': tech_result.get('overall_score', 0),
+                'Weight': '40%',
+                'Confidence': f"{tech_result.get('overall_confidence', 0):.1f}%"
+            })
+        
+        # Options Analysis Component
+        if st.session_state.market_bias_data:
+            for instrument_data in st.session_state.market_bias_data:
+                if instrument_data['instrument'] == 'NIFTY':
+                    components_data.append({
+                        'Component': 'Options Chain',
+                        'Bias': instrument_data.get('overall_bias', 'Neutral'),
+                        'Score': instrument_data.get('bias_score', 0),
+                        'Weight': '40%',
+                        'Confidence': 'High' if abs(instrument_data.get('bias_score', 0)) > 2 else 'Medium'
+                    })
+                    break
+        
+        # Volume Analysis Component
+        if st.session_state['last_df'] is not None:
+            df = st.session_state['last_df']
+            bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
+            vob_score = len(bullish_blocks) - len(bearish_blocks)
+            vob_bias = "BULLISH" if vob_score > 0 else "BEARISH" if vob_score < 0 else "NEUTRAL"
+            
+            components_data.append({
+                'Component': 'Volume Order Blocks',
+                'Bias': vob_bias,
+                'Score': vob_score,
+                'Weight': '20%',
+                'Confidence': f"Blocks: {len(bullish_blocks)}B/{len(bearish_blocks)}S"
+            })
+        
+        if components_data:
+            components_df = pd.DataFrame(components_data)
+            st.dataframe(components_df, use_container_width=True)
+        
+        # Trading Recommendation
+        st.subheader("📈 Trading Recommendation")
+        
+        if st.session_state.overall_nifty_bias == "BULLISH":
+            st.success("""
+            **Recommended Action:** Consider LONG positions
+            - Look for buying opportunities on dips
+            - Support levels are likely to hold
+            - Target resistance levels for profit booking
+            """)
+        elif st.session_state.overall_nifty_bias == "BEARISH":
+            st.error("""
+            **Recommended Action:** Consider SHORT positions  
+            - Look for selling opportunities on rallies
+            - Resistance levels are likely to hold
+            - Target support levels for profit booking
+            """)
+        else:
+            st.warning("""
+            **Recommended Action:** Wait for clearer direction
+            - Market is in consolidation phase
+            - Consider range-bound strategies
+            - Wait for breakout confirmation
+            """)
+
+# BIAS SUMMARY TAB
+with tabs[1]:
+    st.subheader("Technical Bias Summary")
     if st.session_state['last_result'] is None:
-        st.info("No analysis run yet. Click **Fetch Data & Run Analysis** in the sidebar.")
+        st.info("No analysis run yet. Click **Refresh Analysis** to get started.")
     else:
         res = st.session_state['last_result']
         if not res.get('success', False):
@@ -1582,7 +1801,7 @@ with tabs[0]:
             st.markdown(f"**Symbol:** `{res['symbol']}`")
             st.markdown(f"**Timestamp (IST):** {res['timestamp']}")
             st.metric("Current Price", f"{res['current_price']:.2f}")
-            st.metric("Overall Bias", res['overall_bias'], delta=f"Confidence: {res['overall_confidence']:.1f}%")
+            st.metric("Technical Bias", res['overall_bias'], delta=f"Confidence: {res['overall_confidence']:.1f}%")
             st.write("Mode:", res.get('mode', 'N/A'))
 
             # Show bias results table
@@ -1609,12 +1828,12 @@ with tabs[0]:
             st.write(f"- Bullish Bias % (weighted): {res.get('bullish_bias_pct', 0):.1f}%")
             st.write(f"- Bearish Bias % (weighted): {res.get('bearish_bias_pct', 0):.1f}%")
 
-# PRICE ACTION TAB (NEW)
-with tabs[1]:
+# PRICE ACTION TAB
+with tabs[2]:
     st.header("📈 Price Action Analysis")
     
     if st.session_state['last_df'] is None:
-        st.info("No data loaded yet. Click **Fetch Data & Run Analysis** in the sidebar.")
+        st.info("No data loaded yet. Click **Refresh Analysis** to get started.")
     else:
         df = st.session_state['last_df']
         
@@ -1716,20 +1935,9 @@ with tabs[1]:
                 st.write(f"- Lower: ₹{latest_bearish['lower']:.2f}")
                 st.write(f"- Volume: {latest_bearish['volume']:,.0f}")
 
-# OPTION CHAIN TAB (NEW)
-with tabs[2]:
+# OPTION CHAIN TAB
+with tabs[3]:
     st.header("📊 NSE Options Chain Analysis")
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.info("Comprehensive options chain analysis with auto-refresh")
-    with col2:
-        if st.button("🔄 Refresh Options Data", type="primary"):
-            with st.spinner("Fetching options chain data..."):
-                bias_data = options_analyzer.get_overall_market_bias(force_refresh=True)
-                st.session_state.market_bias_data = bias_data
-                st.session_state.last_bias_update = datetime.now(IST)
-                st.success("Options data refreshed!")
     
     if st.session_state.last_bias_update:
         st.write(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')} IST")
@@ -1786,14 +1994,14 @@ with tabs[2]:
                 with col3:
                     st.metric("Distance from Max Pain", f"{comp_metrics.get('distance_from_max_pain', 0):.1f}")
     else:
-        st.info("👆 Click 'Refresh Options Data' to load options chain analysis")
+        st.info("No option chain data available. Please refresh analysis first.")
 
-# BIAS TABULATION TAB (NEW)
-with tabs[3]:
+# BIAS TABULATION TAB
+with tabs[4]:
     st.header("📋 Comprehensive Bias Tabulation")
     
     if not st.session_state.market_bias_data:
-        st.info("No option chain data available. Please refresh options analysis first.")
+        st.info("No option chain data available. Please refresh analysis first.")
     else:
         for instrument_data in st.session_state.market_bias_data:
             with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True):
@@ -1857,4 +2065,4 @@ with tabs[3]:
 
 # Footer
 st.markdown("---")
-st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with selected features integrated.")
+st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh and Overall Nifty Bias Analysis.")
