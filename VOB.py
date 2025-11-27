@@ -2786,16 +2786,18 @@ refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, 
 
 # Telegram Configuration
 st.sidebar.header("🔔 Telegram Alerts")
-telegram_enabled = st.sidebar.checkbox("Enable Telegram Alerts", value=True)
-if telegram_enabled:
-    bot_token = st.sidebar.text_input("Bot Token", type="password")
-    chat_id = st.sidebar.text_input("Chat ID")
-    if bot_token and chat_id:
-        telegram_notifier.bot_token = bot_token
-        telegram_notifier.chat_id = chat_id
-        st.sidebar.success("Telegram configured!")
-    else:
-        st.sidebar.warning("Enter Telegram credentials for alerts")
+if telegram_notifier.is_configured():
+    st.sidebar.success("✅ Telegram configured via secrets!")
+    telegram_enabled = st.sidebar.checkbox("Enable Telegram Alerts", value=True)
+else:
+    st.sidebar.warning("⚠️ Telegram not configured")
+    st.sidebar.info("Add to .streamlit/secrets.toml:")
+    st.sidebar.code("""
+[TELEGRAM]
+BOT_TOKEN = "your_bot_token_here"
+CHAT_ID = "your_chat_id_here"
+""")
+    telegram_enabled = False
 
 # Shared state storage
 if 'last_df' not in st.session_state:
