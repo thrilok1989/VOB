@@ -1005,8 +1005,8 @@ class VolumeOrderBlocks:
         return nearby_blocks
 
 # FIX 5: Add plotting function for VOB
-def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[Dict]) -> go.Figure:
-    """Plot Volume Order Blocks on candlestick chart"""
+def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[Dict], chart_id: str = "vob_chart") -> go.Figure:
+    """Plot Volume Order Blocks on candlestick chart with unique ID"""
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                        vertical_spacing=0.03, 
                        row_heights=[0.7, 0.3],
@@ -1022,7 +1022,7 @@ def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[
                  row=1, col=1)
     
     # Add bullish blocks
-    for block in bullish_blocks:
+    for i, block in enumerate(bullish_blocks):
         fig.add_hline(y=block['upper'], line_dash="dash", line_color="green", 
                      annotation_text=f"Bull Block", row=1, col=1)
         fig.add_hline(y=block['lower'], line_dash="dash", line_color="green", row=1, col=1)
@@ -1032,7 +1032,7 @@ def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[
                      fillcolor="green", opacity=0.1, line_width=0, row=1, col=1)
     
     # Add bearish blocks
-    for block in bearish_blocks:
+    for i, block in enumerate(bearish_blocks):
         fig.add_hline(y=block['upper'], line_dash="dash", line_color="red",
                      annotation_text=f"Bear Block", row=1, col=1)
         fig.add_hline(y=block['lower'], line_dash="dash", line_color="red", row=1, col=1)
@@ -3099,7 +3099,7 @@ def calculate_overall_nifty_bias():
             bias_scores.append(0.0)
         bias_weights.append(0.20)
     
-    # 2. Enhanced Options Chain Bias (30% weight)
+    # 2. Enhanced Options Chain Bias (25% weight) - Reduced from 30%
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY':
@@ -3111,10 +3111,43 @@ def calculate_overall_nifty_bias():
                 normalized_score = max(-1, min(1, options_score / 4))
                 
                 bias_scores.append(normalized_score)
-                bias_weights.append(0.30)
+                bias_weights.append(0.25)  # Reduced weight
                 break
     
-    # 3. ATM Detailed Bias (15% weight)
+    # 3. INSTITUTIONAL OI BIAS (15% weight) - NEW COMPONENT
+    if st.session_state.market_bias_data:
+        for instrument_data in st.session_state.market_bias_data:
+            if instrument_data['instrument'] == 'NIFTY' and 'institutional_analysis' in instrument_data:
+                inst_analysis = instrument_data['institutional_analysis']
+                inst_bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
+                
+                if inst_bias_analysis:
+                    inst_bias = inst_bias_analysis.get('overall_bias', 'NEUTRAL')
+                    inst_score = inst_bias_analysis.get('bias_score', 0)
+                    
+                    # Normalize institutional bias score to -1 to 1 range
+                    if inst_bias == "BULLISH":
+                        inst_normalized = 1.0
+                    elif inst_bias == "BEARISH":
+                        inst_normalized = -1.0
+                    else:
+                        inst_normalized = 0.0
+                    
+                    # Apply confidence multiplier
+                    confidence = inst_bias_analysis.get('confidence', 'LOW')
+                    confidence_multipliers = {
+                        'VERY_HIGH': 1.2,
+                        'HIGH': 1.1,
+                        'MEDIUM': 1.0,
+                        'LOW': 0.8
+                    }
+                    multiplier = confidence_multipliers.get(confidence, 1.0)
+                    
+                    bias_scores.append(inst_normalized * multiplier)
+                    bias_weights.append(0.15)  # 15% weight for institutional OI
+                break
+    
+    # 4. ATM Detailed Bias (10% weight) - Reduced from 15%
     if st.session_state.atm_detailed_bias:
         atm_data = st.session_state.atm_detailed_bias
         atm_bias = atm_data['bias']
@@ -3126,9 +3159,9 @@ def calculate_overall_nifty_bias():
             bias_scores.append(-1.0)
         else:
             bias_scores.append(0.0)
-        bias_weights.append(0.15)
+        bias_weights.append(0.10)  # Reduced weight
     
-    # 4. Volume Order Blocks Bias (15% weight)
+    # 5. Volume Order Blocks Bias (10% weight) - Reduced from 15%
     if st.session_state.vob_blocks:
         bullish_blocks = st.session_state.vob_blocks['bullish']
         bearish_blocks = st.session_state.vob_blocks['bearish']
@@ -3140,9 +3173,9 @@ def calculate_overall_nifty_bias():
             vob_bias_score = -1.0
         
         bias_scores.append(vob_bias_score)
-        bias_weights.append(0.15)
+        bias_weights.append(0.10)  # Reduced weight
     
-    # 5. Breakout/Reversal Analysis (20% weight) - NEW
+    # 6. Breakout/Reversal Analysis (20% weight)
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
@@ -3301,9 +3334,26 @@ with tabs[0]:
                         'Component': 'Options Chain Overall',
                         'Bias': instrument_data.get('combined_bias', 'Neutral'),
                         'Score': instrument_data.get('combined_score', 0),
-                        'Weight': '30%',
+                        'Weight': '25%',
                         'Confidence': 'High' if abs(instrument_data.get('combined_score', 0)) > 2 else 'Medium'
                     })
+                    break
+        
+        # Institutional OI Bias Component - NEW
+        if st.session_state.market_bias_data:
+            for instrument_data in st.session_state.market_bias_data:
+                if instrument_data['instrument'] == 'NIFTY' and 'institutional_analysis' in instrument_data:
+                    inst_analysis = instrument_data['institutional_analysis']
+                    inst_bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
+                    
+                    if inst_bias_analysis:
+                        components_data.append({
+                            'Component': 'Institutional OI Patterns',
+                            'Bias': inst_bias_analysis.get('overall_bias', 'NEUTRAL'),
+                            'Score': inst_bias_analysis.get('bias_score', 0),
+                            'Weight': '15%',
+                            'Confidence': inst_bias_analysis.get('confidence', 'LOW')
+                        })
                     break
         
         # ATM Detailed Bias Component
@@ -3313,7 +3363,7 @@ with tabs[0]:
                 'Component': 'ATM Detailed Bias',
                 'Bias': atm_data['bias'],
                 'Score': atm_data['score'],
-                'Weight': '15%',
+                'Weight': '10%',
                 'Confidence': f"{abs(atm_data['score']):.1f}%"
             })
         
@@ -3328,11 +3378,11 @@ with tabs[0]:
                 'Component': 'Volume Order Blocks',
                 'Bias': vob_bias,
                 'Score': vob_score,
-                'Weight': '15%',
+                'Weight': '10%',
                 'Confidence': f"Blocks: {len(bullish_blocks)}B/{len(bearish_blocks)}S"
             })
         
-        # Breakout/Reversal Component - NEW
+        # Breakout/Reversal Component
         if st.session_state.market_bias_data:
             for instrument_data in st.session_state.market_bias_data:
                 if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
@@ -3380,7 +3430,7 @@ with tabs[0]:
 
 # BIAS SUMMARY TAB
 with tabs[1]:
-    st.subheader("Technical Bias Summary")
+    st.header("Technical Bias Summary")
     if st.session_state['last_result'] is None:
         st.info("No analysis run yet. Analysis runs automatically every minute...")
     else:
@@ -3434,9 +3484,9 @@ with tabs[2]:
         bullish_blocks = st.session_state.vob_blocks.get('bullish', [])
         bearish_blocks = st.session_state.vob_blocks.get('bearish', [])
         
-        # Create the chart using the plotting function
-        fig = plot_vob(df, bullish_blocks, bearish_blocks)
-        st.plotly_chart(fig, use_container_width=True)
+        # Create the chart using the plotting function with unique ID
+        fig = plot_vob(df, bullish_blocks, bearish_blocks, chart_id="price_action_vob")
+        st.plotly_chart(fig, use_container_width=True, key="price_action_chart")
         
         # Volume Order Blocks Summary
         st.subheader("Volume Order Blocks Analysis")
@@ -3483,23 +3533,24 @@ with tabs[3]:
                 st.metric(
                     f"{instrument_data['instrument']}",
                     f"{bias_color} {bias_to_show}",
-                    f"Score: {score_to_show:.2f}"
+                    f"Score: {score_to_show:.2f}",
+                    key=f"bias_metric_{idx}"
                 )
         
         # Enhanced detailed analysis for each instrument
-        for instrument_data in bias_data:
+        for instrument_idx, instrument_data in enumerate(bias_data):
             with st.expander(f"🏦 {instrument_data['instrument']} - Institutional Footprint Analysis", expanded=True):
                 
                 # Basic Information
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Spot Price", f"₹{instrument_data['spot_price']:.2f}")
+                    st.metric("Spot Price", f"₹{instrument_data['spot_price']:.2f}", key=f"spot_{instrument_idx}")
                 with col2:
-                    st.metric("ATM Strike", f"₹{instrument_data['atm_strike']:.2f}")
+                    st.metric("ATM Strike", f"₹{instrument_data['atm_strike']:.2f}", key=f"atm_{instrument_idx}")
                 with col3:
-                    st.metric("PCR OI", f"{instrument_data['pcr_oi']:.2f}")
+                    st.metric("PCR OI", f"{instrument_data['pcr_oi']:.2f}", key=f"pcr_oi_{instrument_idx}")
                 with col4:
-                    st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}")
+                    st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}", key=f"pcr_change_{instrument_idx}")
                 
                 # INSTITUTIONAL OI PATTERNS ANALYSIS - ENHANCED SECTION
                 if 'institutional_analysis' in instrument_data:
@@ -3513,22 +3564,22 @@ with tabs[3]:
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         bias_color = "🟢" if bias_analysis.get('overall_bias') == 'BULLISH' else "🔴" if bias_analysis.get('overall_bias') == 'BEARISH' else "🟡"
-                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}")
+                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}", key=f"inst_bias_{instrument_idx}")
                     with col2:
-                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}")
+                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}", key=f"inst_score_{instrument_idx}")
                     with col3:
-                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'))
+                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'), key=f"inst_conf_{instrument_idx}")
                     with col4:
-                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0))
+                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0), key=f"inst_patterns_{instrument_idx}")
                     
                     # Pattern breakdown
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Bullish Patterns", bias_analysis.get('bullish_patterns', 0))
+                        st.metric("Bullish Patterns", bias_analysis.get('bullish_patterns', 0), key=f"bull_patterns_{instrument_idx}")
                     with col2:
-                        st.metric("Bearish Patterns", bias_analysis.get('bearish_patterns', 0))
+                        st.metric("Bearish Patterns", bias_analysis.get('bearish_patterns', 0), key=f"bear_patterns_{instrument_idx}")
                     with col3:
-                        st.metric("Neutral Patterns", bias_analysis.get('neutral_patterns', 0))
+                        st.metric("Neutral Patterns", bias_analysis.get('neutral_patterns', 0), key=f"neutral_patterns_{instrument_idx}")
                     
                     # Dominant institution move
                     st.info(f"**Dominant Institutional Move:** {bias_analysis.get('dominant_move', 'Unknown')}")
@@ -3547,7 +3598,7 @@ with tabs[3]:
                                 return 'background-color: #FFFFE0'  # Light yellow
                         
                         styled_df = patterns_df.style.applymap(color_bias, subset=['bias'])
-                        st.dataframe(styled_df, use_container_width=True)
+                        st.dataframe(styled_df, use_container_width=True, key=f"patterns_table_{instrument_idx}")
                     
                     # Gamma Analysis - COMPREHENSIVE
                     gamma_analysis = inst_analysis.get('gamma_analysis', {})
@@ -3556,13 +3607,13 @@ with tabs[3]:
                     # Gamma Overview
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Gamma Bias", gamma_analysis.get('gamma_bias', 'NEUTRAL'))
+                        st.metric("Gamma Bias", gamma_analysis.get('gamma_bias', 'NEUTRAL'), key=f"gamma_bias_{instrument_idx}")
                     with col2:
-                        st.metric("Gamma Score", f"{gamma_analysis.get('gamma_score', 0):.1f}")
+                        st.metric("Gamma Score", f"{gamma_analysis.get('gamma_score', 0):.1f}", key=f"gamma_score_{instrument_idx}")
                     with col3:
-                        st.metric("Gamma Profile", gamma_analysis.get('profile', 'Unknown'))
+                        st.metric("Gamma Profile", gamma_analysis.get('profile', 'Unknown'), key=f"gamma_profile_{instrument_idx}")
                     with col4:
-                        st.metric("Total Gamma Exposure", f"{gamma_analysis.get('total_gamma_exposure', 0):.0f}")
+                        st.metric("Total Gamma Exposure", f"{gamma_analysis.get('total_gamma_exposure', 0):.0f}", key=f"gamma_exposure_{instrument_idx}")
                     
                     # Gamma Zones Analysis
                     if gamma_analysis.get('zones'):
@@ -3576,7 +3627,7 @@ with tabs[3]:
                                 'Strike Range': zone_info['strike_range']
                             })
                         zones_df = pd.DataFrame(zones_data)
-                        st.dataframe(zones_df, use_container_width=True)
+                        st.dataframe(zones_df, use_container_width=True, key=f"zones_table_{instrument_idx}")
                     
                     # Gamma Walls/Resistance Levels
                     if gamma_analysis.get('walls'):
@@ -3590,7 +3641,7 @@ with tabs[3]:
                                 'Strength': wall['strength']
                             })
                         walls_df = pd.DataFrame(walls_data)
-                        st.dataframe(walls_df, use_container_width=True)
+                        st.dataframe(walls_df, use_container_width=True, key=f"walls_table_{instrument_idx}")
                     
                     # Gamma Sequences
                     if gamma_analysis.get('sequence'):
@@ -3598,13 +3649,13 @@ with tabs[3]:
                         st.subheader("📈 Gamma Sequence Patterns")
                         col1, col2, col3, col4 = st.columns(4)
                         with col1:
-                            st.metric("Positive Sequences", len(seq_analysis.get('positive_sequences', [])))
+                            st.metric("Positive Sequences", len(seq_analysis.get('positive_sequences', [])), key=f"pos_seq_{instrument_idx}")
                         with col2:
-                            st.metric("Negative Sequences", len(seq_analysis.get('negative_sequences', [])))
+                            st.metric("Negative Sequences", len(seq_analysis.get('negative_sequences', [])), key=f"neg_seq_{instrument_idx}")
                         with col3:
-                            st.metric("Longest Positive", seq_analysis.get('longest_positive_seq', 0))
+                            st.metric("Longest Positive", seq_analysis.get('longest_positive_seq', 0), key=f"long_pos_{instrument_idx}")
                         with col4:
-                            st.metric("Longest Negative", seq_analysis.get('longest_negative_seq', 0))
+                            st.metric("Longest Negative", seq_analysis.get('longest_negative_seq', 0), key=f"long_neg_{instrument_idx}")
                 
                 # Advanced Metrics
                 st.subheader("📈 Advanced Option Metrics")
@@ -3613,35 +3664,35 @@ with tabs[3]:
                 if comp_metrics:
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Synthetic Bias", comp_metrics.get('synthetic_bias', 'N/A'))
+                        st.metric("Synthetic Bias", comp_metrics.get('synthetic_bias', 'N/A'), key=f"synth_bias_{instrument_idx}")
                     with col2:
-                        st.metric("ATM Buildup", comp_metrics.get('atm_buildup', 'N/A'))
+                        st.metric("ATM Buildup", comp_metrics.get('atm_buildup', 'N/A'), key=f"atm_buildup_{instrument_idx}")
                     with col3:
-                        st.metric("Max Pain", f"₹{comp_metrics.get('max_pain_strike', 'N/A')}")
+                        st.metric("Max Pain", f"₹{comp_metrics.get('max_pain_strike', 'N/A')}", key=f"max_pain_{instrument_idx}")
                     with col4:
-                        st.metric("Vega Bias", comp_metrics.get('total_vega_bias', 'N/A'))
+                        st.metric("Vega Bias", comp_metrics.get('total_vega_bias', 'N/A'), key=f"vega_bias_{instrument_idx}")
                 
                 # Key Levels
                 st.subheader("🎯 Key Trading Levels")
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Call Resistance", f"₹{comp_metrics.get('call_resistance', 'N/A')}")
+                    st.metric("Call Resistance", f"₹{comp_metrics.get('call_resistance', 'N/A')}", key=f"call_res_{instrument_idx}")
                 with col2:
-                    st.metric("Put Support", f"₹{comp_metrics.get('put_support', 'N/A')}")
+                    st.metric("Put Support", f"₹{comp_metrics.get('put_support', 'N/A')}", key=f"put_support_{instrument_idx}")
                 with col3:
-                    st.metric("Distance from Max Pain", f"{comp_metrics.get('distance_from_max_pain', 0):.1f}")
+                    st.metric("Distance from Max Pain", f"{comp_metrics.get('distance_from_max_pain', 0):.1f}", key=f"dist_mp_{instrument_idx}")
                 
                 # Combined Bias Breakdown
                 st.subheader("⚖️ Combined Bias Breakdown")
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Basic Score", f"{instrument_data.get('bias_score', 0):.2f}")
+                    st.metric("Basic Score", f"{instrument_data.get('bias_score', 0):.2f}", key=f"basic_score_{instrument_idx}")
                 with col2:
-                    st.metric("Institutional Score", f"{instrument_data.get('institutional_score', 0):.2f}")
+                    st.metric("Institutional Score", f"{instrument_data.get('institutional_score', 0):.2f}", key=f"inst_score2_{instrument_idx}")
                 with col3:
-                    st.metric("Gamma Score", f"{instrument_data.get('gamma_score', 0):.2f}")
+                    st.metric("Gamma Score", f"{instrument_data.get('gamma_score', 0):.2f}", key=f"gamma_score2_{instrument_idx}")
                 with col4:
-                    st.metric("Breakout Score", f"{instrument_data.get('breakout_score', 0):.2f}")
+                    st.metric("Breakout Score", f"{instrument_data.get('breakout_score', 0):.2f}", key=f"breakout_score_{instrument_idx}")
     
     else:
         st.info("No option chain data available. Analysis runs automatically every minute...")
@@ -3653,7 +3704,7 @@ with tabs[4]:
     if not st.session_state.market_bias_data:
         st.info("No option chain data available. Analysis runs automatically every minute...")
     else:
-        for instrument_data in st.session_state.market_bias_data:
+        for instrument_idx, instrument_data in enumerate(st.session_state.market_bias_data):
             with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True):
                 
                 # Basic Information Table
@@ -3673,7 +3724,7 @@ with tabs[4]:
                         f"{instrument_data['pcr_change']:.2f}"
                     ]
                 })
-                st.dataframe(basic_info, use_container_width=True, hide_index=True)
+                st.dataframe(basic_info, use_container_width=True, hide_index=True, key=f"basic_info_{instrument_idx}")
                 
                 # ATM Detailed Bias Summary
                 if 'detailed_atm_bias' in instrument_data and instrument_data['detailed_atm_bias']:
@@ -3688,11 +3739,11 @@ with tabs[4]:
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         bias_color = "🟢" if atm_bias == "BULLISH" else "🔴" if atm_bias == "BEARISH" else "🟡"
-                        st.metric("ATM Detailed Bias", f"{bias_color} {atm_bias}")
+                        st.metric("ATM Detailed Bias", f"{bias_color} {atm_bias}", key=f"atm_bias_{instrument_idx}")
                     with col2:
-                        st.metric("Bias Score", f"{atm_score:.1f}")
+                        st.metric("Bias Score", f"{atm_score:.1f}", key=f"atm_score_{instrument_idx}")
                     with col3:
-                        st.metric("Total Metrics", f"{len([k for k in detailed_bias.keys() if 'Bias' in k])}")
+                        st.metric("Total Metrics", f"{len([k for k in detailed_bias.keys() if 'Bias' in k])}", key=f"atm_metrics_{instrument_idx}")
                     
                     # Create comprehensive table for detailed bias
                     st.subheader("🔍 Detailed Bias Metrics Breakdown")
@@ -3719,7 +3770,7 @@ with tabs[4]:
                                 return 'color: orange; font-weight: bold'
                         
                         styled_df = breakdown_df.style.applymap(color_bias, subset=['Value'])
-                        st.dataframe(styled_df, use_container_width=True)
+                        st.dataframe(styled_df, use_container_width=True, key=f"breakdown_table_{instrument_idx}")
                         
                         # Bias distribution
                         st.subheader("📊 Bias Distribution")
@@ -3728,9 +3779,9 @@ with tabs[4]:
                         neutral_count = len([b for b in bias_breakdown if b['Value'] == 'Neutral'])
                         
                         col1, col2, col3 = st.columns(3)
-                        col1.metric("Bullish Metrics", bull_count)
-                        col2.metric("Bearish Metrics", bear_count)
-                        col3.metric("Neutral Metrics", neutral_count)
+                        col1.metric("Bullish Metrics", bull_count, key=f"bull_count_{instrument_idx}")
+                        col2.metric("Bearish Metrics", bear_count, key=f"bear_count_{instrument_idx}")
+                        col3.metric("Neutral Metrics", neutral_count, key=f"neutral_count_{instrument_idx}")
                         
                         # Create bias distribution chart
                         fig = px.pie(
@@ -3740,7 +3791,7 @@ with tabs[4]:
                             color=['Bullish', 'Bearish', 'Neutral'],
                             color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444', 'Neutral': '#ffaa00'}
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, key=f"bias_pie_{instrument_idx}")
                 
                 # Institutional OI Bias Analysis - NEW SECTION
                 if 'institutional_analysis' in instrument_data:
@@ -3753,13 +3804,13 @@ with tabs[4]:
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         bias_color = "🟢" if bias_analysis.get('overall_bias') == 'BULLISH' else "🔴" if bias_analysis.get('overall_bias') == 'BEARISH' else "🟡"
-                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}")
+                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}", key=f"inst_bias_tab_{instrument_idx}")
                     with col2:
-                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}")
+                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}", key=f"inst_score_tab_{instrument_idx}")
                     with col3:
-                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'))
+                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'), key=f"inst_conf_tab_{instrument_idx}")
                     with col4:
-                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0))
+                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0), key=f"inst_patterns_tab_{instrument_idx}")
                     
                     # Pattern distribution
                     st.subheader("📊 Institutional Pattern Distribution")
@@ -3781,7 +3832,7 @@ with tabs[4]:
                         color='Type',
                         color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444', 'Neutral': '#ffaa00'}
                     )
-                    st.plotly_chart(fig_patterns, use_container_width=True)
+                    st.plotly_chart(fig_patterns, use_container_width=True, key=f"pattern_bar_{instrument_idx}")
                     
                     # Institution moves breakdown
                     if bias_analysis.get('institution_moves'):
@@ -3794,7 +3845,7 @@ with tabs[4]:
                                 'Percentage': f"{(count / bias_analysis['total_patterns']) * 100:.1f}%"
                             })
                         moves_df = pd.DataFrame(moves_data)
-                        st.dataframe(moves_df, use_container_width=True)
+                        st.dataframe(moves_df, use_container_width=True, key=f"moves_table_{instrument_idx}")
                 
                 # Comprehensive Metrics Table
                 if 'comprehensive_metrics' in instrument_data and instrument_data['comprehensive_metrics']:
@@ -3810,9 +3861,18 @@ with tabs[4]:
                             ])
                     
                     comp_df = pd.DataFrame(comp_data, columns=['Metric', 'Value'])
-                    st.dataframe(comp_df, use_container_width=True, hide_index=True)
+                    st.dataframe(comp_df, use_container_width=True, hide_index=True, key=f"comp_metrics_{instrument_idx}")
 
 # Footer
 st.markdown("---")
 st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh, Overall Nifty Bias Analysis, and Institutional Breakout/Reversal Detection.")
 st.caption("🔔 Telegram alerts sent when Technical Analysis, Options Chain, and ATM Detailed Bias are aligned (Bullish/Bearish)")
+
+# Display weights in sidebar
+st.sidebar.markdown("**Bias Weights:**")
+st.sidebar.markdown("- Technical: 20%")
+st.sidebar.markdown("- Options Chain: 25%")
+st.sidebar.markdown("- Institutional OI: 15%")
+st.sidebar.markdown("- ATM Detailed: 10%")
+st.sidebar.markdown("- Volume Blocks: 10%")
+st.sidebar.markdown("- Breakout/Reversal: 20%")
