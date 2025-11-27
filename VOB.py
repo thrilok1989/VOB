@@ -31,6 +31,90 @@ except ImportError:
     print("Warning: Dhan API not available. Volume data may be missing for Indian indices.")
 
 
+# =============================================
+# TELEGRAM NOTIFICATION SYSTEM
+# =============================================
+
+class TelegramNotifier:
+    """Telegram notification system for bias alerts"""
+    
+    def __init__(self, bot_token: str = None, chat_id: str = None):
+        self.bot_token = bot_token or st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+        self.chat_id = chat_id or st.secrets.get("TELEGRAM_CHAT_ID", "")
+        self.last_alert_time = {}
+        self.alert_cooldown = 300  # 5 minutes cooldown between same type alerts
+        
+    def send_message(self, message: str, alert_type: str = "INFO") -> bool:
+        """Send message to Telegram"""
+        try:
+            if not self.bot_token or not self.chat_id:
+                print("Telegram credentials not configured")
+                return False
+            
+            # Check cooldown
+            current_time = time.time()
+            if alert_type in self.last_alert_time:
+                if current_time - self.last_alert_time[alert_type] < self.alert_cooldown:
+                    print(f"Alert {alert_type} in cooldown")
+                    return False
+            
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            payload = {
+                'chat_id': self.chat_id,
+                'text': message,
+                'parse_mode': 'HTML'
+            }
+            
+            response = requests.post(url, json=payload, timeout=10)
+            if response.status_code == 200:
+                self.last_alert_time[alert_type] = current_time
+                print(f"✅ Telegram alert sent: {alert_type}")
+                return True
+            else:
+                print(f"❌ Telegram send failed: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Telegram error: {e}")
+            return False
+    
+    def send_bias_alert(self, technical_bias: str, options_bias: str, atm_bias: str, overall_bias: str, score: float):
+        """Send comprehensive bias alert"""
+        # Check if all three components are aligned
+        components = [technical_bias, options_bias, atm_bias]
+        bullish_count = sum(1 for bias in components if "BULL" in bias.upper())
+        bearish_count = sum(1 for bias in components if "BEAR" in bias.upper())
+        
+        if bullish_count >= 2 or bearish_count >= 2:
+            emoji = "🚀" if bullish_count >= 2 else "🔻"
+            alert_type = "STRONG_BULL" if bullish_count >= 2 else "STRONG_BEAR"
+            
+            message = f"""
+{emoji} <b>STRONG BIAS ALERT - NIFTY 50</b> {emoji}
+
+📊 <b>Component Analysis:</b>
+• Technical Analysis: <b>{technical_bias}</b>
+• Options Chain: <b>{options_bias}</b>  
+• ATM Detailed: <b>{atm_bias}</b>
+
+🎯 <b>Overall Bias:</b> <code>{overall_bias}</code>
+⭐ <b>Confidence Score:</b> <code>{score:.1f}/100</code>
+
+⏰ <b>Time:</b> {datetime.now(IST).strftime('%H:%M:%S')}
+            
+💡 <b>Market Insight:</b>
+{'Bullish momentum detected across multiple timeframes' if bullish_count >= 2 else 'Bearish pressure building across indicators'}
+"""
+            
+            return self.send_message(message, alert_type)
+        
+        return False
+
+
+# Initialize Telegram Notifier
+telegram_notifier = TelegramNotifier()
+
+
 class BiasAnalysisPro:
     """
     Comprehensive Bias Analysis matching Pine Script indicator EXACTLY
@@ -2696,6 +2780,19 @@ st.sidebar.header("Auto-Refresh Settings")
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
 refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, max_value=10, value=1)
 
+# Telegram Configuration
+st.sidebar.header("🔔 Telegram Alerts")
+telegram_enabled = st.sidebar.checkbox("Enable Telegram Alerts", value=True)
+if telegram_enabled:
+    bot_token = st.sidebar.text_input("Bot Token", type="password")
+    chat_id = st.sidebar.text_input("Chat ID")
+    if bot_token and chat_id:
+        telegram_notifier.bot_token = bot_token
+        telegram_notifier.chat_id = chat_id
+        st.sidebar.success("Telegram configured!")
+    else:
+        st.sidebar.warning("Enter Telegram credentials for alerts")
+
 # Shared state storage
 if 'last_df' not in st.session_state:
     st.session_state['last_df'] = None
@@ -2717,6 +2814,10 @@ if 'atm_detailed_bias' not in st.session_state:
     st.session_state.atm_detailed_bias = None
 if 'vob_blocks' not in st.session_state:  # FIX 5: Store VOB blocks
     st.session_state.vob_blocks = {'bullish': [], 'bearish': []}
+if 'last_telegram_alert' not in st.session_state:
+    st.session_state.last_telegram_alert = None
+if 'analysis_complete' not in st.session_state:
+    st.session_state.analysis_complete = False
 
 # Function to calculate ATM detailed bias score
 def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
@@ -2838,6 +2939,10 @@ def run_complete_analysis():
     # Calculate overall Nifty bias
     calculate_overall_nifty_bias()
     
+    # Send Telegram alert if conditions met
+    send_telegram_alert()
+    
+    st.session_state.analysis_complete = True
     return True
 
 # Function to calculate overall Nifty bias from all tabs
@@ -2931,12 +3036,52 @@ def calculate_overall_nifty_bias():
         st.session_state.overall_nifty_bias = overall_bias
         st.session_state.overall_nifty_score = weighted_score * 100
 
+# Function to send Telegram alerts
+def send_telegram_alert():
+    """Send Telegram alert when all three key components are aligned"""
+    if not telegram_enabled:
+        return
+    
+    # Get the three key components
+    technical_bias = "NEUTRAL"
+    options_bias = "NEUTRAL" 
+    atm_bias = "NEUTRAL"
+    
+    if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
+        technical_bias = st.session_state['last_result'].get('overall_bias', 'NEUTRAL')
+    
+    if st.session_state.market_bias_data:
+        for instrument_data in st.session_state.market_bias_data:
+            if instrument_data['instrument'] == 'NIFTY':
+                options_bias = instrument_data.get('combined_bias', instrument_data.get('overall_bias', 'NEUTRAL'))
+                break
+    
+    if st.session_state.atm_detailed_bias:
+        atm_bias = st.session_state.atm_detailed_bias['bias']
+    
+    # Send alert through Telegram notifier
+    telegram_notifier.send_bias_alert(
+        technical_bias=technical_bias,
+        options_bias=options_bias,
+        atm_bias=atm_bias,
+        overall_bias=st.session_state.overall_nifty_bias,
+        score=st.session_state.overall_nifty_score
+    )
+
+# AUTO-RUN ANALYSIS ON STARTUP
+if not st.session_state.analysis_complete:
+    with st.spinner("🚀 Starting initial analysis..."):
+        if run_complete_analysis():
+            st.success("✅ Initial analysis complete!")
+            st.rerun()
+
 # Refresh button
 col1, col2 = st.sidebar.columns([2, 1])
 with col1:
     if st.button("🔄 Refresh Analysis", type="primary", use_container_width=True):
         if run_complete_analysis():
             st.sidebar.success("Analysis refreshed!")
+            st.rerun()
 with col2:
     st.sidebar.metric("Auto-Refresh", "ON" if auto_refresh else "OFF")
 
@@ -2965,6 +3110,10 @@ if st.session_state.overall_nifty_bias:
         f"Score: {st.session_state.overall_nifty_score:.1f}"
     )
 
+# Display last update time
+if st.session_state.last_bias_update:
+    st.sidebar.caption(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')} IST")
+
 # Enhanced tabs with selected features
 tabs = st.tabs([
     "Overall Bias", "Bias Summary", "Price Action", "Option Chain", "Bias Tabulation"
@@ -2975,7 +3124,7 @@ with tabs[0]:
     st.header("🎯 Overall Nifty Bias Analysis")
     
     if not st.session_state.overall_nifty_bias:
-        st.info("No analysis run yet. Click **Refresh Analysis** to get started.")
+        st.info("No analysis run yet. Analysis runs automatically every minute...")
     else:
         col1, col2, col3 = st.columns([1, 2, 1])
         
@@ -3098,7 +3247,7 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Technical Bias Summary")
     if st.session_state['last_result'] is None:
-        st.info("No analysis run yet. Click **Refresh Analysis** to get started.")
+        st.info("No analysis run yet. Analysis runs automatically every minute...")
     else:
         res = st.session_state['last_result']
         if not res.get('success', False):
@@ -3139,7 +3288,7 @@ with tabs[2]:
     st.header("📈 Price Action Analysis")
     
     if st.session_state['last_df'] is None:
-        st.info("No data loaded yet. Click **Refresh Analysis** to get started.")
+        st.info("No data loaded yet. Analysis runs automatically every minute...")
     else:
         df = st.session_state['last_df']
         
@@ -3369,14 +3518,14 @@ with tabs[3]:
                     st.metric("Breakout Score", f"{instrument_data.get('breakout_score', 0):.2f}")
     
     else:
-        st.info("No option chain data available. Please refresh analysis first.")
+        st.info("No option chain data available. Analysis runs automatically every minute...")
 
 # BIAS TABULATION TAB - ENHANCED
 with tabs[4]:
     st.header("📋 Comprehensive Bias Tabulation")
     
     if not st.session_state.market_bias_data:
-        st.info("No option chain data available. Please refresh analysis first.")
+        st.info("No option chain data available. Analysis runs automatically every minute...")
     else:
         for instrument_data in st.session_state.market_bias_data:
             with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True):
@@ -3526,3 +3675,4 @@ with tabs[4]:
 # Footer
 st.markdown("---")
 st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh, Overall Nifty Bias Analysis, and Institutional Breakout/Reversal Detection.")
+st.caption("🔔 Telegram alerts sent when Technical Analysis, Options Chain, and ATM Detailed Bias are aligned (Bullish/Bearish)")
