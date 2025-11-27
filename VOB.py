@@ -751,64 +751,50 @@ class BiasAnalysisPro:
         })
 
         # =====================================================================
-        # CORRECTED OVERALL BIAS CALCULATION
+        # CORRECTED OVERALL BIAS CALCULATION - FIXED LOGIC
         # =====================================================================
         
-        # Count biases by category
-        fast_bull = sum(1 for b in bias_results if b['category'] == 'fast' and 'BULLISH' in b['bias'])
-        fast_bear = sum(1 for b in bias_results if b['category'] == 'fast' and 'BEARISH' in b['bias'])
-        fast_total = sum(1 for b in bias_results if b['category'] == 'fast')
-        
-        # Calculate weighted scores with CORRECTED logic
-        total_weighted_score = 0
-        total_possible_score = 0
-        
-        for bias in bias_results:
-            weight = bias['weight']
-            score = bias['score']
-            
-            # Only count non-neutral biases significantly
-            if abs(score) > 0:
-                total_weighted_score += score * weight
-                total_possible_score += 100 * weight  # Maximum possible score for this indicator
-        
-        # Calculate overall bias percentage
-        if total_possible_score > 0:
-            overall_score_percentage = (total_weighted_score / total_possible_score) * 100
-        else:
-            overall_score_percentage = 0
-        
-        # CORRECTED: Determine overall bias based on STRONG consensus, not just one strong signal
-        bias_strength = self.config['bias_strength']
-        
-        # Check for strong consensus (majority of indicators agree)
+        # Count total bullish and bearish signals
+        total_bullish = sum(1 for b in bias_results if 'BULLISH' in b['bias'])
+        total_bearish = sum(1 for b in bias_results if 'BEARISH' in b['bias'])
         total_indicators = len(bias_results)
-        bullish_indicators = sum(1 for b in bias_results if 'BULLISH' in b['bias'])
-        bearish_indicators = sum(1 for b in bias_results if 'BEARISH' in b['bias'])
         
-        bullish_percentage = (bullish_indicators / total_indicators) * 100
-        bearish_percentage = (bearish_indicators / total_indicators) * 100
+        # Calculate percentages
+        bullish_percentage = (total_bullish / total_indicators) * 100
+        bearish_percentage = (total_bearish / total_indicators) * 100
         
-        # REQUIRE STRONG CONSENSUS: At least 60% of indicators must agree
-        if bullish_percentage >= 60 and overall_score_percentage > 0:
+        # CORRECTED: Require strong consensus (not just one strong signal)
+        # If 60% or more indicators agree, use that bias
+        # Otherwise, stay neutral unless there's overwhelming evidence
+        
+        if bullish_percentage >= 60:
             overall_bias = "BULLISH"
-            overall_score = overall_score_percentage
-        elif bearish_percentage >= 60 and overall_score_percentage < 0:
-            overall_bias = "BEARISH" 
-            overall_score = overall_score_percentage
+            overall_score = bullish_percentage
+        elif bearish_percentage >= 60:
+            overall_bias = "BEARISH"
+            overall_score = -bearish_percentage
         else:
-            # If no strong consensus, use weighted score with higher threshold
-            if overall_score_percentage >= bias_strength:
+            # No strong consensus - use weighted score with higher threshold
+            total_weighted_score = sum(b['score'] * b['weight'] for b in bias_results)
+            total_possible_score = sum(100 * b['weight'] for b in bias_results)
+            
+            if total_possible_score > 0:
+                weighted_percentage = (total_weighted_score / total_possible_score) * 100
+            else:
+                weighted_percentage = 0
+            
+            # Higher threshold for weighted score to overcome neutral consensus
+            if weighted_percentage >= 70:  # Increased from 60 to 70
                 overall_bias = "BULLISH"
-                overall_score = overall_score_percentage
-            elif overall_score_percentage <= -bias_strength:
-                overall_bias = "BEARISH"
-                overall_score = overall_score_percentage
+                overall_score = weighted_percentage
+            elif weighted_percentage <= -70:  # Increased from -60 to -70
+                overall_bias = "BEARISH" 
+                overall_score = weighted_percentage
             else:
                 overall_bias = "NEUTRAL"
                 overall_score = 0
 
-        overall_confidence = min(100, abs(overall_score_percentage))
+        overall_confidence = min(100, abs(overall_score))
 
         return {
             'success': True,
@@ -819,14 +805,13 @@ class BiasAnalysisPro:
             'overall_bias': overall_bias,
             'overall_score': overall_score,
             'overall_confidence': overall_confidence,
-            'bullish_count': bullish_indicators,
-            'bearish_count': bearish_indicators,
-            'neutral_count': total_indicators - (bullish_indicators + bearish_indicators),
+            'bullish_count': total_bullish,
+            'bearish_count': total_bearish,
+            'neutral_count': total_indicators - (total_bullish + total_bearish),
             'total_indicators': total_indicators,
             'stock_data': stock_data,
             'bullish_percentage': bullish_percentage,
-            'bearish_percentage': bearish_percentage,
-            'weighted_score_percentage': overall_score_percentage
+            'bearish_percentage': bearish_percentage
         }
 
 
@@ -2631,35 +2616,58 @@ def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
     return bias, normalized_score
 
 
-def check_and_send_bias_alerts(technical_bias: str, technical_confidence: float,
-                              options_bias: str, options_score: float,
-                              atm_bias: str, atm_score: float,
-                              breakout_bias: str, breakout_score: float,
-                              overall_bias: str, overall_score: float) -> bool:
-    """
-    Check if all biases agree and send Telegram alert
-    Returns True if alert was sent
-    """
-    # Define what constitutes bullish/bearish for each component
-    biases = {
-        'Technical Analysis': technical_bias,
-        'Options Chain': options_bias, 
-        'ATM Analysis': atm_bias,
-        'Breakout/Reversal': breakout_bias
-    }
+def check_and_send_telegram_alert():
+    """Check if all analysis components agree and send Telegram alert"""
+    if (not st.session_state.overall_nifty_bias or 
+        st.session_state.overall_nifty_bias == "NEUTRAL" or
+        not st.session_state['last_result'] or 
+        not st.session_state.market_bias_data):
+        return False
     
-    # Check if all components agree on direction
-    all_bullish = all('BULL' in bias.upper() for bias in biases.values())
-    all_bearish = all('BEAR' in bias.upper() for bias in biases.values())
+    # Get all component biases
+    tech_bias = st.session_state['last_result'].get('overall_bias', 'NEUTRAL')
+    tech_confidence = st.session_state['last_result'].get('overall_confidence', 0)
+    
+    options_bias = "NEUTRAL"
+    options_score = 0
+    atm_bias = "NEUTRAL"
+    atm_score = 0
+    breakout_bias = "NEUTRAL"
+    breakout_score = 0
+    
+    for instrument_data in st.session_state.market_bias_data:
+        if instrument_data['instrument'] == 'NIFTY':
+            options_bias = instrument_data.get('combined_bias', 'NEUTRAL')
+            options_score = instrument_data.get('combined_score', 0)
+            
+            if 'breakout_reversal_analysis' in instrument_data:
+                breakout_data = instrument_data['breakout_reversal_analysis']
+                breakout_bias = breakout_data.get('market_state', 'NEUTRAL')
+                breakout_score = breakout_data.get('overall_score', 0)
+            break
+    
+    if st.session_state.atm_detailed_bias:
+        atm_bias = st.session_state.atm_detailed_bias['bias']
+        atm_score = st.session_state.atm_detailed_bias['score']
+    
+    # Check if ALL components agree
+    all_components = [tech_bias, options_bias, atm_bias, breakout_bias]
+    all_bullish = all('BULL' in bias.upper() for bias in all_components)
+    all_bearish = all('BEAR' in bias.upper() for bias in all_components)
     
     if all_bullish or all_bearish:
-        # Calculate average confidence
-        confidences = [technical_confidence, abs(options_score), abs(atm_score), breakout_score]
-        avg_confidence = sum(confidences) / len(confidences)
+        biases = {
+            'Technical Analysis': tech_bias,
+            'Options Chain': options_bias,
+            'ATM Analysis': atm_bias,
+            'Breakout/Reversal': breakout_bias
+        }
         
-        # Only send if confidence is reasonable
-        if avg_confidence >= 60:
-            return telegram_notifier.send_overall_bias_alert(biases, overall_bias, overall_score)
+        return telegram_notifier.send_overall_bias_alert(
+            biases, 
+            st.session_state.overall_nifty_bias, 
+            st.session_state.overall_nifty_score
+        )
     
     return False
 
@@ -2725,7 +2733,7 @@ def calculate_overall_nifty_bias():
         bias_scores.append(vob_bias_score)
         bias_weights.append(0.15)
     
-    # 5. Breakout/Reversal Analysis (20% weight) - NEW
+    # 5. Breakout/Reversal Analysis (20% weight)
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
@@ -2829,47 +2837,7 @@ def run_complete_analysis():
     calculate_overall_nifty_bias()
     
     # Check for complete bias confirmation and send Telegram alert
-    if (st.session_state.overall_nifty_bias and 
-        st.session_state.overall_nifty_bias != "NEUTRAL" and
-        st.session_state['last_result'] and 
-        st.session_state.market_bias_data):
-        
-        # Get all component biases
-        tech_result = st.session_state['last_result']
-        technical_bias = tech_result.get('overall_bias', 'NEUTRAL')
-        technical_confidence = tech_result.get('overall_confidence', 0)
-        
-        options_bias = "NEUTRAL"
-        options_score = 0
-        atm_bias = "NEUTRAL" 
-        atm_score = 0
-        breakout_bias = "NEUTRAL"
-        breakout_score = 0
-        
-        for instrument_data in st.session_state.market_bias_data:
-            if instrument_data['instrument'] == 'NIFTY':
-                options_bias = instrument_data.get('combined_bias', 'Neutral')
-                options_score = instrument_data.get('combined_score', 0)
-                
-                if 'breakout_reversal_analysis' in instrument_data:
-                    breakout_data = instrument_data['breakout_reversal_analysis']
-                    breakout_bias = breakout_data.get('market_state', 'NEUTRAL_CHOPPY')
-                    breakout_score = breakout_data.get('overall_score', 0)
-                break
-        
-        if st.session_state.atm_detailed_bias:
-            atm_bias = st.session_state.atm_detailed_bias['bias']
-            atm_score = st.session_state.atm_detailed_bias['score']
-        
-        # Check if all biases agree
-        check_and_send_bias_alerts(
-            technical_bias, technical_confidence,
-            options_bias, options_score,
-            atm_bias, atm_score,
-            breakout_bias, breakout_score,
-            st.session_state.overall_nifty_bias,
-            st.session_state.overall_nifty_score
-        )
+    check_and_send_telegram_alert()
     
     return True
 
@@ -2930,8 +2898,8 @@ if 'overall_nifty_score' not in st.session_state:
     st.session_state.overall_nifty_score = 0
 if 'atm_detailed_bias' not in st.session_state:
     st.session_state.atm_detailed_bias = None
-if 'last_refresh' not in st.session_state:
-    st.session_state.last_refresh = datetime.now()
+if 'last_auto_refresh' not in st.session_state:
+    st.session_state.last_auto_refresh = datetime.now()
 if 'analysis_count' not in st.session_state:
     st.session_state.analysis_count = 0
 
@@ -2955,12 +2923,12 @@ with col2:
 # Auto-refresh logic - FIXED to run automatically
 if auto_refresh:
     current_time = datetime.now()
-    time_diff = (current_time - st.session_state.last_refresh).total_seconds() / 60
+    time_diff = (current_time - st.session_state.last_auto_refresh).total_seconds() / 60
     
     if time_diff >= refresh_interval:
-        with st.spinner("Auto-refreshing analysis..."):
+        with st.spinner("🔄 Auto-refreshing analysis..."):
             if run_complete_analysis():
-                st.session_state.last_refresh = current_time
+                st.session_state.last_auto_refresh = current_time
                 st.session_state.analysis_count += 1
                 st.rerun()
 
