@@ -282,6 +282,16 @@ class BiasAnalysisPro:
                 print(f"Warning: No data for {symbol}")
                 return pd.DataFrame()
 
+            # Ensure proper column names (handle case sensitivity)
+            df.columns = [col.capitalize() for col in df.columns]
+            
+            # Ensure required columns exist
+            required_cols = ['Open', 'High', 'Low', 'Close']
+            for col in required_cols:
+                if col not in df.columns:
+                    print(f"Warning: Missing column {col} in data for {symbol}")
+                    return pd.DataFrame()
+
             # Ensure volume column exists (even if it's zeros for indices)
             if 'Volume' not in df.columns:
                 df['Volume'] = 0
@@ -314,7 +324,7 @@ class BiasAnalysisPro:
     def calculate_mfi(self, df: pd.DataFrame, period: int = 10) -> pd.Series:
         """Calculate Money Flow Index with NaN/zero handling"""
         # Check if volume data is available
-        if df['Volume'].sum() == 0:
+        if 'Volume' not in df.columns or df['Volume'].sum() == 0:
             # Return neutral MFI (50) if no volume data
             return pd.Series([50.0] * len(df), index=df.index)
 
@@ -369,7 +379,7 @@ class BiasAnalysisPro:
     def calculate_vwap(self, df: pd.DataFrame) -> pd.Series:
         """Calculate VWAP with NaN/zero handling"""
         # Check if volume data is available
-        if df['Volume'].sum() == 0:
+        if 'Volume' not in df.columns or df['Volume'].sum() == 0:
             # Return typical price as fallback if no volume data
             return (df['High'] + df['Low'] + df['Close']) / 3
 
@@ -445,7 +455,7 @@ class BiasAnalysisPro:
 
     def calculate_volume_delta(self, df: pd.DataFrame):
         """Calculate Volume Delta (up_vol - down_vol) matching Pine Script"""
-        if df['Volume'].sum() == 0:
+        if 'Volume' not in df.columns or df['Volume'].sum() == 0:
             return 0, False, False
 
         # Calculate up and down volume
@@ -462,7 +472,7 @@ class BiasAnalysisPro:
         """Calculate High Volume Pivots matching Pine Script
         Returns: (hvp_bullish, hvp_bearish, pivot_high_count, pivot_low_count)
         """
-        if df['Volume'].sum() == 0:
+        if 'Volume' not in df.columns or df['Volume'].sum() == 0:
             return False, False, 0, 0
 
         # Calculate pivot highs and lows
