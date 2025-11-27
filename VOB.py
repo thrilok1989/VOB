@@ -30,7 +30,6 @@ except ImportError:
     DHAN_AVAILABLE = False
     print("Warning: Dhan API not available. Volume data may be missing for Indian indices.")
 
-
 # =============================================
 # TELEGRAM NOTIFICATION SYSTEM
 # =============================================
@@ -38,17 +37,22 @@ except ImportError:
 class TelegramNotifier:
     """Telegram notification system for bias alerts"""
     
-    def __init__(self, bot_token: str = None, chat_id: str = None):
-        self.bot_token = bot_token or st.secrets.get("TELEGRAM_BOT_TOKEN", "")
-        self.chat_id = chat_id or st.secrets.get("TELEGRAM_CHAT_ID", "")
+    def __init__(self):
+        # Get credentials from Streamlit secrets
+        self.bot_token = st.secrets.get("TELEGRAM", {}).get("BOT_TOKEN", "")
+        self.chat_id = st.secrets.get("TELEGRAM", {}).get("CHAT_ID", "")
         self.last_alert_time = {}
         self.alert_cooldown = 300  # 5 minutes cooldown between same type alerts
+        
+    def is_configured(self) -> bool:
+        """Check if Telegram is properly configured"""
+        return bool(self.bot_token and self.chat_id)
         
     def send_message(self, message: str, alert_type: str = "INFO") -> bool:
         """Send message to Telegram"""
         try:
-            if not self.bot_token or not self.chat_id:
-                print("Telegram credentials not configured")
+            if not self.is_configured():
+                print("Telegram credentials not configured in secrets")
                 return False
             
             # Check cooldown
