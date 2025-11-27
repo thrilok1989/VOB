@@ -916,395 +916,6 @@ class VolumeOrderBlocks:
 
 
 # =============================================
-# GAMMA SEQUENCE ANALYZER
-# =============================================
-
-class GammaSequenceAnalyzer:
-    """Comprehensive Gamma Sequence Analysis for Institutional Bias Detection"""
-    
-    def __init__(self):
-        self.gamma_levels = {
-            'EXTREME_POSITIVE': {'threshold': 10000, 'bias': 'STRONG_BULLISH', 'score': 100},
-            'HIGH_POSITIVE': {'threshold': 5000, 'bias': 'BULLISH', 'score': 75},
-            'MODERATE_POSITIVE': {'threshold': 1000, 'bias': 'MILD_BULLISH', 'score': 50},
-            'NEUTRAL': {'threshold': -1000, 'bias': 'NEUTRAL', 'score': 0},
-            'MODERATE_NEGATIVE': {'threshold': -5000, 'bias': 'MILD_BEARISH', 'score': -50},
-            'HIGH_NEGATIVE': {'threshold': -10000, 'bias': 'BEARISH', 'score': -75},
-            'EXTREME_NEGATIVE': {'threshold': -20000, 'bias': 'STRONG_BEARISH', 'score': -100}
-        }
-    
-    def calculate_gamma_exposure(self, df_chain: pd.DataFrame) -> pd.DataFrame:
-        """Calculate Gamma exposure for all strikes"""
-        df = df_chain.copy()
-        
-        # Calculate Gamma exposure
-        df['gamma_exposure_ce'] = df['Gamma_CE'] * df['openInterest_CE'] * 100  # Multiply by 100 for contract size
-        df['gamma_exposure_pe'] = df['Gamma_PE'] * df['openInterest_PE'] * 100
-        df['net_gamma_exposure'] = df['gamma_exposure_ce'] + df['gamma_exposure_pe']
-        
-        # Calculate Gamma profile
-        df['gamma_profile'] = df['net_gamma_exposure'].apply(self._get_gamma_profile)
-        
-        return df
-    
-    def _get_gamma_profile(self, gamma_exposure: float) -> str:
-        """Get Gamma profile based on exposure level"""
-        for level, config in self.gamma_levels.items():
-            if gamma_exposure >= config['threshold']:
-                return level
-        return 'EXTREME_NEGATIVE'
-    
-    def analyze_gamma_sequence_bias(self, df_chain: pd.DataFrame, spot_price: float) -> Dict[str, Any]:
-        """Comprehensive Gamma sequence bias analysis"""
-        try:
-            df_with_gamma = self.calculate_gamma_exposure(df_chain)
-            
-            # Analyze different strike zones
-            analysis = {
-                'total_gamma_exposure': df_with_gamma['net_gamma_exposure'].sum(),
-                'gamma_bias': self._calculate_overall_gamma_bias(df_with_gamma),
-                'zones': self._analyze_gamma_zones(df_with_gamma, spot_price),
-                'sequence': self._analyze_gamma_sequence(df_with_gamma),
-                'walls': self._find_gamma_walls(df_with_gamma),
-                'profile': self._get_gamma_profile(df_with_gamma['net_gamma_exposure'].sum())
-            }
-            
-            # Calculate comprehensive Gamma score
-            analysis['gamma_score'] = self._calculate_gamma_score(analysis)
-            
-            return analysis
-            
-        except Exception as e:
-            print(f"Error in Gamma sequence analysis: {e}")
-            return {'gamma_bias': 'NEUTRAL', 'gamma_score': 0, 'error': str(e)}
-    
-    def _calculate_overall_gamma_bias(self, df: pd.DataFrame) -> str:
-        """Calculate overall Gamma bias"""
-        total_gamma = df['net_gamma_exposure'].sum()
-        
-        if total_gamma > 10000:
-            return "STRONG_BULLISH"
-        elif total_gamma > 5000:
-            return "BULLISH"
-        elif total_gamma > 1000:
-            return "MILD_BULLISH"
-        elif total_gamma < -10000:
-            return "STRONG_BEARISH"
-        elif total_gamma < -5000:
-            return "BEARISH"
-        elif total_gamma < -1000:
-            return "MILD_BEARISH"
-        else:
-            return "NEUTRAL"
-    
-    def _analyze_gamma_zones(self, df: pd.DataFrame, spot_price: float) -> Dict[str, Any]:
-        """Analyze Gamma across different price zones"""
-        strike_diff = df['strikePrice'].iloc[1] - df['strikePrice'].iloc[0]
-        
-        zones = {
-            'itm_puts': df[df['strikePrice'] < spot_price - strike_diff].copy(),
-            'near_otm_puts': df[(df['strikePrice'] >= spot_price - strike_diff) & (df['strikePrice'] < spot_price)].copy(),
-            'atm': df[abs(df['strikePrice'] - spot_price) <= strike_diff].copy(),
-            'near_otm_calls': df[(df['strikePrice'] > spot_price) & (df['strikePrice'] <= spot_price + strike_diff)].copy(),
-            'otm_calls': df[df['strikePrice'] > spot_price + strike_diff].copy()
-        }
-        
-        zone_analysis = {}
-        for zone_name, zone_data in zones.items():
-            if not zone_data.empty:
-                zone_analysis[zone_name] = {
-                    'gamma_exposure': zone_data['net_gamma_exposure'].sum(),
-                    'bias': self._calculate_overall_gamma_bias(zone_data),
-                    'strike_range': f"{zone_data['strikePrice'].min():.0f}-{zone_data['strikePrice'].max():.0f}"
-                }
-        
-        return zone_analysis
-    
-    def _analyze_gamma_sequence(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Analyze Gamma sequence patterns"""
-        # Sort by strike price
-        df_sorted = df.sort_values('strikePrice')
-        
-        # Calculate Gamma changes between strikes
-        df_sorted['gamma_change'] = df_sorted['net_gamma_exposure'].diff()
-        
-        # Identify sequences
-        positive_sequences = []
-        negative_sequences = []
-        current_sequence = []
-        
-        for _, row in df_sorted.iterrows():
-            if not current_sequence:
-                current_sequence.append(row)
-                continue
-                
-            current_gamma = row['net_gamma_exposure']
-            prev_gamma = current_sequence[-1]['net_gamma_exposure']
-            
-            if (current_gamma >= 0 and prev_gamma >= 0) or (current_gamma < 0 and prev_gamma < 0):
-                current_sequence.append(row)
-            else:
-                if current_sequence:
-                    seq_gamma = sum([x['net_gamma_exposure'] for x in current_sequence])
-                    if seq_gamma >= 0:
-                        positive_sequences.append({
-                            'strikes': [x['strikePrice'] for x in current_sequence],
-                            'total_gamma': seq_gamma,
-                            'length': len(current_sequence)
-                        })
-                    else:
-                        negative_sequences.append({
-                            'strikes': [x['strikePrice'] for x in current_sequence],
-                            'total_gamma': seq_gamma,
-                            'length': len(current_sequence)
-                        })
-                current_sequence = [row]
-        
-        return {
-            'positive_sequences': positive_sequences,
-            'negative_sequences': negative_sequences,
-            'longest_positive_seq': max([seq['length'] for seq in positive_sequences]) if positive_sequences else 0,
-            'longest_negative_seq': max([seq['length'] for seq in negative_sequences]) if negative_sequences else 0
-        }
-    
-    def _find_gamma_walls(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
-        """Find significant Gamma walls/resistance levels"""
-        # Find local maxima/minima in Gamma exposure
-        gamma_walls = []
-        
-        for i in range(1, len(df) - 1):
-            current_gamma = df.iloc[i]['net_gamma_exposure']
-            prev_gamma = df.iloc[i-1]['net_gamma_exposure']
-            next_gamma = df.iloc[i+1]['net_gamma_exposure']
-            
-            # Gamma wall (local maximum with high positive Gamma)
-            if current_gamma > prev_gamma and current_gamma > next_gamma and current_gamma > 5000:
-                gamma_walls.append({
-                    'strike': df.iloc[i]['strikePrice'],
-                    'gamma_exposure': current_gamma,
-                    'type': 'RESISTANCE',
-                    'strength': 'STRONG' if current_gamma > 10000 else 'MODERATE'
-                })
-            
-            # Gamma vacuum (local minimum with high negative Gamma)
-            elif current_gamma < prev_gamma and current_gamma < next_gamma and current_gamma < -5000:
-                gamma_walls.append({
-                    'strike': df.iloc[i]['strikePrice'],
-                    'gamma_exposure': current_gamma,
-                    'type': 'SUPPORT',
-                    'strength': 'STRONG' if current_gamma < -10000 else 'MODERATE'
-                })
-        
-        return sorted(gamma_walls, key=lambda x: abs(x['gamma_exposure']), reverse=True)[:5]  # Top 5
-    
-    def _calculate_gamma_score(self, analysis: Dict) -> float:
-        """Calculate comprehensive Gamma score from -100 to 100"""
-        base_score = self.gamma_levels.get(analysis['profile'], {}).get('score', 0)
-        
-        # Adjust score based on sequence analysis
-        seq_analysis = analysis.get('sequence', {})
-        pos_seqs = len(seq_analysis.get('positive_sequences', []))
-        neg_seqs = len(seq_analysis.get('negative_sequences', []))
-        
-        if pos_seqs > neg_seqs:
-            sequence_bonus = 10
-        elif neg_seqs > pos_seqs:
-            sequence_bonus = -10
-        else:
-            sequence_bonus = 0
-        
-        # Adjust score based on Gamma walls
-        walls = analysis.get('walls', [])
-        resistance_walls = len([w for w in walls if w['type'] == 'RESISTANCE'])
-        support_walls = len([w for w in walls if w['type'] == 'SUPPORT'])
-        
-        if resistance_walls > support_walls:
-            walls_penalty = -5
-        elif support_walls > resistance_walls:
-            walls_penalty = 5
-        else:
-            walls_penalty = 0
-        
-        final_score = base_score + sequence_bonus + walls_penalty
-        return max(-100, min(100, final_score))
-
-
-# =============================================
-# INSTITUTIONAL OI ADVANCED ANALYZER
-# =============================================
-
-class InstitutionalOIAdvanced:
-    """Advanced Institutional OI Analysis with Gamma Sequencing"""
-    
-    def __init__(self):
-        self.master_table_rules = {
-            'CALL': {
-                'Winding_Up_Price_Up': {'bias': 'BEARISH', 'institution_move': 'Selling/Writing', 'confidence': 'HIGH'},
-                'Winding_Up_Price_Down': {'bias': 'BEARISH', 'institution_move': 'Sellers Dominating', 'confidence': 'HIGH'},
-                'Unwinding_Down_Price_Up': {'bias': 'BULLISH', 'institution_move': 'Short Covering', 'confidence': 'MEDIUM'},
-                'Unwinding_Down_Price_Down': {'bias': 'MILD_BEARISH', 'institution_move': 'Longs Exiting', 'confidence': 'LOW'}
-            },
-            'PUT': {
-                'Winding_Up_Price_Down': {'bias': 'BULLISH', 'institution_move': 'Selling/Writing', 'confidence': 'HIGH'},
-                'Winding_Up_Price_Up': {'bias': 'BULLISH', 'institution_move': 'Sellers Dominating', 'confidence': 'HIGH'},
-                'Unwinding_Down_Price_Down': {'bias': 'BEARISH', 'institution_move': 'Short Covering', 'confidence': 'MEDIUM'},
-                'Unwinding_Down_Price_Up': {'bias': 'MILD_BULLISH', 'institution_move': 'Longs Exiting', 'confidence': 'LOW'}
-            }
-        }
-        self.gamma_analyzer = GammaSequenceAnalyzer()
-    
-    def analyze_institutional_oi_pattern(self, option_type: str, oi_change: float, price_change: float, 
-                                       volume: float, iv_change: float, bid_ask_ratio: float) -> Dict:
-        """Analyze institutional OI patterns based on master table rules"""
-        
-        # Determine OI action
-        oi_action = "Winding_Up" if oi_change > 0 else "Unwinding_Down"
-        
-        # Determine price action
-        price_action = "Price_Up" if price_change > 0 else "Price_Down"
-        
-        # Determine pattern key
-        pattern_key = f"{oi_action}_{price_action}"
-        
-        # Get base pattern
-        base_pattern = self.master_table_rules.get(option_type, {}).get(pattern_key, {})
-        
-        if not base_pattern:
-            return {'bias': 'NEUTRAL', 'confidence': 'LOW', 'pattern': 'Unknown'}
-        
-        # Enhance with volume and IV analysis
-        volume_signal = "High" if volume > 1000 else "Low"
-        iv_signal = "Rising" if iv_change > 0 else "Falling"
-        
-        # Bid/Ask analysis
-        liquidity_signal = "Bid_Heavy" if bid_ask_ratio > 1.2 else "Ask_Heavy" if bid_ask_ratio < 0.8 else "Balanced"
-        
-        # Adjust confidence based on volume and IV
-        confidence = base_pattern['confidence']
-        if volume_signal == "High" and abs(iv_change) > 1.0:
-            confidence = "VERY_HIGH"
-        
-        return {
-            'option_type': option_type,
-            'bias': base_pattern['bias'],
-            'institution_move': base_pattern['institution_move'],
-            'confidence': confidence,
-            'pattern': pattern_key,
-            'volume_signal': volume_signal,
-            'iv_signal': iv_signal,
-            'liquidity_signal': liquidity_signal,
-            'oi_change': oi_change,
-            'price_change': price_change,
-            'volume': volume
-        }
-    
-    def analyze_atm_institutional_footprint(self, df_chain: pd.DataFrame, spot_price: float) -> Dict[str, Any]:
-        """Comprehensive institutional footprint analysis for ATM ±2 strikes"""
-        try:
-            # Get ATM ±2 strikes
-            strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0]
-            atm_range = strike_diff * 2
-            atm_strikes = df_chain[abs(df_chain['strikePrice'] - spot_price) <= atm_range].copy()
-            
-            if atm_strikes.empty:
-                return {'overall_bias': 'NEUTRAL', 'score': 0, 'patterns': []}
-            
-            patterns = []
-            total_score = 0
-            pattern_count = 0
-            
-            for _, strike_data in atm_strikes.iterrows():
-                strike = strike_data['strikePrice']
-                
-                # Analyze CALL side
-                if pd.notna(strike_data['changeinOpenInterest_CE']):
-                    ce_pattern = self.analyze_institutional_oi_pattern(
-                        option_type='CALL',
-                        oi_change=strike_data['changeinOpenInterest_CE'],
-                        price_change=strike_data.get('lastPrice_CE', 0) - strike_data.get('previousClose_CE', strike_data.get('lastPrice_CE', 0)),
-                        volume=strike_data.get('totalTradedVolume_CE', 0),
-                        iv_change=strike_data.get('impliedVolatility_CE', 0) - strike_data.get('previousIV_CE', strike_data.get('impliedVolatility_CE', 0)),
-                        bid_ask_ratio=strike_data.get('bidQty_CE', 1) / max(1, strike_data.get('askQty_CE', 1))
-                    )
-                    ce_pattern['strike'] = strike
-                    patterns.append(ce_pattern)
-                    
-                    # Convert bias to score
-                    bias_score = self._bias_to_score(ce_pattern['bias'], ce_pattern['confidence'])
-                    total_score += bias_score
-                    pattern_count += 1
-                
-                # Analyze PUT side
-                if pd.notna(strike_data['changeinOpenInterest_PE']):
-                    pe_pattern = self.analyze_institutional_oi_pattern(
-                        option_type='PUT',
-                        oi_change=strike_data['changeinOpenInterest_PE'],
-                        price_change=strike_data.get('lastPrice_PE', 0) - strike_data.get('previousClose_PE', strike_data.get('lastPrice_PE', 0)),
-                        volume=strike_data.get('totalTradedVolume_PE', 0),
-                        iv_change=strike_data.get('impliedVolatility_PE', 0) - strike_data.get('previousIV_PE', strike_data.get('impliedVolatility_PE', 0)),
-                        bid_ask_ratio=strike_data.get('bidQty_PE', 1) / max(1, strike_data.get('askQty_PE', 1))
-                    )
-                    pe_pattern['strike'] = strike
-                    patterns.append(pe_pattern)
-                    
-                    # Convert bias to score
-                    bias_score = self._bias_to_score(pe_pattern['bias'], pe_pattern['confidence'])
-                    total_score += bias_score
-                    pattern_count += 1
-            
-            # Calculate overall bias
-            if pattern_count > 0:
-                avg_score = total_score / pattern_count
-                if avg_score > 0.2:
-                    overall_bias = "BULLISH"
-                elif avg_score < -0.2:
-                    overall_bias = "BEARISH"
-                else:
-                    overall_bias = "NEUTRAL"
-            else:
-                overall_bias = "NEUTRAL"
-                avg_score = 0
-            
-            # Add Gamma sequencing analysis
-            gamma_analysis = self.gamma_analyzer.analyze_gamma_sequence_bias(df_chain, spot_price)
-            
-            return {
-                'overall_bias': overall_bias,
-                'score': avg_score * 100,  # Convert to percentage
-                'patterns': patterns,
-                'gamma_analysis': gamma_analysis,
-                'strikes_analyzed': len(atm_strikes),
-                'total_patterns': len(patterns)
-            }
-            
-        except Exception as e:
-            print(f"Error in institutional footprint analysis: {e}")
-            return {'overall_bias': 'NEUTRAL', 'score': 0, 'patterns': [], 'gamma_analysis': {}}
-    
-    def _bias_to_score(self, bias: str, confidence: str) -> float:
-        """Convert bias and confidence to numerical score"""
-        bias_scores = {
-            'BULLISH': 1.0,
-            'MILD_BULLISH': 0.5,
-            'NEUTRAL': 0.0,
-            'MILD_BEARISH': -0.5,
-            'BEARISH': -1.0
-        }
-        
-        confidence_multipliers = {
-            'VERY_HIGH': 1.5,
-            'HIGH': 1.2,
-            'MEDIUM': 1.0,
-            'LOW': 0.7
-        }
-        
-        base_score = bias_scores.get(bias, 0.0)
-        multiplier = confidence_multipliers.get(confidence, 1.0)
-        
-        return base_score * multiplier
-
-
-# =============================================
 # NSE OPTIONS ANALYZER (FROM SECOND APP)
 # =============================================
 
@@ -1327,7 +938,6 @@ class NSEOptionsAnalyzer:
         self.last_refresh_time = {}
         self.refresh_interval = 2  # 2 minutes default refresh
         self.cached_bias_data = {}
-        self.institutional_analyzer = InstitutionalOIAdvanced()
         
     def set_refresh_interval(self, minutes: int):
         """Set auto-refresh interval"""
@@ -1877,76 +1487,6 @@ class NSEOptionsAnalyzer:
             print(f"Error in detailed ATM bias: {e}")
             return {}
 
-    def analyze_comprehensive_institutional_bias(self, instrument: str) -> Optional[Dict[str, Any]]:
-        """Enhanced analysis with institutional footprint and Gamma sequencing"""
-        try:
-            # Get existing comprehensive analysis
-            basic_analysis = self.analyze_comprehensive_atm_bias(instrument)
-            if not basic_analysis:
-                return None
-            
-            # Fetch fresh chain data for institutional analysis
-            data = self.fetch_option_chain_data(instrument)
-            if not data['success']:
-                return None
-            
-            records = data['records']
-            spot = data['spot']
-            expiry = data['expiry']
-            
-            # Process option chain data
-            calls, puts = [], []
-            for item in records:
-                if 'CE' in item and item['CE']['expiryDate'] == expiry:
-                    calls.append(item['CE'])
-                if 'PE' in item and item['PE']['expiryDate'] == expiry:
-                    puts.append(item['PE'])
-            
-            if not calls or not puts:
-                return None
-            
-            df_ce = pd.DataFrame(calls)
-            df_pe = pd.DataFrame(puts)
-            df_chain = pd.merge(df_ce, df_pe, on='strikePrice', suffixes=('_CE', '_PE')).sort_values('strikePrice')
-            
-            # Add institutional analysis
-            institutional_analysis = self.institutional_analyzer.analyze_atm_institutional_footprint(df_chain, spot)
-            
-            # Combine analyses
-            enhanced_analysis = basic_analysis.copy()
-            enhanced_analysis['institutional_analysis'] = institutional_analysis
-            
-            # Calculate combined bias score
-            basic_score = basic_analysis.get('bias_score', 0)
-            institutional_score = institutional_analysis.get('score', 0)
-            gamma_score = institutional_analysis.get('gamma_analysis', {}).get('gamma_score', 0)
-            
-            # Weighted combined score (30% basic, 40% institutional, 30% gamma)
-            combined_score = (basic_score * 0.3) + (institutional_score * 0.4) + (gamma_score * 0.3)
-            
-            # Determine combined bias
-            if combined_score >= 2:
-                combined_bias = "Strong Bullish"
-            elif combined_score >= 0.5:
-                combined_bias = "Bullish"
-            elif combined_score <= -2:
-                combined_bias = "Strong Bearish"
-            elif combined_score <= -0.5:
-                combined_bias = "Bearish"
-            else:
-                combined_bias = "Neutral"
-            
-            enhanced_analysis['combined_bias'] = combined_bias
-            enhanced_analysis['combined_score'] = combined_score
-            enhanced_analysis['institutional_score'] = institutional_score
-            enhanced_analysis['gamma_score'] = gamma_score
-            
-            return enhanced_analysis
-            
-        except Exception as e:
-            print(f"Error in enhanced institutional analysis: {e}")
-            return None
-
     def get_overall_market_bias(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Get comprehensive market bias across all instruments with auto-refresh"""
         instruments = list(self.NSE_INSTRUMENTS['indices'].keys())
@@ -1955,7 +1495,7 @@ class NSEOptionsAnalyzer:
         for instrument in instruments:
             if force_refresh or self.should_refresh_data(instrument):
                 try:
-                    bias_data = self.analyze_comprehensive_institutional_bias(instrument)
+                    bias_data = self.analyze_comprehensive_atm_bias(instrument)
                     if bias_data:
                         results.append(bias_data)
                         # Update cache
@@ -1987,8 +1527,6 @@ st.markdown(
 analysis = BiasAnalysisPro()
 options_analyzer = NSEOptionsAnalyzer()
 vob_indicator = VolumeOrderBlocks(sensitivity=5)
-gamma_analyzer = GammaSequenceAnalyzer()
-institutional_analyzer = InstitutionalOIAdvanced()
 
 # Sidebar inputs
 st.sidebar.header("Data & Symbol")
@@ -2096,29 +1634,15 @@ def run_complete_analysis():
         result = analysis.analyze_all_bias_indicators(symbol_input)
         st.session_state['last_result'] = result
 
-    # Run ENHANCED options analysis with institutional footprint
-    with st.spinner("Running institutional footprint analysis..."):
-        enhanced_bias_data = []
-        instruments = list(options_analyzer.NSE_INSTRUMENTS['indices'].keys())
-        
-        for instrument in instruments:
-            try:
-                bias_data = options_analyzer.analyze_comprehensive_institutional_bias(instrument)
-                if bias_data:
-                    enhanced_bias_data.append(bias_data)
-            except Exception as e:
-                print(f"Error in enhanced analysis for {instrument}: {e}")
-                # Fallback to basic analysis
-                basic_data = options_analyzer.analyze_comprehensive_atm_bias(instrument)
-                if basic_data:
-                    enhanced_bias_data.append(basic_data)
-        
-        st.session_state.market_bias_data = enhanced_bias_data
+    # Run options analysis
+    with st.spinner("Fetching options chain data..."):
+        bias_data = options_analyzer.get_overall_market_bias(force_refresh=True)
+        st.session_state.market_bias_data = bias_data
         st.session_state.last_bias_update = datetime.now(IST)
     
     # Calculate ATM detailed bias
-    if st.session_state.market_bias_data:
-        for instrument_data in st.session_state.market_bias_data:
+    if bias_data:
+        for instrument_data in bias_data:
             if instrument_data['instrument'] == 'NIFTY' and 'detailed_atm_bias' in instrument_data:
                 atm_bias, atm_score = calculate_atm_detailed_bias(instrument_data['detailed_atm_bias'])
                 st.session_state.atm_detailed_bias = {
@@ -2139,7 +1663,7 @@ def calculate_overall_nifty_bias():
     bias_scores = []
     bias_weights = []
     
-    # 1. Technical Analysis Bias (25% weight)
+    # 1. Technical Analysis Bias (30% weight)
     if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
         tech_result = st.session_state['last_result']
         tech_bias = tech_result.get('overall_bias', 'NEUTRAL')
@@ -2151,24 +1675,25 @@ def calculate_overall_nifty_bias():
             bias_scores.append(-1.0)
         else:
             bias_scores.append(0.0)
-        bias_weights.append(0.25)
+        bias_weights.append(0.3)
     
-    # 2. Enhanced Options Chain Bias (35% weight) - INCREASED WEIGHT
+    # 2. Options Chain Overall Bias (25% weight)
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY':
-                # Use combined bias if available
-                options_bias = instrument_data.get('combined_bias', instrument_data.get('overall_bias', 'Neutral'))
-                options_score = instrument_data.get('combined_score', instrument_data.get('bias_score', 0))
+                options_bias = instrument_data.get('overall_bias', 'Neutral')
+                options_score = instrument_data.get('bias_score', 0)
                 
-                # Normalize score to -1 to 1 range
-                normalized_score = max(-1, min(1, options_score / 4))
-                
-                bias_scores.append(normalized_score)
-                bias_weights.append(0.35)
+                if "Bullish" in options_bias:
+                    bias_scores.append(1.0)
+                elif "Bearish" in options_bias:
+                    bias_scores.append(-1.0)
+                else:
+                    bias_scores.append(0.0)
+                bias_weights.append(0.25)
                 break
     
-    # 3. ATM Detailed Bias (20% weight)
+    # 3. ATM Detailed Bias (25% weight) - NEW
     if st.session_state.atm_detailed_bias:
         atm_bias = st.session_state.atm_detailed_bias['bias']
         atm_score = st.session_state.atm_detailed_bias['score']
@@ -2179,7 +1704,7 @@ def calculate_overall_nifty_bias():
             bias_scores.append(-1.0)
         else:
             bias_scores.append(0.0)
-        bias_weights.append(0.20)
+        bias_weights.append(0.25)
     
     # 4. Volume Order Blocks Bias (20% weight)
     if st.session_state['last_df'] is not None:
@@ -2193,7 +1718,7 @@ def calculate_overall_nifty_bias():
             vob_bias_score = -1.0
         
         bias_scores.append(vob_bias_score)
-        bias_weights.append(0.20)
+        bias_weights.append(0.2)
     
     # Calculate weighted average
     if bias_scores and bias_weights:
@@ -2284,7 +1809,7 @@ with tabs[0]:
                 'Component': 'Technical Analysis',
                 'Bias': tech_result.get('overall_bias', 'NEUTRAL'),
                 'Score': tech_result.get('overall_score', 0),
-                'Weight': '25%',
+                'Weight': '30%',
                 'Confidence': f"{tech_result.get('overall_confidence', 0):.1f}%"
             })
         
@@ -2294,10 +1819,10 @@ with tabs[0]:
                 if instrument_data['instrument'] == 'NIFTY':
                     components_data.append({
                         'Component': 'Options Chain Overall',
-                        'Bias': instrument_data.get('combined_bias', 'Neutral'),
-                        'Score': instrument_data.get('combined_score', 0),
-                        'Weight': '35%',
-                        'Confidence': 'High' if abs(instrument_data.get('combined_score', 0)) > 2 else 'Medium'
+                        'Bias': instrument_data.get('overall_bias', 'Neutral'),
+                        'Score': instrument_data.get('bias_score', 0),
+                        'Weight': '25%',
+                        'Confidence': 'High' if abs(instrument_data.get('bias_score', 0)) > 2 else 'Medium'
                     })
                     break
         
@@ -2308,7 +1833,7 @@ with tabs[0]:
                 'Component': 'ATM Detailed Bias',
                 'Bias': atm_data['bias'],
                 'Score': atm_data['score'],
-                'Weight': '20%',
+                'Weight': '25%',
                 'Confidence': f"{abs(atm_data['score']):.1f}%"
             })
         
@@ -2503,9 +2028,9 @@ with tabs[2]:
                 st.write(f"- Lower: ₹{latest_bearish['lower']:.2f}")
                 st.write(f"- Volume: {latest_bearish['volume']:,.0f}")
 
-# OPTION CHAIN TAB - ENHANCED WITH GAMMA SEQUENCES
+# OPTION CHAIN TAB
 with tabs[3]:
-    st.header("📊 NSE Options Chain Analysis - Institutional Footprint")
+    st.header("📊 NSE Options Chain Analysis")
     
     if st.session_state.last_bias_update:
         st.write(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')} IST")
@@ -2514,24 +2039,21 @@ with tabs[3]:
         bias_data = st.session_state.market_bias_data
         
         # Display current market bias for each instrument
-        st.subheader("🎯 Current Market Bias Summary")
+        st.subheader("Current Options Market Bias")
         cols = st.columns(len(bias_data))
         for idx, instrument_data in enumerate(bias_data):
             with cols[idx]:
-                # Use combined bias if available, otherwise fallback to overall_bias
-                bias_to_show = instrument_data.get('combined_bias', instrument_data.get('overall_bias', 'Neutral'))
-                score_to_show = instrument_data.get('combined_score', instrument_data.get('bias_score', 0))
-                
-                bias_color = "🟢" if "Bullish" in bias_to_show else "🔴" if "Bearish" in bias_to_show else "🟡"
+                bias_color = "🟢" if "Bullish" in instrument_data['overall_bias'] else "🔴" if "Bearish" in instrument_data['overall_bias'] else "🟡"
                 st.metric(
                     f"{instrument_data['instrument']}",
-                    f"{bias_color} {bias_to_show}",
-                    f"Score: {score_to_show:.2f}"
+                    f"{bias_color} {instrument_data['overall_bias']}",
+                    f"Score: {instrument_data['bias_score']:.2f}"
                 )
         
-        # Enhanced detailed analysis for each instrument
+        # Detailed analysis for each instrument
         for instrument_data in bias_data:
-            with st.expander(f"🏦 {instrument_data['instrument']} - Institutional Footprint Analysis", expanded=True):
+            with st.expander(f"🎯 {instrument_data['instrument']} - Detailed Analysis", expanded=True):
+                comp_metrics = instrument_data.get('comprehensive_metrics', {})
                 
                 # Basic Information
                 col1, col2, col3, col4 = st.columns(4)
@@ -2544,91 +2066,19 @@ with tabs[3]:
                 with col4:
                     st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}")
                 
-                # Institutional Analysis Section
-                if 'institutional_analysis' in instrument_data:
-                    inst_analysis = instrument_data['institutional_analysis']
-                    
-                    st.subheader("🔍 Institutional OI Patterns (ATM ±2 Strikes)")
-                    
-                    # Display patterns in a table
-                    if inst_analysis.get('patterns'):
-                        patterns_df = pd.DataFrame(inst_analysis['patterns'])
-                        st.dataframe(patterns_df, use_container_width=True)
-                    
-                    # Gamma Analysis - COMPREHENSIVE
-                    gamma_analysis = inst_analysis.get('gamma_analysis', {})
-                    st.subheader("γ Gamma Sequencing Analysis")
-                    
-                    # Gamma Overview
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Gamma Bias", gamma_analysis.get('gamma_bias', 'NEUTRAL'))
-                    with col2:
-                        st.metric("Gamma Score", f"{gamma_analysis.get('gamma_score', 0):.1f}")
-                    with col3:
-                        st.metric("Gamma Profile", gamma_analysis.get('profile', 'Unknown'))
-                    with col4:
-                        st.metric("Total Gamma Exposure", f"{gamma_analysis.get('total_gamma_exposure', 0):.0f}")
-                    
-                    # Gamma Zones Analysis
-                    if gamma_analysis.get('zones'):
-                        st.subheader("🎯 Gamma Zones Analysis")
-                        zones_data = []
-                        for zone_name, zone_info in gamma_analysis['zones'].items():
-                            zones_data.append({
-                                'Zone': zone_name.replace('_', ' ').title(),
-                                'Gamma Exposure': f"{zone_info['gamma_exposure']:.0f}",
-                                'Bias': zone_info['bias'],
-                                'Strike Range': zone_info['strike_range']
-                            })
-                        zones_df = pd.DataFrame(zones_data)
-                        st.dataframe(zones_df, use_container_width=True)
-                    
-                    # Gamma Walls/Resistance Levels
-                    if gamma_analysis.get('walls'):
-                        st.subheader("🧱 Gamma Walls & Support Levels")
-                        walls_data = []
-                        for wall in gamma_analysis['walls']:
-                            walls_data.append({
-                                'Strike': f"₹{wall['strike']:.0f}",
-                                'Gamma Exposure': f"{wall['gamma_exposure']:.0f}",
-                                'Type': wall['type'],
-                                'Strength': wall['strength']
-                            })
-                        walls_df = pd.DataFrame(walls_data)
-                        st.dataframe(walls_df, use_container_width=True)
-                    
-                    # Gamma Sequences
-                    if gamma_analysis.get('sequence'):
-                        seq_analysis = gamma_analysis['sequence']
-                        st.subheader("📈 Gamma Sequence Patterns")
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("Positive Sequences", len(seq_analysis.get('positive_sequences', [])))
-                        with col2:
-                            st.metric("Negative Sequences", len(seq_analysis.get('negative_sequences', [])))
-                        with col3:
-                            st.metric("Longest Positive", seq_analysis.get('longest_positive_seq', 0))
-                        with col4:
-                            st.metric("Longest Negative", seq_analysis.get('longest_negative_seq', 0))
-                
                 # Advanced Metrics
-                st.subheader("📈 Advanced Option Metrics")
-                comp_metrics = instrument_data.get('comprehensive_metrics', {})
-                
+                st.subheader("Advanced Option Metrics")
                 if comp_metrics:
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("Synthetic Bias", comp_metrics.get('synthetic_bias', 'N/A'))
                     with col2:
                         st.metric("ATM Buildup", comp_metrics.get('atm_buildup', 'N/A'))
                     with col3:
                         st.metric("Max Pain", f"₹{comp_metrics.get('max_pain_strike', 'N/A')}")
-                    with col4:
-                        st.metric("Vega Bias", comp_metrics.get('total_vega_bias', 'N/A'))
                 
                 # Key Levels
-                st.subheader("🎯 Key Trading Levels")
+                st.subheader("Key Trading Levels")
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Call Resistance", f"₹{comp_metrics.get('call_resistance', 'N/A')}")
@@ -2636,19 +2086,6 @@ with tabs[3]:
                     st.metric("Put Support", f"₹{comp_metrics.get('put_support', 'N/A')}")
                 with col3:
                     st.metric("Distance from Max Pain", f"{comp_metrics.get('distance_from_max_pain', 0):.1f}")
-                
-                # Combined Bias Breakdown
-                st.subheader("⚖️ Combined Bias Breakdown")
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Basic Score", f"{instrument_data.get('bias_score', 0):.2f}")
-                with col2:
-                    st.metric("Institutional Score", f"{instrument_data.get('institutional_score', 0):.2f}")
-                with col3:
-                    st.metric("Gamma Score", f"{instrument_data.get('gamma_score', 0):.2f}")
-                with col4:
-                    st.metric("Combined Score", f"{instrument_data.get('combined_score', 0):.2f}")
-    
     else:
         st.info("No option chain data available. Please refresh analysis first.")
 
