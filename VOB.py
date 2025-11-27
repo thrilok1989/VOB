@@ -1005,8 +1005,8 @@ class VolumeOrderBlocks:
         return nearby_blocks
 
 # FIX 5: Add plotting function for VOB
-def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[Dict]) -> go.Figure:
-    """Plot Volume Order Blocks on candlestick chart"""
+def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[Dict], chart_id: str = "vob_chart") -> go.Figure:
+    """Plot Volume Order Blocks on candlestick chart with unique ID"""
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                        vertical_spacing=0.03, 
                        row_heights=[0.7, 0.3],
@@ -1022,7 +1022,7 @@ def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[
                  row=1, col=1)
     
     # Add bullish blocks
-    for block in bullish_blocks:
+    for i, block in enumerate(bullish_blocks):
         fig.add_hline(y=block['upper'], line_dash="dash", line_color="green", 
                      annotation_text=f"Bull Block", row=1, col=1)
         fig.add_hline(y=block['lower'], line_dash="dash", line_color="green", row=1, col=1)
@@ -1032,7 +1032,7 @@ def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[
                      fillcolor="green", opacity=0.1, line_width=0, row=1, col=1)
     
     # Add bearish blocks
-    for block in bearish_blocks:
+    for i, block in enumerate(bearish_blocks):
         fig.add_hline(y=block['upper'], line_dash="dash", line_color="red",
                      annotation_text=f"Bear Block", row=1, col=1)
         fig.add_hline(y=block['lower'], line_dash="dash", line_color="red", row=1, col=1)
@@ -1056,7 +1056,7 @@ def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[
 
 
 # =============================================
-# GAMMA SEQUENCE ANALYZER
+# CORRECTED GAMMA SEQUENCE ANALYZER
 # =============================================
 
 class GammaSequenceAnalyzer:
@@ -1277,11 +1277,11 @@ def cached_gamma_analysis(_analyzer, df_chain: pd.DataFrame, spot_price: float) 
 
 
 # =============================================
-# INSTITUTIONAL OI ADVANCED ANALYZER
+# CORRECTED INSTITUTIONAL OI ADVANCED ANALYZER
 # =============================================
 
 class InstitutionalOIAdvanced:
-    """Advanced Institutional OI Analysis with Gamma Sequencing"""
+    """CORRECTED Advanced Institutional OI Analysis with Gamma Sequencing"""
     
     def __init__(self):
         self.master_table_rules = {
@@ -1300,8 +1300,56 @@ class InstitutionalOIAdvanced:
         }
         self.gamma_analyzer = GammaSequenceAnalyzer()
     
+    def calculate_net_institutional_bias(self, patterns: List[Dict]) -> float:
+        """CORRECTED: Calculate net institutional bias considering option type"""
+        if not patterns:
+            return 0.0
+        
+        net_score = 0.0
+        total_weight = 0.0
+        
+        for pattern in patterns:
+            option_type = pattern.get('option_type', '')
+            bias = pattern.get('bias', 'NEUTRAL')
+            confidence = pattern.get('confidence', 'LOW')
+            
+            # CORRECTED LOGIC: CE selling = bullish for market, PE selling = bearish for market
+            if option_type == 'CE':
+                multiplier = -1  # CE bearish = market bullish
+            elif option_type == 'PE':
+                multiplier = 1   # PE bearish = market bearish
+            else:
+                multiplier = 0
+            
+            # Convert bias to score
+            if 'BULL' in bias.upper():
+                bias_score = 1.0
+            elif 'BEAR' in bias.upper():
+                bias_score = -1.0
+            else:
+                bias_score = 0.0
+            
+            # Apply confidence multiplier
+            confidence_multipliers = {
+                'VERY_HIGH': 1.5,
+                'HIGH': 1.2,
+                'MEDIUM': 1.0,
+                'LOW': 0.7
+            }
+            weight = confidence_multipliers.get(confidence, 1.0)
+            
+            net_score += bias_score * multiplier * weight
+            total_weight += weight
+        
+        # Normalize to -100 to 100 range
+        if total_weight > 0:
+            normalized_score = (net_score / total_weight) * 100
+            return max(-100, min(100, normalized_score))
+        else:
+            return 0.0
+    
     def calculate_institutional_oi_bias(self, patterns: List[Dict]) -> Dict[str, Any]:
-        """Calculate comprehensive bias from institutional OI patterns"""
+        """CORRECTED: Calculate comprehensive bias from institutional OI patterns"""
         if not patterns:
             return {
                 'overall_bias': 'NEUTRAL',
@@ -1313,73 +1361,50 @@ class InstitutionalOIAdvanced:
                 'dominant_move': 'No patterns detected'
             }
         
-        # Count patterns by bias
+        # Use corrected net bias calculation
+        bias_score = self.calculate_net_institutional_bias(patterns)
+        
+        # Count patterns by type for display
         bullish_count = 0
         bearish_count = 0
         neutral_count = 0
-        total_score = 0
-        pattern_count = len(patterns)
-        
-        # Institution moves tracking
-        institution_moves = {}
         
         for pattern in patterns:
             bias = pattern.get('bias', 'NEUTRAL')
-            confidence = pattern.get('confidence', 'LOW')
-            institution_move = pattern.get('institution_move', 'Unknown')
-            
-            # Track institution moves
-            if institution_move not in institution_moves:
-                institution_moves[institution_move] = 0
-            institution_moves[institution_move] += 1
-            
-            # Calculate score based on bias and confidence
             if 'BULL' in bias.upper():
                 bullish_count += 1
-                score = 1.0
             elif 'BEAR' in bias.upper():
                 bearish_count += 1
-                score = -1.0
             else:
                 neutral_count += 1
-                score = 0.0
-            
-            # Apply confidence multiplier
-            confidence_multipliers = {
-                'VERY_HIGH': 1.5,
-                'HIGH': 1.2,
-                'MEDIUM': 1.0,
-                'LOW': 0.7
-            }
-            multiplier = confidence_multipliers.get(confidence, 1.0)
-            total_score += score * multiplier
-        
-        # Calculate average score
-        avg_score = total_score / pattern_count if pattern_count > 0 else 0
         
         # Determine overall bias
-        if avg_score > 0.2:
+        if bias_score > 15:
             overall_bias = "BULLISH"
-            bias_score = min(100, avg_score * 100)
-        elif avg_score < -0.2:
-            overall_bias = "BEARISH" 
-            bias_score = max(-100, avg_score * 100)
+        elif bias_score < -15:
+            overall_bias = "BEARISH"
         else:
             overall_bias = "NEUTRAL"
-            bias_score = 0
         
         # Determine confidence level
-        bias_strength = max(bullish_count, bearish_count) / pattern_count if pattern_count > 0 else 0
-        if bias_strength >= 0.7:
+        bias_strength = abs(bias_score)
+        if bias_strength >= 40:
             confidence_level = "VERY_HIGH"
-        elif bias_strength >= 0.6:
+        elif bias_strength >= 25:
             confidence_level = "HIGH"
-        elif bias_strength >= 0.5:
+        elif bias_strength >= 15:
             confidence_level = "MEDIUM"
         else:
             confidence_level = "LOW"
         
         # Find dominant institution move
+        institution_moves = {}
+        for pattern in patterns:
+            move = pattern.get('institution_move', 'Unknown')
+            if move not in institution_moves:
+                institution_moves[move] = 0
+            institution_moves[move] += 1
+        
         dominant_move = max(institution_moves.items(), key=lambda x: x[1])[0] if institution_moves else "No dominant move"
         
         return {
@@ -1388,11 +1413,11 @@ class InstitutionalOIAdvanced:
             'bullish_patterns': bullish_count,
             'bearish_patterns': bearish_count,
             'neutral_patterns': neutral_count,
-            'total_patterns': pattern_count,
+            'total_patterns': len(patterns),
             'confidence': confidence_level,
             'dominant_move': dominant_move,
             'institution_moves': institution_moves,
-            'bias_strength': bias_strength * 100
+            'bias_strength': bias_strength
         }
 
     def analyze_institutional_oi_pattern(self, option_type: str, oi_change: float, price_change: float, 
@@ -1441,9 +1466,9 @@ class InstitutionalOIAdvanced:
         }
     
     def analyze_atm_institutional_footprint(self, df_chain: pd.DataFrame, spot_price: float) -> Dict[str, Any]:
-        """Comprehensive institutional footprint analysis for ATM ±2 strikes"""
+        """CORRECTED: Comprehensive institutional footprint analysis for ATM ±2 strikes"""
         try:
-            # FIX 4: Normalize column names first
+            # Normalize column names first
             df_chain = normalize_chain_columns(df_chain)
             
             # Get ATM ±2 strikes
@@ -1468,8 +1493,6 @@ class InstitutionalOIAdvanced:
                 }
             
             patterns = []
-            total_score = 0
-            pattern_count = 0
             
             for _, strike_data in atm_strikes.iterrows():
                 strike = strike_data['strikePrice']
@@ -1487,11 +1510,6 @@ class InstitutionalOIAdvanced:
                     ce_pattern['strike'] = strike
                     ce_pattern['option_type'] = 'CE'
                     patterns.append(ce_pattern)
-                    
-                    # Convert bias to score
-                    bias_score = self._bias_to_score(ce_pattern['bias'], ce_pattern['confidence'])
-                    total_score += bias_score
-                    pattern_count += 1
                 
                 # Analyze PUT side
                 if pd.notna(strike_data.get('change_oi_pe')):
@@ -1506,34 +1524,16 @@ class InstitutionalOIAdvanced:
                     pe_pattern['strike'] = strike
                     pe_pattern['option_type'] = 'PE'
                     patterns.append(pe_pattern)
-                    
-                    # Convert bias to score
-                    bias_score = self._bias_to_score(pe_pattern['bias'], pe_pattern['confidence'])
-                    total_score += bias_score
-                    pattern_count += 1
             
-            # Calculate overall bias
-            if pattern_count > 0:
-                avg_score = total_score / pattern_count
-                if avg_score > 0.2:
-                    overall_bias = "BULLISH"
-                elif avg_score < -0.2:
-                    overall_bias = "BEARISH"
-                else:
-                    overall_bias = "NEUTRAL"
-            else:
-                overall_bias = "NEUTRAL"
-                avg_score = 0
-            
-            # Calculate comprehensive institutional bias
+            # Calculate comprehensive institutional bias using CORRECTED method
             institutional_bias_analysis = self.calculate_institutional_oi_bias(patterns)
             
             # Add Gamma sequencing analysis with caching
             gamma_analysis = cached_gamma_analysis(self.gamma_analyzer, df_chain, spot_price)
             
             return {
-                'overall_bias': overall_bias,
-                'score': avg_score * 100,  # Convert to percentage
+                'overall_bias': institutional_bias_analysis['overall_bias'],
+                'score': institutional_bias_analysis['bias_score'],
                 'patterns': patterns,
                 'institutional_bias_analysis': institutional_bias_analysis,
                 'gamma_analysis': gamma_analysis,
@@ -1661,16 +1661,29 @@ def normalize_chain_columns(df_chain: pd.DataFrame) -> pd.DataFrame:
 
 
 # =============================================
-# BREAKOUT & REVERSAL CONFIRMATION ANALYZER
+# CORRECTED BREAKOUT & REVERSAL CONFIRMATION ANALYZER
 # =============================================
 
 class BreakoutReversalAnalyzer:
-    """Institutional Breakout & Reversal Confirmation System"""
+    """CORRECTED Institutional Breakout & Reversal Confirmation System"""
     
     def __init__(self):
         self.breakout_threshold = 0.6  # 60% confidence for real breakout
         self.reversal_threshold = 0.7   # 70% confidence for reversal
         
+    def calculate_breakout_score(self, breakout_analysis: Dict) -> float:
+        """CORRECTED: Calculate directional breakout score (-100 to +100)"""
+        confidence = breakout_analysis.get('breakout_confidence', 0)
+        direction = breakout_analysis.get('direction', 'UNKNOWN')
+        
+        # Convert to directional score
+        if direction == "UP":
+            return confidence  # Positive for bullish breakout
+        elif direction == "DOWN":
+            return -confidence  # Negative for bearish breakout
+        else:
+            return 0  # Neutral for unknown direction
+    
     def analyze_breakout_confirmation(self, df_chain: pd.DataFrame, spot_price: float, 
                                     price_change: float, volume_change: float) -> Dict[str, Any]:
         """
@@ -1678,7 +1691,7 @@ class BreakoutReversalAnalyzer:
         Returns confidence score 0-100 for breakout validity
         """
         try:
-            # FIX 4: Normalize column names first
+            # Normalize column names first
             df_chain = normalize_chain_columns(df_chain)
             
             # Get ATM ±2 strikes for analysis
@@ -1763,7 +1776,7 @@ class BreakoutReversalAnalyzer:
         Returns confidence score 0-100 for reversal validity
         """
         try:
-            # FIX 4: Normalize column names first
+            # Normalize column names first
             df_chain = normalize_chain_columns(df_chain)
             
             strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0] if len(df_chain) > 1 else 50
@@ -2140,7 +2153,7 @@ class BreakoutReversalAnalyzer:
     def get_breakout_reversal_score(self, df_chain: pd.DataFrame, spot_price: float, 
                                   price_action: Dict) -> Dict[str, Any]:
         """
-        Combined breakout/reversal scoring system (0-100)
+        CORRECTED: Combined breakout/reversal scoring system (-100 to +100)
         """
         # Analyze breakout first
         price_change = price_action.get('price_change', 0)
@@ -2149,25 +2162,33 @@ class BreakoutReversalAnalyzer:
         breakout_analysis = self.analyze_breakout_confirmation(df_chain, spot_price, price_change, volume_change)
         reversal_analysis = self.analyze_reversal_confirmation(df_chain, spot_price, price_action)
         
-        # Determine overall market state
-        breakout_confidence = breakout_analysis.get('breakout_confidence', 0)
-        reversal_confidence = reversal_analysis.get('reversal_confidence', 0)
+        # CORRECTED: Use directional breakout score
+        breakout_score = self.calculate_breakout_score(breakout_analysis)
+        reversal_score = reversal_analysis.get('reversal_confidence', 0)
         
-        if breakout_confidence >= 60 and reversal_confidence < 50:
+        # Apply direction to reversal score
+        reversal_direction = reversal_analysis.get('direction', 'UNKNOWN')
+        if reversal_direction == "TOP_REVERSAL":
+            reversal_score = -reversal_score  # Bearish for top reversal
+        elif reversal_direction == "BOTTOM_REVERSAL":
+            reversal_score = reversal_score   # Bullish for bottom reversal
+        
+        # Determine overall market state
+        if abs(breakout_score) >= 60 and abs(reversal_score) < 50:
             market_state = "STRONG_BREAKOUT"
-            overall_score = breakout_confidence
-        elif reversal_confidence >= 70 and breakout_confidence < 40:
+            overall_score = breakout_score
+        elif abs(reversal_score) >= 70 and abs(breakout_score) < 40:
             market_state = "STRONG_REVERSAL"
-            overall_score = reversal_confidence
-        elif breakout_confidence >= 40 and reversal_confidence >= 50:
+            overall_score = reversal_score
+        elif abs(breakout_score) >= 40 and abs(reversal_score) >= 50:
             market_state = "CONFLICT_ZONE"
-            overall_score = (breakout_confidence + reversal_confidence) / 2
+            overall_score = (breakout_score + reversal_score) / 2
         else:
             market_state = "NEUTRAL_CHOPPY"
-            overall_score = max(breakout_confidence, reversal_confidence)
+            overall_score = max(breakout_score, reversal_score, key=abs)
         
         return {
-            'overall_score': overall_score,
+            'overall_score': overall_score,  # Now properly ranges from -100 to +100
             'market_state': market_state,
             'breakout_analysis': breakout_analysis,
             'reversal_analysis': reversal_analysis,
@@ -2179,14 +2200,18 @@ class BreakoutReversalAnalyzer:
         if market_state == "STRONG_BREAKOUT":
             if score >= 70:
                 return {'action': 'STRONG_BUY', 'confidence': 'HIGH', 'message': 'Real breakout confirmed'}
+            elif score <= -70:
+                return {'action': 'STRONG_SELL', 'confidence': 'HIGH', 'message': 'Real breakdown confirmed'}
             else:
-                return {'action': 'MODERATE_BUY', 'confidence': 'MEDIUM', 'message': 'Breakout likely'}
+                return {'action': 'MODERATE_BUY' if score > 0 else 'MODERATE_SELL', 'confidence': 'MEDIUM', 'message': 'Breakout likely'}
         
         elif market_state == "STRONG_REVERSAL":
             if score >= 75:
-                return {'action': 'STRONG_SELL', 'confidence': 'HIGH', 'message': 'Reversal confirmed'}
+                return {'action': 'STRONG_BUY', 'confidence': 'HIGH', 'message': 'Bottom reversal confirmed'}
+            elif score <= -75:
+                return {'action': 'STRONG_SELL', 'confidence': 'HIGH', 'message': 'Top reversal confirmed'}
             else:
-                return {'action': 'MODERATE_SELL', 'confidence': 'MEDIUM', 'message': 'Reversal likely'}
+                return {'action': 'MODERATE_BUY' if score > 0 else 'MODERATE_SELL', 'confidence': 'MEDIUM', 'message': 'Reversal likely'}
         
         elif market_state == "CONFLICT_ZONE":
             return {'action': 'WAIT', 'confidence': 'LOW', 'message': 'Market in conflict, wait for clarity'}
@@ -2196,11 +2221,11 @@ class BreakoutReversalAnalyzer:
 
 
 # =============================================
-# NSE OPTIONS ANALYZER (FROM SECOND APP)
+# CORRECTED NSE OPTIONS ANALYZER
 # =============================================
 
 class NSEOptionsAnalyzer:
-    """Integrated NSE Options Analyzer with complete ATM bias analysis"""
+    """CORRECTED Integrated NSE Options Analyzer with proper bias calculation"""
     
     def __init__(self):
         self.ist = pytz.timezone('Asia/Kolkata')
@@ -2319,14 +2344,14 @@ class NSEOptionsAnalyzer:
             return "Neutral"
 
     def final_verdict(self, score: float) -> str:
-        """Determine final verdict based on score"""
-        if score >= 4:
+        """CORRECTED: Determine final verdict based on normalized score"""
+        if score >= 25:
             return "Strong Bullish"
-        elif score >= 2:
+        elif score >= 10:
             return "Bullish"
-        elif score <= -4:
+        elif score <= -25:
             return "Strong Bearish"
-        elif score <= -2:
+        elif score <= -10:
             return "Bearish"
         else:
             return "Neutral"
@@ -2550,7 +2575,7 @@ class NSEOptionsAnalyzer:
             return "Neutral"
 
     def analyze_comprehensive_atm_bias(self, instrument: str) -> Optional[Dict[str, Any]]:
-        """Comprehensive ATM bias analysis with all metrics"""
+        """CORRECTED: Comprehensive ATM bias analysis with normalized scoring"""
         try:
             data = self.fetch_option_chain_data(instrument)
             if not data['success']:
@@ -2638,7 +2663,7 @@ class NSEOptionsAnalyzer:
             # Calculate detailed ATM bias breakdown
             detailed_atm_bias = self.calculate_detailed_atm_bias(df_atm, atm_strike, spot)
 
-            # Calculate comprehensive bias score
+            # CORRECTED: Calculate normalized bias score (-100 to +100)
             weights = {
                 "oi_bias": 2, "chg_oi_bias": 2, "volume_bias": 1, 
                 "iv_bias": 1, "premium_bias": 1, "delta_bias": 1,
@@ -2646,6 +2671,7 @@ class NSEOptionsAnalyzer:
             }
 
             total_score = 0
+            max_possible_score = sum(weights.values())
             
             # OI Bias
             oi_bias = "Bullish" if data['total_pe_oi'] > data['total_ce_oi'] else "Bearish"
@@ -2666,14 +2692,17 @@ class NSEOptionsAnalyzer:
             max_pain_bias = "Bullish" if distance_from_max_pain > 0 else "Bearish" if distance_from_max_pain < 0 else "Neutral"
             total_score += weights["max_pain_bias"] if max_pain_bias == "Bullish" else -weights["max_pain_bias"] if max_pain_bias == "Bearish" else 0
 
-            overall_bias = self.final_verdict(total_score)
+            # CORRECTED: Normalize score to -100 to +100 range
+            normalized_score = (total_score / max_possible_score) * 100
+
+            overall_bias = self.final_verdict(normalized_score)
 
             return {
                 'instrument': instrument,
                 'spot_price': spot,
                 'atm_strike': atm_strike,
                 'overall_bias': overall_bias,
-                'bias_score': total_score,
+                'bias_score': normalized_score,  # Now in -100 to +100 range
                 'pcr_oi': data['total_pe_oi'] / data['total_ce_oi'] if data['total_ce_oi'] > 0 else 0,
                 'pcr_change': abs(data['total_pe_change']) / abs(data['total_ce_change']) if data['total_ce_change'] != 0 else 0,
                 'total_ce_oi': data['total_ce_oi'],
@@ -2770,7 +2799,7 @@ class NSEOptionsAnalyzer:
             return {}
 
     def analyze_comprehensive_institutional_bias(self, instrument: str) -> Optional[Dict[str, Any]]:
-        """Enhanced analysis with institutional footprint and Gamma sequencing"""
+        """CORRECTED: Enhanced analysis with proper combined bias calculation"""
         try:
             # Get existing comprehensive analysis
             basic_analysis = self.analyze_comprehensive_atm_bias(instrument)
@@ -2801,7 +2830,7 @@ class NSEOptionsAnalyzer:
             df_pe = pd.DataFrame(puts)
             df_chain = pd.merge(df_ce, df_pe, on='strikePrice', suffixes=('_CE', '_PE')).sort_values('strikePrice')
             
-            # FIX 4: Normalize column names
+            # Normalize column names
             df_chain = normalize_chain_columns(df_chain)
             
             # Add institutional analysis
@@ -2819,28 +2848,28 @@ class NSEOptionsAnalyzer:
             
             breakout_analysis = self.breakout_analyzer.get_breakout_reversal_score(df_chain, spot, price_action)
             
-            # Combine analyses
+            # CORRECTED: Combine analyses with proper normalization
             enhanced_analysis = basic_analysis.copy()
             enhanced_analysis['institutional_analysis'] = institutional_analysis
             enhanced_analysis['breakout_reversal_analysis'] = breakout_analysis
             
-            # Calculate combined bias score
+            # CORRECTED: All scores are now in -100 to +100 range
             basic_score = basic_analysis.get('bias_score', 0)
             institutional_score = institutional_analysis.get('score', 0)
             gamma_score = institutional_analysis.get('gamma_analysis', {}).get('gamma_score', 0)
             breakout_score = breakout_analysis.get('overall_score', 0)
             
-            # Weighted combined score (25% basic, 30% institutional, 20% gamma, 25% breakout)
+            # CORRECTED: Weighted combined score (all components in same range)
             combined_score = (basic_score * 0.25) + (institutional_score * 0.3) + (gamma_score * 0.2) + (breakout_score * 0.25)
             
-            # Determine combined bias
-            if combined_score >= 2:
+            # CORRECTED: Determine combined bias with proper thresholds
+            if combined_score >= 25:
                 combined_bias = "Strong Bullish"
-            elif combined_score >= 0.5:
+            elif combined_score >= 10:
                 combined_bias = "Bullish"
-            elif combined_score <= -2:
+            elif combined_score <= -25:
                 combined_bias = "Strong Bearish"
-            elif combined_score <= -0.5:
+            elif combined_score <= -10:
                 combined_bias = "Bearish"
             else:
                 combined_bias = "Neutral"
@@ -2884,13 +2913,12 @@ class NSEOptionsAnalyzer:
 
 
 # =============================================
-# STREAMLIT APP UI (ENTRY) - ENHANCED
+# CORRECTED STREAMLIT APP UI
 # =============================================
 st.set_page_config(page_title="Bias Analysis Pro - Complete Dashboard", layout="wide", initial_sidebar_state="expanded")
-st.title("📊 Bias Analysis Pro — Complete Single-file App")
+st.title("📊 Bias Analysis Pro — CORRECTED Complete Single-file App")
 st.markdown(
-    "This Streamlit app wraps the **BiasAnalysisPro** engine (Pine → Python) and shows bias summary, "
-    "price action, option chain analysis, and bias tabulation."
+    "**CORRECTED VERSION** - Fixed bias calculation logic with proper normalization and institutional pattern analysis"
 )
 
 # Initialize all analyzers
@@ -2946,7 +2974,7 @@ if 'overall_nifty_score' not in st.session_state:
     st.session_state.overall_nifty_score = 0
 if 'atm_detailed_bias' not in st.session_state:
     st.session_state.atm_detailed_bias = None
-if 'vob_blocks' not in st.session_state:  # FIX 5: Store VOB blocks
+if 'vob_blocks' not in st.session_state:
     st.session_state.vob_blocks = {'bullish': [], 'bearish': []}
 if 'last_telegram_alert' not in st.session_state:
     st.session_state.last_telegram_alert = None
@@ -3028,7 +3056,7 @@ def run_complete_analysis():
         result = analysis.analyze_all_bias_indicators(symbol_input)
         st.session_state['last_result'] = result
 
-    # FIX 5: Run Volume Order Blocks analysis and store results
+    # Run Volume Order Blocks analysis and store results
     with st.spinner("Detecting Volume Order Blocks..."):
         if st.session_state['last_df'] is not None:
             df = st.session_state['last_df']
@@ -3039,7 +3067,7 @@ def run_complete_analysis():
             }
 
     # Run ENHANCED options analysis with institutional footprint
-    with st.spinner("Running institutional footprint analysis..."):
+    with st.spinner("Running CORRECTED institutional footprint analysis..."):
         enhanced_bias_data = []
         instruments = list(options_analyzer.NSE_INSTRUMENTS['indices'].keys())
         
@@ -3081,7 +3109,7 @@ def run_complete_analysis():
 
 # Function to calculate overall Nifty bias from all tabs
 def calculate_overall_nifty_bias():
-    """Calculate overall Nifty bias by combining all analysis methods"""
+    """CORRECTED: Calculate overall Nifty bias by combining all analysis methods"""
     bias_scores = []
     bias_weights = []
     
@@ -3091,30 +3119,22 @@ def calculate_overall_nifty_bias():
         tech_bias = tech_result.get('overall_bias', 'NEUTRAL')
         tech_score = tech_result.get('overall_score', 0)
         
-        if tech_bias == "BULLISH":
-            bias_scores.append(1.0)
-        elif tech_bias == "BEARISH":
-            bias_scores.append(-1.0)
-        else:
-            bias_scores.append(0.0)
+        # CORRECTED: Technical analysis score is already in -100 to +100 range
+        bias_scores.append(tech_score)
         bias_weights.append(0.20)
     
-    # 2. Enhanced Options Chain Bias (25% weight) - Reduced from 30%
+    # 2. Enhanced Options Chain Bias (25% weight)
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY':
-                # Use combined bias if available
-                options_bias = instrument_data.get('combined_bias', instrument_data.get('overall_bias', 'Neutral'))
+                # Use combined bias score which is now in -100 to +100 range
                 options_score = instrument_data.get('combined_score', instrument_data.get('bias_score', 0))
                 
-                # Normalize score to -1 to 1 range
-                normalized_score = max(-1, min(1, options_score / 4))
-                
-                bias_scores.append(normalized_score)
-                bias_weights.append(0.25)  # Reduced weight
+                bias_scores.append(options_score)
+                bias_weights.append(0.25)
                 break
     
-    # 3. INSTITUTIONAL OI BIAS (15% weight) - NEW COMPONENT
+    # 3. INSTITUTIONAL OI BIAS (15% weight) - CORRECTED
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY' and 'institutional_analysis' in instrument_data:
@@ -3122,70 +3142,42 @@ def calculate_overall_nifty_bias():
                 inst_bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
                 
                 if inst_bias_analysis:
-                    inst_bias = inst_bias_analysis.get('overall_bias', 'NEUTRAL')
                     inst_score = inst_bias_analysis.get('bias_score', 0)
                     
-                    # Normalize institutional bias score to -1 to 1 range
-                    if inst_bias == "BULLISH":
-                        inst_normalized = 1.0
-                    elif inst_bias == "BEARISH":
-                        inst_normalized = -1.0
-                    else:
-                        inst_normalized = 0.0
-                    
-                    # Apply confidence multiplier
-                    confidence = inst_bias_analysis.get('confidence', 'LOW')
-                    confidence_multipliers = {
-                        'VERY_HIGH': 1.2,
-                        'HIGH': 1.1,
-                        'MEDIUM': 1.0,
-                        'LOW': 0.8
-                    }
-                    multiplier = confidence_multipliers.get(confidence, 1.0)
-                    
-                    bias_scores.append(inst_normalized * multiplier)
-                    bias_weights.append(0.15)  # 15% weight for institutional OI
+                    # CORRECTED: Institutional score is now in -100 to +100 range
+                    bias_scores.append(inst_score)
+                    bias_weights.append(0.15)
                 break
     
-    # 4. ATM Detailed Bias (10% weight) - Reduced from 15%
+    # 4. ATM Detailed Bias (10% weight)
     if st.session_state.atm_detailed_bias:
         atm_data = st.session_state.atm_detailed_bias
-        atm_bias = atm_data['bias']
-        atm_score = atm_data['score']
+        atm_score = atm_data['score']  # Already in -100 to +100 range
         
-        if atm_bias == "BULLISH":
-            bias_scores.append(1.0)
-        elif atm_bias == "BEARISH":
-            bias_scores.append(-1.0)
-        else:
-            bias_scores.append(0.0)
-        bias_weights.append(0.10)  # Reduced weight
+        bias_scores.append(atm_score)
+        bias_weights.append(0.10)
     
-    # 5. Volume Order Blocks Bias (10% weight) - Reduced from 15%
+    # 5. Volume Order Blocks Bias (10% weight)
     if st.session_state.vob_blocks:
         bullish_blocks = st.session_state.vob_blocks['bullish']
         bearish_blocks = st.session_state.vob_blocks['bearish']
         
-        vob_bias_score = 0
-        if len(bullish_blocks) > len(bearish_blocks):
-            vob_bias_score = 1.0
-        elif len(bearish_blocks) > len(bullish_blocks):
-            vob_bias_score = -1.0
+        # Simple VOB score based on block count difference
+        vob_score = (len(bullish_blocks) - len(bearish_blocks)) * 10  # Scale to reasonable range
+        vob_score = max(-100, min(100, vob_score))  # Clamp to -100 to +100
         
-        bias_scores.append(vob_bias_score)
-        bias_weights.append(0.10)  # Reduced weight
+        bias_scores.append(vob_score)
+        bias_weights.append(0.10)
     
-    # 6. Breakout/Reversal Analysis (20% weight)
+    # 6. Breakout/Reversal Analysis (20% weight) - CORRECTED
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
                 breakout_data = instrument_data['breakout_reversal_analysis']
                 breakout_score = breakout_data.get('overall_score', 0)
                 
-                # Normalize breakout score to -1 to 1 range
-                normalized_breakout_score = max(-1, min(1, breakout_score / 100))
-                
-                bias_scores.append(normalized_breakout_score)
+                # CORRECTED: Breakout score is now in -100 to +100 range
+                bias_scores.append(breakout_score)
                 bias_weights.append(0.20)
                 break
     
@@ -3194,15 +3186,20 @@ def calculate_overall_nifty_bias():
         total_weight = sum(bias_weights)
         weighted_score = sum(score * weight for score, weight in zip(bias_scores, bias_weights)) / total_weight
         
-        if weighted_score > 0.1:
+        # CORRECTED: Determine bias with proper thresholds
+        if weighted_score > 25:
+            overall_bias = "STRONG BULLISH"
+        elif weighted_score > 10:
             overall_bias = "BULLISH"
-        elif weighted_score < -0.1:
+        elif weighted_score < -25:
+            overall_bias = "STRONG BEARISH"
+        elif weighted_score < -10:
             overall_bias = "BEARISH"
         else:
             overall_bias = "NEUTRAL"
         
         st.session_state.overall_nifty_bias = overall_bias
-        st.session_state.overall_nifty_score = weighted_score * 100
+        st.session_state.overall_nifty_score = weighted_score
 
 # Function to send Telegram alerts
 def send_telegram_alert():
@@ -3238,9 +3235,9 @@ def send_telegram_alert():
 
 # AUTO-RUN ANALYSIS ON STARTUP
 if not st.session_state.analysis_complete:
-    with st.spinner("🚀 Starting initial analysis..."):
+    with st.spinner("🚀 Starting CORRECTED initial analysis..."):
         if run_complete_analysis():
-            st.success("✅ Initial analysis complete!")
+            st.success("✅ CORRECTED initial analysis complete!")
             st.rerun()
 
 # Refresh button
@@ -3271,7 +3268,7 @@ if auto_refresh:
 st.sidebar.markdown("---")
 st.sidebar.header("Overall Nifty Bias")
 if st.session_state.overall_nifty_bias:
-    bias_color = "🟢" if st.session_state.overall_nifty_bias == "BULLISH" else "🔴" if st.session_state.overall_nifty_bias == "BEARISH" else "🟡"
+    bias_color = "🟢" if "BULL" in st.session_state.overall_nifty_bias.upper() else "🔴" if "BEAR" in st.session_state.overall_nifty_bias.upper() else "🟡"
     st.sidebar.metric(
         "NIFTY 50 Bias",
         f"{bias_color} {st.session_state.overall_nifty_bias}",
@@ -3287,9 +3284,9 @@ tabs = st.tabs([
     "Overall Bias", "Bias Summary", "Price Action", "Option Chain", "Bias Tabulation"
 ])
 
-# OVERALL BIAS TAB (NEW)
+# OVERALL BIAS TAB
 with tabs[0]:
-    st.header("🎯 Overall Nifty Bias Analysis")
+    st.header("🎯 CORRECTED Overall Nifty Bias Analysis")
     
     if not st.session_state.overall_nifty_bias:
         st.info("No analysis run yet. Analysis runs automatically every minute...")
@@ -3298,20 +3295,26 @@ with tabs[0]:
         
         with col2:
             # Display overall bias with color coding
-            if st.session_state.overall_nifty_bias == "BULLISH":
-                st.success(f"## 🟢 OVERALL NIFTY BIAS: BULLISH")
+            if "STRONG BULL" in st.session_state.overall_nifty_bias.upper():
+                st.success(f"## 🟢 {st.session_state.overall_nifty_bias}")
+                st.metric("Bias Score", f"{st.session_state.overall_nifty_score:.1f}", delta="Strong Bullish", delta_color="normal")
+            elif "BULL" in st.session_state.overall_nifty_bias.upper():
+                st.success(f"## 🟢 {st.session_state.overall_nifty_bias}")
                 st.metric("Bias Score", f"{st.session_state.overall_nifty_score:.1f}", delta="Bullish")
-            elif st.session_state.overall_nifty_bias == "BEARISH":
-                st.error(f"## 🔴 OVERALL NIFTY BIAS: BEARISH")
+            elif "STRONG BEAR" in st.session_state.overall_nifty_bias.upper():
+                st.error(f"## 🔴 {st.session_state.overall_nifty_bias}")
+                st.metric("Bias Score", f"{st.session_state.overall_nifty_score:.1f}", delta="Strong Bearish", delta_color="inverse")
+            elif "BEAR" in st.session_state.overall_nifty_bias.upper():
+                st.error(f"## 🔴 {st.session_state.overall_nifty_bias}")
                 st.metric("Bias Score", f"{st.session_state.overall_nifty_score:.1f}", delta="Bearish", delta_color="inverse")
             else:
-                st.warning(f"## 🟡 OVERALL NIFTY BIAS: NEUTRAL")
+                st.warning(f"## 🟡 {st.session_state.overall_nifty_bias}")
                 st.metric("Bias Score", f"{st.session_state.overall_nifty_score:.1f}")
         
         st.markdown("---")
         
         # Breakdown of bias components
-        st.subheader("Bias Components Breakdown")
+        st.subheader("CORRECTED Bias Components Breakdown")
         
         components_data = []
         
@@ -3335,11 +3338,11 @@ with tabs[0]:
                         'Bias': instrument_data.get('combined_bias', 'Neutral'),
                         'Score': instrument_data.get('combined_score', 0),
                         'Weight': '25%',
-                        'Confidence': 'High' if abs(instrument_data.get('combined_score', 0)) > 2 else 'Medium'
+                        'Confidence': 'High' if abs(instrument_data.get('combined_score', 0)) > 25 else 'Medium' if abs(instrument_data.get('combined_score', 0)) > 10 else 'Low'
                     })
                     break
         
-        # Institutional OI Bias Component - NEW
+        # Institutional OI Bias Component - CORRECTED
         if st.session_state.market_bias_data:
             for instrument_data in st.session_state.market_bias_data:
                 if instrument_data['instrument'] == 'NIFTY' and 'institutional_analysis' in instrument_data:
@@ -3371,7 +3374,7 @@ with tabs[0]:
         if st.session_state.vob_blocks:
             bullish_blocks = st.session_state.vob_blocks['bullish']
             bearish_blocks = st.session_state.vob_blocks['bearish']
-            vob_score = len(bullish_blocks) - len(bearish_blocks)
+            vob_score = (len(bullish_blocks) - len(bearish_blocks)) * 10
             vob_bias = "BULLISH" if vob_score > 0 else "BEARISH" if vob_score < 0 else "NEUTRAL"
             
             components_data.append({
@@ -3382,7 +3385,7 @@ with tabs[0]:
                 'Confidence': f"Blocks: {len(bullish_blocks)}B/{len(bearish_blocks)}S"
             })
         
-        # Breakout/Reversal Component
+        # Breakout/Reversal Component - CORRECTED
         if st.session_state.market_bias_data:
             for instrument_data in st.session_state.market_bias_data:
                 if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
@@ -3395,25 +3398,56 @@ with tabs[0]:
                         'Bias': market_state.replace('_', ' ').title(),
                         'Score': breakout_score,
                         'Weight': '20%',
-                        'Confidence': f"{breakout_score:.1f}%"
+                        'Confidence': f"{abs(breakout_score):.1f}%"
                     })
                     break
         
         if components_data:
             components_df = pd.DataFrame(components_data)
-            st.dataframe(components_df, use_container_width=True)
+            
+            # Add color formatting
+            def color_score(val):
+                if val > 25:
+                    return 'background-color: #90EE90; color: black'  # Light green
+                elif val > 10:
+                    return 'background-color: #C1FFC1; color: black'  # Lighter green
+                elif val < -25:
+                    return 'background-color: #FFB6C1; color: black'  # Light red
+                elif val < -10:
+                    return 'background-color: #FFD1DC; color: black'  # Lighter red
+                else:
+                    return 'background-color: #FFFFE0; color: black'  # Light yellow
+            
+            styled_df = components_df.style.applymap(color_score, subset=['Score'])
+            st.dataframe(styled_df, use_container_width=True)
         
         # Trading Recommendation
-        st.subheader("📈 Trading Recommendation")
+        st.subheader("📈 CORRECTED Trading Recommendation")
         
-        if st.session_state.overall_nifty_bias == "BULLISH":
+        if "STRONG BULL" in st.session_state.overall_nifty_bias.upper():
+            st.success("""
+            **Recommended Action:** STRONG LONG positions
+            - Aggressive buying on dips
+            - Strong support levels expected to hold
+            - Target higher resistance levels
+            - Consider options strategies for leverage
+            """)
+        elif "BULL" in st.session_state.overall_nifty_bias.upper():
             st.success("""
             **Recommended Action:** Consider LONG positions
             - Look for buying opportunities on dips
             - Support levels are likely to hold
             - Target resistance levels for profit booking
             """)
-        elif st.session_state.overall_nifty_bias == "BEARISH":
+        elif "STRONG BEAR" in st.session_state.overall_nifty_bias.upper():
+            st.error("""
+            **Recommended Action:** STRONG SHORT positions  
+            - Aggressive selling on rallies
+            - Strong resistance levels expected to hold
+            - Target lower support levels
+            - Consider put options for downside
+            """)
+        elif "BEAR" in st.session_state.overall_nifty_bias.upper():
             st.error("""
             **Recommended Action:** Consider SHORT positions  
             - Look for selling opportunities on rallies
@@ -3426,11 +3460,12 @@ with tabs[0]:
             - Market is in consolidation phase
             - Consider range-bound strategies
             - Wait for breakout confirmation
+            - Use smaller position sizes
             """)
 
 # BIAS SUMMARY TAB
 with tabs[1]:
-    st.subheader("Technical Bias Summary")
+    st.header("Technical Bias Summary")
     if st.session_state['last_result'] is None:
         st.info("No analysis run yet. Analysis runs automatically every minute...")
     else:
@@ -3480,13 +3515,13 @@ with tabs[2]:
         # Create price action chart with volume order blocks
         st.subheader("Price Chart with Volume Order Blocks")
         
-        # FIX 5: Use stored VOB blocks
+        # Use stored VOB blocks
         bullish_blocks = st.session_state.vob_blocks.get('bullish', [])
         bearish_blocks = st.session_state.vob_blocks.get('bearish', [])
         
-        # Create the chart using the plotting function
-        fig = plot_vob(df, bullish_blocks, bearish_blocks)
-        st.plotly_chart(fig, use_container_width=True)
+        # Create the chart using the plotting function with unique ID
+        fig = plot_vob(df, bullish_blocks, bearish_blocks, chart_id="price_action_vob")
+        st.plotly_chart(fig, use_container_width=True, key="price_action_chart")
         
         # Volume Order Blocks Summary
         st.subheader("Volume Order Blocks Analysis")
@@ -3510,9 +3545,9 @@ with tabs[2]:
                 st.write(f"- Lower: ₹{latest_bearish['lower']:.2f}")
                 st.write(f"- Volume: {latest_bearish['volume']:,.0f}")
 
-# OPTION CHAIN TAB - ENHANCED WITH INSTITUTIONAL OI BIAS ANALYSIS
+# OPTION CHAIN TAB - CORRECTED WITH INSTITUTIONAL OI BIAS ANALYSIS
 with tabs[3]:
-    st.header("📊 NSE Options Chain Analysis - Institutional Footprint")
+    st.header("📊 CORRECTED NSE Options Chain Analysis")
     
     if st.session_state.last_bias_update:
         st.write(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')} IST")
@@ -3521,7 +3556,7 @@ with tabs[3]:
         bias_data = st.session_state.market_bias_data
         
         # Display current market bias for each instrument
-        st.subheader("🎯 Current Market Bias Summary")
+        st.subheader("🎯 CORRECTED Market Bias Summary")
         cols = st.columns(len(bias_data))
         for idx, instrument_data in enumerate(bias_data):
             with cols[idx]:
@@ -3533,29 +3568,30 @@ with tabs[3]:
                 st.metric(
                     f"{instrument_data['instrument']}",
                     f"{bias_color} {bias_to_show}",
-                    f"Score: {score_to_show:.2f}"
+                    f"Score: {score_to_show:.1f}",
+                    key=f"bias_metric_{idx}"
                 )
         
         # Enhanced detailed analysis for each instrument
-        for instrument_data in bias_data:
-            with st.expander(f"🏦 {instrument_data['instrument']} - Institutional Footprint Analysis", expanded=True):
+        for instrument_idx, instrument_data in enumerate(bias_data):
+            with st.expander(f"🏦 {instrument_data['instrument']} - CORRECTED Institutional Analysis", expanded=True):
                 
                 # Basic Information
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Spot Price", f"₹{instrument_data['spot_price']:.2f}")
+                    st.metric("Spot Price", f"₹{instrument_data['spot_price']:.2f}", key=f"spot_{instrument_idx}")
                 with col2:
-                    st.metric("ATM Strike", f"₹{instrument_data['atm_strike']:.2f}")
+                    st.metric("ATM Strike", f"₹{instrument_data['atm_strike']:.2f}", key=f"atm_{instrument_idx}")
                 with col3:
-                    st.metric("PCR OI", f"{instrument_data['pcr_oi']:.2f}")
+                    st.metric("PCR OI", f"{instrument_data['pcr_oi']:.2f}", key=f"pcr_oi_{instrument_idx}")
                 with col4:
-                    st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}")
+                    st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}", key=f"pcr_change_{instrument_idx}")
                 
-                # INSTITUTIONAL OI PATTERNS ANALYSIS - ENHANCED SECTION
+                # CORRECTED INSTITUTIONAL OI PATTERNS ANALYSIS
                 if 'institutional_analysis' in instrument_data:
                     inst_analysis = instrument_data['institutional_analysis']
                     
-                    st.subheader("🔍 Institutional OI Patterns (ATM ±2 Strikes)")
+                    st.subheader("🔍 CORRECTED Institutional OI Patterns")
                     
                     # Display institutional bias analysis
                     bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
@@ -3563,56 +3599,64 @@ with tabs[3]:
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         bias_color = "🟢" if bias_analysis.get('overall_bias') == 'BULLISH' else "🔴" if bias_analysis.get('overall_bias') == 'BEARISH' else "🟡"
-                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}")
+                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}", key=f"inst_bias_{instrument_idx}")
                     with col2:
-                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}")
+                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}", key=f"inst_score_{instrument_idx}")
                     with col3:
-                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'))
+                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'), key=f"inst_conf_{instrument_idx}")
                     with col4:
-                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0))
+                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0), key=f"inst_patterns_{instrument_idx}")
                     
-                    # Pattern breakdown
+                    # CORRECTED: Pattern breakdown with proper interpretation
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Bullish Patterns", bias_analysis.get('bullish_patterns', 0))
+                        st.metric("Bullish Patterns", bias_analysis.get('bullish_patterns', 0), key=f"bull_patterns_{instrument_idx}")
                     with col2:
-                        st.metric("Bearish Patterns", bias_analysis.get('bearish_patterns', 0))
+                        st.metric("Bearish Patterns", bias_analysis.get('bearish_patterns', 0), key=f"bear_patterns_{instrument_idx}")
                     with col3:
-                        st.metric("Neutral Patterns", bias_analysis.get('neutral_patterns', 0))
+                        st.metric("Neutral Patterns", bias_analysis.get('neutral_patterns', 0), key=f"neutral_patterns_{instrument_idx}")
                     
                     # Dominant institution move
                     st.info(f"**Dominant Institutional Move:** {bias_analysis.get('dominant_move', 'Unknown')}")
                     
-                    # Display patterns in a table
+                    # Display patterns in a table with CORRECTED interpretation
                     if inst_analysis.get('patterns'):
                         patterns_df = pd.DataFrame(inst_analysis['patterns'])
                         
-                        # Add color coding for biases
-                        def color_bias(val):
-                            if 'BULL' in str(val).upper():
-                                return 'background-color: #90EE90'  # Light green
-                            elif 'BEAR' in str(val).upper():
-                                return 'background-color: #FFB6C1'  # Light red
+                        # CORRECTED: Add proper color coding considering option type
+                        def color_institutional_bias(row):
+                            option_type = row.get('option_type', '')
+                            bias = row.get('bias', 'NEUTRAL')
+                            
+                            # CE bearish = market bullish, PE bearish = market bearish
+                            if option_type == 'CE' and 'BEAR' in bias.upper():
+                                return 'background-color: #90EE90'  # Light green (bullish)
+                            elif option_type == 'PE' and 'BEAR' in bias.upper():
+                                return 'background-color: #FFB6C1'  # Light red (bearish)
+                            elif option_type == 'CE' and 'BULL' in bias.upper():
+                                return 'background-color: #FFB6C1'  # Light red (bearish)
+                            elif option_type == 'PE' and 'BULL' in bias.upper():
+                                return 'background-color: #90EE90'  # Light green (bullish)
                             else:
                                 return 'background-color: #FFFFE0'  # Light yellow
                         
-                        styled_df = patterns_df.style.applymap(color_bias, subset=['bias'])
-                        st.dataframe(styled_df, use_container_width=True)
+                        styled_df = patterns_df.style.apply(color_institutional_bias, axis=1)
+                        st.dataframe(styled_df, use_container_width=True, key=f"patterns_table_{instrument_idx}")
                     
-                    # Gamma Analysis - COMPREHENSIVE
+                    # Gamma Analysis - CORRECTED
                     gamma_analysis = inst_analysis.get('gamma_analysis', {})
-                    st.subheader("γ Gamma Sequencing Analysis")
+                    st.subheader("γ CORRECTED Gamma Sequencing Analysis")
                     
                     # Gamma Overview
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Gamma Bias", gamma_analysis.get('gamma_bias', 'NEUTRAL'))
+                        st.metric("Gamma Bias", gamma_analysis.get('gamma_bias', 'NEUTRAL'), key=f"gamma_bias_{instrument_idx}")
                     with col2:
-                        st.metric("Gamma Score", f"{gamma_analysis.get('gamma_score', 0):.1f}")
+                        st.metric("Gamma Score", f"{gamma_analysis.get('gamma_score', 0):.1f}", key=f"gamma_score_{instrument_idx}")
                     with col3:
-                        st.metric("Gamma Profile", gamma_analysis.get('profile', 'Unknown'))
+                        st.metric("Gamma Profile", gamma_analysis.get('profile', 'Unknown'), key=f"gamma_profile_{instrument_idx}")
                     with col4:
-                        st.metric("Total Gamma Exposure", f"{gamma_analysis.get('total_gamma_exposure', 0):.0f}")
+                        st.metric("Total Gamma Exposure", f"{gamma_analysis.get('total_gamma_exposure', 0):.0f}", key=f"gamma_exposure_{instrument_idx}")
                     
                     # Gamma Zones Analysis
                     if gamma_analysis.get('zones'):
@@ -3626,85 +3670,57 @@ with tabs[3]:
                                 'Strike Range': zone_info['strike_range']
                             })
                         zones_df = pd.DataFrame(zones_data)
-                        st.dataframe(zones_df, use_container_width=True)
-                    
-                    # Gamma Walls/Resistance Levels
-                    if gamma_analysis.get('walls'):
-                        st.subheader("🧱 Gamma Walls & Support Levels")
-                        walls_data = []
-                        for wall in gamma_analysis['walls']:
-                            walls_data.append({
-                                'Strike': f"₹{wall['strike']:.0f}",
-                                'Gamma Exposure': f"{wall['gamma_exposure']:.0f}",
-                                'Type': wall['type'],
-                                'Strength': wall['strength']
-                            })
-                        walls_df = pd.DataFrame(walls_data)
-                        st.dataframe(walls_df, use_container_width=True)
-                    
-                    # Gamma Sequences
-                    if gamma_analysis.get('sequence'):
-                        seq_analysis = gamma_analysis['sequence']
-                        st.subheader("📈 Gamma Sequence Patterns")
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("Positive Sequences", len(seq_analysis.get('positive_sequences', [])))
-                        with col2:
-                            st.metric("Negative Sequences", len(seq_analysis.get('negative_sequences', [])))
-                        with col3:
-                            st.metric("Longest Positive", seq_analysis.get('longest_positive_seq', 0))
-                        with col4:
-                            st.metric("Longest Negative", seq_analysis.get('longest_negative_seq', 0))
+                        st.dataframe(zones_df, use_container_width=True, key=f"zones_table_{instrument_idx}")
                 
                 # Advanced Metrics
-                st.subheader("📈 Advanced Option Metrics")
+                st.subheader("📈 CORRECTED Advanced Option Metrics")
                 comp_metrics = instrument_data.get('comprehensive_metrics', {})
                 
                 if comp_metrics:
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Synthetic Bias", comp_metrics.get('synthetic_bias', 'N/A'))
+                        st.metric("Synthetic Bias", comp_metrics.get('synthetic_bias', 'N/A'), key=f"synth_bias_{instrument_idx}")
                     with col2:
-                        st.metric("ATM Buildup", comp_metrics.get('atm_buildup', 'N/A'))
+                        st.metric("ATM Buildup", comp_metrics.get('atm_buildup', 'N/A'), key=f"atm_buildup_{instrument_idx}")
                     with col3:
-                        st.metric("Max Pain", f"₹{comp_metrics.get('max_pain_strike', 'N/A')}")
+                        st.metric("Max Pain", f"₹{comp_metrics.get('max_pain_strike', 'N/A')}", key=f"max_pain_{instrument_idx}")
                     with col4:
-                        st.metric("Vega Bias", comp_metrics.get('total_vega_bias', 'N/A'))
+                        st.metric("Vega Bias", comp_metrics.get('total_vega_bias', 'N/A'), key=f"vega_bias_{instrument_idx}")
                 
                 # Key Levels
                 st.subheader("🎯 Key Trading Levels")
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Call Resistance", f"₹{comp_metrics.get('call_resistance', 'N/A')}")
+                    st.metric("Call Resistance", f"₹{comp_metrics.get('call_resistance', 'N/A')}", key=f"call_res_{instrument_idx}")
                 with col2:
-                    st.metric("Put Support", f"₹{comp_metrics.get('put_support', 'N/A')}")
+                    st.metric("Put Support", f"₹{comp_metrics.get('put_support', 'N/A')}", key=f"put_support_{instrument_idx}")
                 with col3:
-                    st.metric("Distance from Max Pain", f"{comp_metrics.get('distance_from_max_pain', 0):.1f}")
+                    st.metric("Distance from Max Pain", f"{comp_metrics.get('distance_from_max_pain', 0):.1f}", key=f"dist_mp_{instrument_idx}")
                 
-                # Combined Bias Breakdown
-                st.subheader("⚖️ Combined Bias Breakdown")
+                # CORRECTED Combined Bias Breakdown
+                st.subheader("⚖️ CORRECTED Combined Bias Breakdown")
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Basic Score", f"{instrument_data.get('bias_score', 0):.2f}")
+                    st.metric("Basic Score", f"{instrument_data.get('bias_score', 0):.1f}", key=f"basic_score_{instrument_idx}")
                 with col2:
-                    st.metric("Institutional Score", f"{instrument_data.get('institutional_score', 0):.2f}")
+                    st.metric("Institutional Score", f"{instrument_data.get('institutional_score', 0):.1f}", key=f"inst_score2_{instrument_idx}")
                 with col3:
-                    st.metric("Gamma Score", f"{instrument_data.get('gamma_score', 0):.2f}")
+                    st.metric("Gamma Score", f"{instrument_data.get('gamma_score', 0):.1f}", key=f"gamma_score2_{instrument_idx}")
                 with col4:
-                    st.metric("Breakout Score", f"{instrument_data.get('breakout_score', 0):.2f}")
+                    st.metric("Breakout Score", f"{instrument_data.get('breakout_score', 0):.1f}", key=f"breakout_score_{instrument_idx}")
     
     else:
         st.info("No option chain data available. Analysis runs automatically every minute...")
 
-# BIAS TABULATION TAB - ENHANCED
+# BIAS TABULATION TAB - CORRECTED
 with tabs[4]:
-    st.header("📋 Comprehensive Bias Tabulation")
+    st.header("📋 CORRECTED Comprehensive Bias Tabulation")
     
     if not st.session_state.market_bias_data:
         st.info("No option chain data available. Analysis runs automatically every minute...")
     else:
-        for instrument_data in st.session_state.market_bias_data:
-            with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True):
+        for instrument_idx, instrument_data in enumerate(st.session_state.market_bias_data):
+            with st.expander(f"🎯 {instrument_data['instrument']} - CORRECTED Complete Bias Analysis", expanded=True):
                 
                 # Basic Information Table
                 st.subheader("📊 Basic Information")
@@ -3718,16 +3734,53 @@ with tabs[4]:
                         f"₹{instrument_data['spot_price']:.2f}",
                         f"₹{instrument_data['atm_strike']:.2f}",
                         instrument_data['overall_bias'],
-                        f"{instrument_data['bias_score']:.2f}",
+                        f"{instrument_data['bias_score']:.1f}",
                         f"{instrument_data['pcr_oi']:.2f}",
                         f"{instrument_data['pcr_change']:.2f}"
                     ]
                 })
-                st.dataframe(basic_info, use_container_width=True, hide_index=True)
+                st.dataframe(basic_info, use_container_width=True, hide_index=True, key=f"basic_info_{instrument_idx}")
+                
+                # CORRECTED Combined Analysis
+                st.subheader("⚖️ CORRECTED Combined Analysis")
+                combined_data = pd.DataFrame({
+                    'Component': ['Basic Options', 'Institutional OI', 'Gamma Sequencing', 'Breakout/Reversal', 'COMBINED'],
+                    'Bias': [
+                        instrument_data.get('overall_bias', 'NEUTRAL'),
+                        instrument_data.get('institutional_analysis', {}).get('institutional_bias_analysis', {}).get('overall_bias', 'NEUTRAL'),
+                        instrument_data.get('institutional_analysis', {}).get('gamma_analysis', {}).get('gamma_bias', 'NEUTRAL'),
+                        instrument_data.get('breakout_reversal_analysis', {}).get('market_state', 'NEUTRAL').replace('_', ' ').title(),
+                        instrument_data.get('combined_bias', 'NEUTRAL')
+                    ],
+                    'Score': [
+                        instrument_data.get('bias_score', 0),
+                        instrument_data.get('institutional_score', 0),
+                        instrument_data.get('gamma_score', 0),
+                        instrument_data.get('breakout_score', 0),
+                        instrument_data.get('combined_score', 0)
+                    ],
+                    'Weight': ['25%', '30%', '20%', '25%', '100%']
+                })
+                
+                # Add color formatting to combined analysis
+                def color_combined_score(val):
+                    if val > 25:
+                        return 'background-color: #90EE90; color: black'
+                    elif val > 10:
+                        return 'background-color: #C1FFC1; color: black'
+                    elif val < -25:
+                        return 'background-color: #FFB6C1; color: black'
+                    elif val < -10:
+                        return 'background-color: #FFD1DC; color: black'
+                    else:
+                        return 'background-color: #FFFFE0; color: black'
+                
+                styled_combined = combined_data.style.applymap(color_combined_score, subset=['Score'])
+                st.dataframe(styled_combined, use_container_width=True, key=f"combined_{instrument_idx}")
                 
                 # ATM Detailed Bias Summary
                 if 'detailed_atm_bias' in instrument_data and instrument_data['detailed_atm_bias']:
-                    st.subheader("🎯 ATM Detailed Bias Analysis")
+                    st.subheader("🎯 CORRECTED ATM Detailed Bias Analysis")
                     
                     detailed_bias = instrument_data['detailed_atm_bias']
                     
@@ -3738,11 +3791,11 @@ with tabs[4]:
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         bias_color = "🟢" if atm_bias == "BULLISH" else "🔴" if atm_bias == "BEARISH" else "🟡"
-                        st.metric("ATM Detailed Bias", f"{bias_color} {atm_bias}")
+                        st.metric("ATM Detailed Bias", f"{bias_color} {atm_bias}", key=f"atm_bias_{instrument_idx}")
                     with col2:
-                        st.metric("Bias Score", f"{atm_score:.1f}")
+                        st.metric("Bias Score", f"{atm_score:.1f}", key=f"atm_score_{instrument_idx}")
                     with col3:
-                        st.metric("Total Metrics", f"{len([k for k in detailed_bias.keys() if 'Bias' in k])}")
+                        st.metric("Total Metrics", f"{len([k for k in detailed_bias.keys() if 'Bias' in k])}", key=f"atm_metrics_{instrument_idx}")
                     
                     # Create comprehensive table for detailed bias
                     st.subheader("🔍 Detailed Bias Metrics Breakdown")
@@ -3769,7 +3822,7 @@ with tabs[4]:
                                 return 'color: orange; font-weight: bold'
                         
                         styled_df = breakdown_df.style.applymap(color_bias, subset=['Value'])
-                        st.dataframe(styled_df, use_container_width=True)
+                        st.dataframe(styled_df, use_container_width=True, key=f"breakdown_table_{instrument_idx}")
                         
                         # Bias distribution
                         st.subheader("📊 Bias Distribution")
@@ -3778,9 +3831,9 @@ with tabs[4]:
                         neutral_count = len([b for b in bias_breakdown if b['Value'] == 'Neutral'])
                         
                         col1, col2, col3 = st.columns(3)
-                        col1.metric("Bullish Metrics", bull_count)
-                        col2.metric("Bearish Metrics", bear_count)
-                        col3.metric("Neutral Metrics", neutral_count)
+                        col1.metric("Bullish Metrics", bull_count, key=f"bull_count_{instrument_idx}")
+                        col2.metric("Bearish Metrics", bear_count, key=f"bear_count_{instrument_idx}")
+                        col3.metric("Neutral Metrics", neutral_count, key=f"neutral_count_{instrument_idx}")
                         
                         # Create bias distribution chart
                         fig = px.pie(
@@ -3790,11 +3843,11 @@ with tabs[4]:
                             color=['Bullish', 'Bearish', 'Neutral'],
                             color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444', 'Neutral': '#ffaa00'}
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, key=f"bias_pie_{instrument_idx}")
                 
-                # Institutional OI Bias Analysis - NEW SECTION
+                # CORRECTED Institutional OI Bias Analysis
                 if 'institutional_analysis' in instrument_data:
-                    st.subheader("🏦 Institutional OI Bias Analysis")
+                    st.subheader("🏦 CORRECTED Institutional OI Bias Analysis")
                     
                     inst_analysis = instrument_data['institutional_analysis']
                     bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
@@ -3803,35 +3856,47 @@ with tabs[4]:
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         bias_color = "🟢" if bias_analysis.get('overall_bias') == 'BULLISH' else "🔴" if bias_analysis.get('overall_bias') == 'BEARISH' else "🟡"
-                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}")
+                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}", key=f"inst_bias_tab_{instrument_idx}")
                     with col2:
-                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}")
+                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}", key=f"inst_score_tab_{instrument_idx}")
                     with col3:
-                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'))
+                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'), key=f"inst_conf_tab_{instrument_idx}")
                     with col4:
-                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0))
+                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0), key=f"inst_patterns_tab_{instrument_idx}")
                     
-                    # Pattern distribution
-                    st.subheader("📊 Institutional Pattern Distribution")
+                    # CORRECTED Pattern distribution with proper interpretation
+                    st.subheader("📊 CORRECTED Institutional Pattern Analysis")
                     pattern_data = {
-                        'Type': ['Bullish', 'Bearish', 'Neutral'],
-                        'Count': [
-                            bias_analysis.get('bullish_patterns', 0),
-                            bias_analysis.get('bearish_patterns', 0), 
-                            bias_analysis.get('neutral_patterns', 0)
-                        ]
+                        'Type': ['Bullish CE Patterns', 'Bearish CE Patterns', 'Bullish PE Patterns', 'Bearish PE Patterns'],
+                        'Count': [0, 0, 0, 0],
+                        'Market Impact': ['Bearish', 'Bullish', 'Bullish', 'Bearish']  # CORRECTED interpretation
                     }
+                    
+                    if inst_analysis.get('patterns'):
+                        for pattern in inst_analysis['patterns']:
+                            option_type = pattern.get('option_type', '')
+                            bias = pattern.get('bias', 'NEUTRAL')
+                            
+                            if option_type == 'CE' and 'BULL' in bias.upper():
+                                pattern_data['Count'][0] += 1
+                            elif option_type == 'CE' and 'BEAR' in bias.upper():
+                                pattern_data['Count'][1] += 1
+                            elif option_type == 'PE' and 'BULL' in bias.upper():
+                                pattern_data['Count'][2] += 1
+                            elif option_type == 'PE' and 'BEAR' in bias.upper():
+                                pattern_data['Count'][3] += 1
+                    
                     pattern_df = pd.DataFrame(pattern_data)
                     
                     fig_patterns = px.bar(
                         pattern_df, 
                         x='Type', 
                         y='Count',
-                        title="Institutional Pattern Distribution",
-                        color='Type',
-                        color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444', 'Neutral': '#ffaa00'}
+                        title="CORRECTED Institutional Pattern Impact",
+                        color='Market Impact',
+                        color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444'}
                     )
-                    st.plotly_chart(fig_patterns, use_container_width=True)
+                    st.plotly_chart(fig_patterns, use_container_width=True, key=f"pattern_bar_{instrument_idx}")
                     
                     # Institution moves breakdown
                     if bias_analysis.get('institution_moves'):
@@ -3844,34 +3909,19 @@ with tabs[4]:
                                 'Percentage': f"{(count / bias_analysis['total_patterns']) * 100:.1f}%"
                             })
                         moves_df = pd.DataFrame(moves_data)
-                        st.dataframe(moves_df, use_container_width=True)
-                
-                # Comprehensive Metrics Table
-                if 'comprehensive_metrics' in instrument_data and instrument_data['comprehensive_metrics']:
-                    st.subheader("🎯 Advanced Option Metrics")
-                    comp_metrics = instrument_data['comprehensive_metrics']
-                    
-                    comp_data = []
-                    for key, value in comp_metrics.items():
-                        if key not in ['total_vega', 'total_ce_vega_exp', 'total_pe_vega_exp']:
-                            comp_data.append([
-                                key.replace('_', ' ').title(),
-                                str(value) if not isinstance(value, (int, float)) else f"{value:.2f}"
-                            ])
-                    
-                    comp_df = pd.DataFrame(comp_data, columns=['Metric', 'Value'])
-                    st.dataframe(comp_df, use_container_width=True, hide_index=True)
+                        st.dataframe(moves_df, use_container_width=True, key=f"moves_table_{instrument_idx}")
 
 # Footer
 st.markdown("---")
-st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh, Overall Nifty Bias Analysis, and Institutional Breakout/Reversal Detection.")
+st.caption("✅ CORRECTED BiasAnalysisPro — Fixed bias calculation with proper normalization, institutional pattern interpretation, and directional breakout analysis.")
 st.caption("🔔 Telegram alerts sent when Technical Analysis, Options Chain, and ATM Detailed Bias are aligned (Bullish/Bearish)")
 
-# Display weights in sidebar
-st.sidebar.markdown("**Bias Weights:**")
+# Display CORRECTED weights in sidebar
+st.sidebar.markdown("**CORRECTED Bias Weights:**")
 st.sidebar.markdown("- Technical: 20%")
 st.sidebar.markdown("- Options Chain: 25%")
 st.sidebar.markdown("- Institutional OI: 15%")
 st.sidebar.markdown("- ATM Detailed: 10%")
 st.sidebar.markdown("- Volume Blocks: 10%")
 st.sidebar.markdown("- Breakout/Reversal: 20%")
+st.sidebar.markdown("**All scores normalized to -100 to +100 range**")
