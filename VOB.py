@@ -38,22 +38,17 @@ except ImportError:
 class TelegramNotifier:
     """Telegram notification system for bias alerts"""
     
-    def __init__(self):
-        # Get credentials from Streamlit secrets
-        self.bot_token = st.secrets.get("TELEGRAM", {}).get("BOT_TOKEN", "")
-        self.chat_id = st.secrets.get("TELEGRAM", {}).get("CHAT_ID", "")
+    def __init__(self, bot_token: str = None, chat_id: str = None):
+        self.bot_token = bot_token or st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+        self.chat_id = chat_id or st.secrets.get("TELEGRAM_CHAT_ID", "")
         self.last_alert_time = {}
         self.alert_cooldown = 300  # 5 minutes cooldown between same type alerts
-        
-    def is_configured(self) -> bool:
-        """Check if Telegram is properly configured"""
-        return bool(self.bot_token and self.chat_id)
         
     def send_message(self, message: str, alert_type: str = "INFO") -> bool:
         """Send message to Telegram"""
         try:
-            if not self.is_configured():
-                print("Telegram credentials not configured in secrets")
+            if not self.bot_token or not self.chat_id:
+                print("Telegram credentials not configured")
                 return False
             
             # Check cooldown
@@ -1300,101 +1295,6 @@ class InstitutionalOIAdvanced:
         }
         self.gamma_analyzer = GammaSequenceAnalyzer()
     
-    def calculate_institutional_oi_bias(self, patterns: List[Dict]) -> Dict[str, Any]:
-        """Calculate comprehensive bias from institutional OI patterns"""
-        if not patterns:
-            return {
-                'overall_bias': 'NEUTRAL',
-                'bias_score': 0,
-                'bullish_patterns': 0,
-                'bearish_patterns': 0,
-                'neutral_patterns': 0,
-                'confidence': 'LOW',
-                'dominant_move': 'No patterns detected'
-            }
-        
-        # Count patterns by bias
-        bullish_count = 0
-        bearish_count = 0
-        neutral_count = 0
-        total_score = 0
-        pattern_count = len(patterns)
-        
-        # Institution moves tracking
-        institution_moves = {}
-        
-        for pattern in patterns:
-            bias = pattern.get('bias', 'NEUTRAL')
-            confidence = pattern.get('confidence', 'LOW')
-            institution_move = pattern.get('institution_move', 'Unknown')
-            
-            # Track institution moves
-            if institution_move not in institution_moves:
-                institution_moves[institution_move] = 0
-            institution_moves[institution_move] += 1
-            
-            # Calculate score based on bias and confidence
-            if 'BULL' in bias.upper():
-                bullish_count += 1
-                score = 1.0
-            elif 'BEAR' in bias.upper():
-                bearish_count += 1
-                score = -1.0
-            else:
-                neutral_count += 1
-                score = 0.0
-            
-            # Apply confidence multiplier
-            confidence_multipliers = {
-                'VERY_HIGH': 1.5,
-                'HIGH': 1.2,
-                'MEDIUM': 1.0,
-                'LOW': 0.7
-            }
-            multiplier = confidence_multipliers.get(confidence, 1.0)
-            total_score += score * multiplier
-        
-        # Calculate average score
-        avg_score = total_score / pattern_count if pattern_count > 0 else 0
-        
-        # Determine overall bias
-        if avg_score > 0.2:
-            overall_bias = "BULLISH"
-            bias_score = min(100, avg_score * 100)
-        elif avg_score < -0.2:
-            overall_bias = "BEARISH" 
-            bias_score = max(-100, avg_score * 100)
-        else:
-            overall_bias = "NEUTRAL"
-            bias_score = 0
-        
-        # Determine confidence level
-        bias_strength = max(bullish_count, bearish_count) / pattern_count if pattern_count > 0 else 0
-        if bias_strength >= 0.7:
-            confidence_level = "VERY_HIGH"
-        elif bias_strength >= 0.6:
-            confidence_level = "HIGH"
-        elif bias_strength >= 0.5:
-            confidence_level = "MEDIUM"
-        else:
-            confidence_level = "LOW"
-        
-        # Find dominant institution move
-        dominant_move = max(institution_moves.items(), key=lambda x: x[1])[0] if institution_moves else "No dominant move"
-        
-        return {
-            'overall_bias': overall_bias,
-            'bias_score': bias_score,
-            'bullish_patterns': bullish_count,
-            'bearish_patterns': bearish_count,
-            'neutral_patterns': neutral_count,
-            'total_patterns': pattern_count,
-            'confidence': confidence_level,
-            'dominant_move': dominant_move,
-            'institution_moves': institution_moves,
-            'bias_strength': bias_strength * 100
-        }
-
     def analyze_institutional_oi_pattern(self, option_type: str, oi_change: float, price_change: float, 
                                        volume: float, iv_change: float, bid_ask_ratio: float) -> Dict:
         """Analyze institutional OI patterns based on master table rules"""
@@ -1452,20 +1352,7 @@ class InstitutionalOIAdvanced:
             atm_strikes = df_chain[abs(df_chain['strikePrice'] - spot_price) <= atm_range].copy()
             
             if atm_strikes.empty:
-                return {
-                    'overall_bias': 'NEUTRAL', 
-                    'score': 0, 
-                    'patterns': [],
-                    'institutional_bias_analysis': {
-                        'overall_bias': 'NEUTRAL',
-                        'bias_score': 0,
-                        'bullish_patterns': 0,
-                        'bearish_patterns': 0,
-                        'neutral_patterns': 0,
-                        'confidence': 'LOW',
-                        'dominant_move': 'No patterns detected'
-                    }
-                }
+                return {'overall_bias': 'NEUTRAL', 'score': 0, 'patterns': []}
             
             patterns = []
             total_score = 0
@@ -1485,7 +1372,6 @@ class InstitutionalOIAdvanced:
                         bid_ask_ratio=strike_data.get('bid_ce', 1) / max(1, strike_data.get('ask_ce', 1))
                     )
                     ce_pattern['strike'] = strike
-                    ce_pattern['option_type'] = 'CE'
                     patterns.append(ce_pattern)
                     
                     # Convert bias to score
@@ -1504,7 +1390,6 @@ class InstitutionalOIAdvanced:
                         bid_ask_ratio=strike_data.get('bid_pe', 1) / max(1, strike_data.get('ask_pe', 1))
                     )
                     pe_pattern['strike'] = strike
-                    pe_pattern['option_type'] = 'PE'
                     patterns.append(pe_pattern)
                     
                     # Convert bias to score
@@ -1525,9 +1410,6 @@ class InstitutionalOIAdvanced:
                 overall_bias = "NEUTRAL"
                 avg_score = 0
             
-            # Calculate comprehensive institutional bias
-            institutional_bias_analysis = self.calculate_institutional_oi_bias(patterns)
-            
             # Add Gamma sequencing analysis with caching
             gamma_analysis = cached_gamma_analysis(self.gamma_analyzer, df_chain, spot_price)
             
@@ -1535,7 +1417,6 @@ class InstitutionalOIAdvanced:
                 'overall_bias': overall_bias,
                 'score': avg_score * 100,  # Convert to percentage
                 'patterns': patterns,
-                'institutional_bias_analysis': institutional_bias_analysis,
                 'gamma_analysis': gamma_analysis,
                 'strikes_analyzed': len(atm_strikes),
                 'total_patterns': len(patterns)
@@ -1543,20 +1424,7 @@ class InstitutionalOIAdvanced:
             
         except Exception as e:
             print(f"Error in institutional footprint analysis: {e}")
-            return {
-                'overall_bias': 'NEUTRAL', 
-                'score': 0, 
-                'patterns': [],
-                'institutional_bias_analysis': {
-                    'overall_bias': 'NEUTRAL',
-                    'bias_score': 0,
-                    'bullish_patterns': 0,
-                    'bearish_patterns': 0,
-                    'neutral_patterns': 0,
-                    'confidence': 'LOW',
-                    'dominant_move': 'Analysis error'
-                }
-            }
+            return {'overall_bias': 'NEUTRAL', 'score': 0, 'patterns': [], 'gamma_analysis': {}}
     
     def _bias_to_score(self, bias: str, confidence: str) -> float:
         """Convert bias and confidence to numerical score"""
@@ -2914,18 +2782,16 @@ refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, 
 
 # Telegram Configuration
 st.sidebar.header("🔔 Telegram Alerts")
-if telegram_notifier.is_configured():
-    st.sidebar.success("✅ Telegram configured via secrets!")
-    telegram_enabled = st.sidebar.checkbox("Enable Telegram Alerts", value=True)
-else:
-    st.sidebar.warning("⚠️ Telegram not configured")
-    st.sidebar.info("Add to .streamlit/secrets.toml:")
-    st.sidebar.code("""
-[TELEGRAM]
-BOT_TOKEN = "your_bot_token_here"
-CHAT_ID = "your_chat_id_here"
-""")
-    telegram_enabled = False
+telegram_enabled = st.sidebar.checkbox("Enable Telegram Alerts", value=True)
+if telegram_enabled:
+    bot_token = st.sidebar.text_input("Bot Token", type="password")
+    chat_id = st.sidebar.text_input("Chat ID")
+    if bot_token and chat_id:
+        telegram_notifier.bot_token = bot_token
+        telegram_notifier.chat_id = chat_id
+        st.sidebar.success("Telegram configured!")
+    else:
+        st.sidebar.warning("Enter Telegram credentials for alerts")
 
 # Shared state storage
 if 'last_df' not in st.session_state:
@@ -3099,7 +2965,7 @@ def calculate_overall_nifty_bias():
             bias_scores.append(0.0)
         bias_weights.append(0.20)
     
-    # 2. Enhanced Options Chain Bias (25% weight) - Reduced from 30%
+    # 2. Enhanced Options Chain Bias (30% weight)
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY':
@@ -3111,47 +2977,13 @@ def calculate_overall_nifty_bias():
                 normalized_score = max(-1, min(1, options_score / 4))
                 
                 bias_scores.append(normalized_score)
-                bias_weights.append(0.25)  # Reduced weight
+                bias_weights.append(0.30)
                 break
     
-    # 3. INSTITUTIONAL OI BIAS (15% weight) - NEW COMPONENT
-    if st.session_state.market_bias_data:
-        for instrument_data in st.session_state.market_bias_data:
-            if instrument_data['instrument'] == 'NIFTY' and 'institutional_analysis' in instrument_data:
-                inst_analysis = instrument_data['institutional_analysis']
-                inst_bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
-                
-                if inst_bias_analysis:
-                    inst_bias = inst_bias_analysis.get('overall_bias', 'NEUTRAL')
-                    inst_score = inst_bias_analysis.get('bias_score', 0)
-                    
-                    # Normalize institutional bias score to -1 to 1 range
-                    if inst_bias == "BULLISH":
-                        inst_normalized = 1.0
-                    elif inst_bias == "BEARISH":
-                        inst_normalized = -1.0
-                    else:
-                        inst_normalized = 0.0
-                    
-                    # Apply confidence multiplier
-                    confidence = inst_bias_analysis.get('confidence', 'LOW')
-                    confidence_multipliers = {
-                        'VERY_HIGH': 1.2,
-                        'HIGH': 1.1,
-                        'MEDIUM': 1.0,
-                        'LOW': 0.8
-                    }
-                    multiplier = confidence_multipliers.get(confidence, 1.0)
-                    
-                    bias_scores.append(inst_normalized * multiplier)
-                    bias_weights.append(0.15)  # 15% weight for institutional OI
-                break
-    
-    # 4. ATM Detailed Bias (10% weight) - Reduced from 15%
+    # 3. ATM Detailed Bias (15% weight)
     if st.session_state.atm_detailed_bias:
-        atm_data = st.session_state.atm_detailed_bias
-        atm_bias = atm_data['bias']
-        atm_score = atm_data['score']
+        atm_bias = st.session_state.atm_detailed_bias['bias']
+        atm_score = st.session_state.atm_detailed_bias['score']
         
         if atm_bias == "BULLISH":
             bias_scores.append(1.0)
@@ -3159,9 +2991,9 @@ def calculate_overall_nifty_bias():
             bias_scores.append(-1.0)
         else:
             bias_scores.append(0.0)
-        bias_weights.append(0.10)  # Reduced weight
+        bias_weights.append(0.15)
     
-    # 5. Volume Order Blocks Bias (10% weight) - Reduced from 15%
+    # 4. Volume Order Blocks Bias (15% weight)
     if st.session_state.vob_blocks:
         bullish_blocks = st.session_state.vob_blocks['bullish']
         bearish_blocks = st.session_state.vob_blocks['bearish']
@@ -3173,9 +3005,9 @@ def calculate_overall_nifty_bias():
             vob_bias_score = -1.0
         
         bias_scores.append(vob_bias_score)
-        bias_weights.append(0.10)  # Reduced weight
+        bias_weights.append(0.15)
     
-    # 6. Breakout/Reversal Analysis (20% weight)
+    # 5. Breakout/Reversal Analysis (20% weight) - NEW
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
@@ -3334,26 +3166,9 @@ with tabs[0]:
                         'Component': 'Options Chain Overall',
                         'Bias': instrument_data.get('combined_bias', 'Neutral'),
                         'Score': instrument_data.get('combined_score', 0),
-                        'Weight': '25%',
+                        'Weight': '30%',
                         'Confidence': 'High' if abs(instrument_data.get('combined_score', 0)) > 2 else 'Medium'
                     })
-                    break
-        
-        # Institutional OI Bias Component - NEW
-        if st.session_state.market_bias_data:
-            for instrument_data in st.session_state.market_bias_data:
-                if instrument_data['instrument'] == 'NIFTY' and 'institutional_analysis' in instrument_data:
-                    inst_analysis = instrument_data['institutional_analysis']
-                    inst_bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
-                    
-                    if inst_bias_analysis:
-                        components_data.append({
-                            'Component': 'Institutional OI Patterns',
-                            'Bias': inst_bias_analysis.get('overall_bias', 'NEUTRAL'),
-                            'Score': inst_bias_analysis.get('bias_score', 0),
-                            'Weight': '15%',
-                            'Confidence': inst_bias_analysis.get('confidence', 'LOW')
-                        })
                     break
         
         # ATM Detailed Bias Component
@@ -3363,7 +3178,7 @@ with tabs[0]:
                 'Component': 'ATM Detailed Bias',
                 'Bias': atm_data['bias'],
                 'Score': atm_data['score'],
-                'Weight': '10%',
+                'Weight': '15%',
                 'Confidence': f"{abs(atm_data['score']):.1f}%"
             })
         
@@ -3378,11 +3193,11 @@ with tabs[0]:
                 'Component': 'Volume Order Blocks',
                 'Bias': vob_bias,
                 'Score': vob_score,
-                'Weight': '10%',
+                'Weight': '15%',
                 'Confidence': f"Blocks: {len(bullish_blocks)}B/{len(bearish_blocks)}S"
             })
         
-        # Breakout/Reversal Component
+        # Breakout/Reversal Component - NEW
         if st.session_state.market_bias_data:
             for instrument_data in st.session_state.market_bias_data:
                 if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
@@ -3510,7 +3325,7 @@ with tabs[2]:
                 st.write(f"- Lower: ₹{latest_bearish['lower']:.2f}")
                 st.write(f"- Volume: {latest_bearish['volume']:,.0f}")
 
-# OPTION CHAIN TAB - ENHANCED WITH INSTITUTIONAL OI BIAS ANALYSIS
+# OPTION CHAIN TAB - ENHANCED WITH BREAKOUT/REVERSAL ANALYSIS
 with tabs[3]:
     st.header("📊 NSE Options Chain Analysis - Institutional Footprint")
     
@@ -3551,53 +3366,62 @@ with tabs[3]:
                 with col4:
                     st.metric("PCR Δ OI", f"{instrument_data['pcr_change']:.2f}")
                 
-                # INSTITUTIONAL OI PATTERNS ANALYSIS - ENHANCED SECTION
+                # BREAKOUT & REVERSAL ANALYSIS - NEW SECTION
+                st.subheader("🔥 Breakout & Reversal Confirmation")
+                
+                if 'breakout_reversal_analysis' in instrument_data:
+                    breakout_data = instrument_data['breakout_reversal_analysis']
+                    
+                    # Display breakout analysis
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Breakout Score", f"{breakout_data['breakout_analysis'].get('breakout_confidence', 0):.1f}%")
+                    with col2:
+                        st.metric("Reversal Score", f"{breakout_data['reversal_analysis'].get('reversal_confidence', 0):.1f}%")
+                    with col3:
+                        st.metric("Overall Score", f"{breakout_data['overall_score']:.1f}")
+                    with col4:
+                        signal = breakout_data['trading_signal']
+                        signal_color = "🟢" if "BUY" in signal['action'] else "🔴" if "SELL" in signal['action'] else "🟡"
+                        st.metric("Trading Signal", f"{signal_color} {signal['action']}")
+                    
+                    # Display market state
+                    st.info(f"**Market State:** {breakout_data['market_state']} | **Message:** {signal['message']}")
+                    
+                    # Show breakout signals
+                    if breakout_data['breakout_analysis'].get('signals'):
+                        st.subheader("📈 Breakout Signals")
+                        for signal in breakout_data['breakout_analysis']['signals']:
+                            if "✅" in signal:
+                                st.success(signal)
+                            elif "❌" in signal:
+                                st.error(signal)
+                            else:
+                                st.warning(signal)
+                    
+                    # Show reversal signals
+                    if breakout_data['reversal_analysis'].get('signals'):
+                        st.subheader("🔄 Reversal Signals")
+                        for signal in breakout_data['reversal_analysis']['signals']:
+                            if "✅" in signal:
+                                st.success(signal)
+                            elif "❌" in signal:
+                                st.error(signal)
+                            else:
+                                st.warning(signal)
+                else:
+                    st.warning("Breakout/Reversal analysis not available for this instrument")
+                
+                # Institutional Analysis Section
                 if 'institutional_analysis' in instrument_data:
                     inst_analysis = instrument_data['institutional_analysis']
                     
                     st.subheader("🔍 Institutional OI Patterns (ATM ±2 Strikes)")
                     
-                    # Display institutional bias analysis
-                    bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        bias_color = "🟢" if bias_analysis.get('overall_bias') == 'BULLISH' else "🔴" if bias_analysis.get('overall_bias') == 'BEARISH' else "🟡"
-                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}")
-                    with col2:
-                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}")
-                    with col3:
-                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'))
-                    with col4:
-                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0))
-                    
-                    # Pattern breakdown
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Bullish Patterns", bias_analysis.get('bullish_patterns', 0))
-                    with col2:
-                        st.metric("Bearish Patterns", bias_analysis.get('bearish_patterns', 0))
-                    with col3:
-                        st.metric("Neutral Patterns", bias_analysis.get('neutral_patterns', 0))
-                    
-                    # Dominant institution move
-                    st.info(f"**Dominant Institutional Move:** {bias_analysis.get('dominant_move', 'Unknown')}")
-                    
                     # Display patterns in a table
                     if inst_analysis.get('patterns'):
                         patterns_df = pd.DataFrame(inst_analysis['patterns'])
-                        
-                        # Add color coding for biases
-                        def color_bias(val):
-                            if 'BULL' in str(val).upper():
-                                return 'background-color: #90EE90'  # Light green
-                            elif 'BEAR' in str(val).upper():
-                                return 'background-color: #FFB6C1'  # Light red
-                            else:
-                                return 'background-color: #FFFFE0'  # Light yellow
-                        
-                        styled_df = patterns_df.style.applymap(color_bias, subset=['bias'])
-                        st.dataframe(styled_df, use_container_width=True)
+                        st.dataframe(patterns_df, use_container_width=True)
                     
                     # Gamma Analysis - COMPREHENSIVE
                     gamma_analysis = inst_analysis.get('gamma_analysis', {})
@@ -3792,59 +3616,45 @@ with tabs[4]:
                         )
                         st.plotly_chart(fig, use_container_width=True)
                 
-                # Institutional OI Bias Analysis - NEW SECTION
-                if 'institutional_analysis' in instrument_data:
-                    st.subheader("🏦 Institutional OI Bias Analysis")
+                # Breakout/Reversal Analysis - NEW SECTION
+                if 'breakout_reversal_analysis' in instrument_data:
+                    st.subheader("🔥 Breakout & Reversal Analysis")
                     
-                    inst_analysis = instrument_data['institutional_analysis']
-                    bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
+                    breakout_data = instrument_data['breakout_reversal_analysis']
                     
-                    # Display institutional bias metrics
+                    # Display key metrics
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        bias_color = "🟢" if bias_analysis.get('overall_bias') == 'BULLISH' else "🔴" if bias_analysis.get('overall_bias') == 'BEARISH' else "🟡"
-                        st.metric("Institutional Bias", f"{bias_color} {bias_analysis.get('overall_bias', 'NEUTRAL')}")
+                        st.metric("Market State", breakout_data['market_state'])
                     with col2:
-                        st.metric("Bias Score", f"{bias_analysis.get('bias_score', 0):.1f}")
+                        st.metric("Overall Score", f"{breakout_data['overall_score']:.1f}")
                     with col3:
-                        st.metric("Confidence", bias_analysis.get('confidence', 'LOW'))
+                        signal = breakout_data['trading_signal']
+                        st.metric("Trading Signal", signal['action'])
                     with col4:
-                        st.metric("Patterns Found", bias_analysis.get('total_patterns', 0))
+                        st.metric("Confidence", signal['confidence'])
                     
-                    # Pattern distribution
-                    st.subheader("📊 Institutional Pattern Distribution")
-                    pattern_data = {
-                        'Type': ['Bullish', 'Bearish', 'Neutral'],
-                        'Count': [
-                            bias_analysis.get('bullish_patterns', 0),
-                            bias_analysis.get('bearish_patterns', 0), 
-                            bias_analysis.get('neutral_patterns', 0)
-                        ]
-                    }
-                    pattern_df = pd.DataFrame(pattern_data)
+                    # Display breakout analysis details
+                    st.subheader("📈 Breakout Analysis Details")
+                    breakout_analysis = breakout_data['breakout_analysis']
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Breakout Confidence", f"{breakout_analysis.get('breakout_confidence', 0):.1f}%")
+                    with col2:
+                        st.metric("Direction", breakout_analysis.get('direction', 'UNKNOWN'))
+                    with col3:
+                        st.metric("Breakout Type", breakout_analysis.get('breakout_type', 'UNKNOWN'))
                     
-                    fig_patterns = px.bar(
-                        pattern_df, 
-                        x='Type', 
-                        y='Count',
-                        title="Institutional Pattern Distribution",
-                        color='Type',
-                        color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444', 'Neutral': '#ffaa00'}
-                    )
-                    st.plotly_chart(fig_patterns, use_container_width=True)
-                    
-                    # Institution moves breakdown
-                    if bias_analysis.get('institution_moves'):
-                        st.subheader("🏛️ Institution Moves Breakdown")
-                        moves_data = []
-                        for move, count in bias_analysis['institution_moves'].items():
-                            moves_data.append({
-                                'Institution Move': move,
-                                'Count': count,
-                                'Percentage': f"{(count / bias_analysis['total_patterns']) * 100:.1f}%"
-                            })
-                        moves_df = pd.DataFrame(moves_data)
-                        st.dataframe(moves_df, use_container_width=True)
+                    # Display reversal analysis details
+                    st.subheader("🔄 Reversal Analysis Details")
+                    reversal_analysis = breakout_data['reversal_analysis']
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Reversal Confidence", f"{reversal_analysis.get('reversal_confidence', 0):.1f}%")
+                    with col2:
+                        st.metric("Direction", reversal_analysis.get('direction', 'UNKNOWN'))
+                    with col3:
+                        st.metric("Reversal Type", reversal_analysis.get('reversal_type', 'UNKNOWN'))
                 
                 # Comprehensive Metrics Table
                 if 'comprehensive_metrics' in instrument_data and instrument_data['comprehensive_metrics']:
@@ -3866,12 +3676,3 @@ with tabs[4]:
 st.markdown("---")
 st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh, Overall Nifty Bias Analysis, and Institutional Breakout/Reversal Detection.")
 st.caption("🔔 Telegram alerts sent when Technical Analysis, Options Chain, and ATM Detailed Bias are aligned (Bullish/Bearish)")
-
-# Display weights in sidebar
-st.sidebar.markdown("**Bias Weights:**")
-st.sidebar.markdown("- Technical: 20%")
-st.sidebar.markdown("- Options Chain: 25%")
-st.sidebar.markdown("- Institutional OI: 15%")
-st.sidebar.markdown("- ATM Detailed: 10%")
-st.sidebar.markdown("- Volume Blocks: 10%")
-st.sidebar.markdown("- Breakout/Reversal: 20%")
