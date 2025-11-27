@@ -31,6 +31,95 @@ except ImportError:
     print("Warning: Dhan API not available. Volume data may be missing for Indian indices.")
 
 
+# =============================================
+# TELEGRAM NOTIFICATION SYSTEM
+# =============================================
+
+class TelegramNotifier:
+    """Telegram notification system for bias alerts"""
+    
+    def __init__(self):
+        # Get credentials from Streamlit secrets
+        self.bot_token = st.secrets.get("TELEGRAM", {}).get("BOT_TOKEN", "")
+        self.chat_id = st.secrets.get("TELEGRAM", {}).get("CHAT_ID", "")
+        self.last_alert_time = {}
+        self.alert_cooldown = 300  # 5 minutes cooldown between same type alerts
+        
+    def is_configured(self) -> bool:
+        """Check if Telegram is properly configured"""
+        return bool(self.bot_token and self.chat_id)
+        
+    def send_message(self, message: str, alert_type: str = "INFO") -> bool:
+        """Send message to Telegram"""
+        try:
+            if not self.is_configured():
+                print("Telegram credentials not configured in secrets")
+                return False
+            
+            # Check cooldown
+            current_time = time.time()
+            if alert_type in self.last_alert_time:
+                if current_time - self.last_alert_time[alert_type] < self.alert_cooldown:
+                    print(f"Alert {alert_type} in cooldown")
+                    return False
+            
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            payload = {
+                'chat_id': self.chat_id,
+                'text': message,
+                'parse_mode': 'HTML'
+            }
+            
+            response = requests.post(url, json=payload, timeout=10)
+            if response.status_code == 200:
+                self.last_alert_time[alert_type] = current_time
+                print(f"✅ Telegram alert sent: {alert_type}")
+                return True
+            else:
+                print(f"❌ Telegram send failed: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Telegram error: {e}")
+            return False
+    
+    def send_bias_alert(self, technical_bias: str, options_bias: str, atm_bias: str, overall_bias: str, score: float):
+        """Send comprehensive bias alert"""
+        # Check if all three components are aligned
+        components = [technical_bias, options_bias, atm_bias]
+        bullish_count = sum(1 for bias in components if "BULL" in bias.upper())
+        bearish_count = sum(1 for bias in components if "BEAR" in bias.upper())
+        
+        if bullish_count >= 2 or bearish_count >= 2:
+            emoji = "🚀" if bullish_count >= 2 else "🔻"
+            alert_type = "STRONG_BULL" if bullish_count >= 2 else "STRONG_BEAR"
+            
+            message = f"""
+{emoji} <b>STRONG BIAS ALERT - NIFTY 50</b> {emoji}
+
+📊 <b>Component Analysis:</b>
+• Technical Analysis: <b>{technical_bias}</b>
+• Options Chain: <b>{options_bias}</b>  
+• ATM Detailed: <b>{atm_bias}</b>
+
+🎯 <b>Overall Bias:</b> <code>{overall_bias}</code>
+⭐ <b>Confidence Score:</b> <code>{score:.1f}/100</code>
+
+⏰ <b>Time:</b> {datetime.now(IST).strftime('%H:%M:%S')}
+            
+💡 <b>Market Insight:</b>
+{'Bullish momentum detected across multiple timeframes' if bullish_count >= 2 else 'Bearish pressure building across indicators'}
+"""
+            
+            return self.send_message(message, alert_type)
+        
+        return False
+
+
+# Initialize Telegram Notifier
+telegram_notifier = TelegramNotifier()
+
+
 class BiasAnalysisPro:
     """
     Comprehensive Bias Analysis matching Pine Script indicator EXACTLY
@@ -654,7 +743,7 @@ class BiasAnalysisPro:
         })
 
         # =====================================================================
-        # CALCULATE OVERALL BIAS (MATCHING PINE SCRIPT LOGIC)
+        # CALCULATE OVERALL BIAS (MATCHING PINE SCRIPT LOGIC) - FIXED
         # =====================================================================
         fast_bull = 0
         fast_bear = 0
@@ -664,9 +753,10 @@ class BiasAnalysisPro:
         medium_bear = 0
         medium_total = 0
 
+        # FIX 1: Disable slow category completely
         slow_bull = 0
         slow_bear = 0
-        slow_total = 0
+        slow_total = 0  # Set to zero to avoid division by zero
 
         bullish_count = 0
         bearish_count = 0
@@ -679,16 +769,14 @@ class BiasAnalysisPro:
                     fast_bull += 1
                 elif bias['category'] == 'medium':
                     medium_bull += 1
-                elif bias['category'] == 'slow':
-                    slow_bull += 1
+                # Skip slow category
             elif 'BEARISH' in bias['bias']:
                 bearish_count += 1
                 if bias['category'] == 'fast':
                     fast_bear += 1
                 elif bias['category'] == 'medium':
                     medium_bear += 1
-                elif bias['category'] == 'slow':
-                    slow_bear += 1
+                # Skip slow category
             else:
                 neutral_count += 1
 
@@ -696,39 +784,41 @@ class BiasAnalysisPro:
                 fast_total += 1
             elif bias['category'] == 'medium':
                 medium_total += 1
-            elif bias['category'] == 'slow':
-                slow_total += 1
+            # Skip slow category counting
 
-        # Calculate percentages
+        # Calculate percentages - FIXED for slow category
         fast_bull_pct = (fast_bull / fast_total) * 100 if fast_total > 0 else 0
         fast_bear_pct = (fast_bear / fast_total) * 100 if fast_total > 0 else 0
 
         medium_bull_pct = (medium_bull / medium_total) * 100 if medium_total > 0 else 0
         medium_bear_pct = (medium_bear / medium_total) * 100 if medium_total > 0 else 0
 
-        slow_bull_pct = (slow_bull / slow_total) * 100 if slow_total > 0 else 0
-        slow_bear_pct = (slow_bear / slow_total) * 100 if slow_total > 0 else 0
+        # FIX 1: Set slow percentages to 0 since we disabled slow indicators
+        slow_bull_pct = 0
+        slow_bear_pct = 0
 
         # Adaptive weighting (matching Pine Script)
-        # Check for divergence
+        # Check for divergence - FIXED for slow category
         divergence_threshold = self.config['divergence_threshold']
+        # Since slow_bull_pct is 0, divergence won't trigger incorrectly
         bullish_divergence = slow_bull_pct >= 66 and fast_bear_pct >= divergence_threshold
         bearish_divergence = slow_bear_pct >= 66 and fast_bull_pct >= divergence_threshold
         divergence_detected = bullish_divergence or bearish_divergence
 
-        # Determine mode
-        if divergence_detected:
+        # Determine mode - FIXED: Always use normal mode since slow indicators disabled
+        if divergence_detected and slow_total > 0:  # Only if we had slow indicators
             fast_weight = self.config['reversal_fast_weight']
             medium_weight = self.config['reversal_medium_weight']
             slow_weight = self.config['reversal_slow_weight']
             mode = "REVERSAL"
         else:
+            # Use normal weights, ignore slow weight
             fast_weight = self.config['normal_fast_weight']
             medium_weight = self.config['normal_medium_weight']
-            slow_weight = self.config['normal_slow_weight']
+            slow_weight = 0  # FIX: Set slow weight to 0 since no slow indicators
             mode = "NORMAL"
 
-        # Calculate weighted scores
+        # Calculate weighted scores - FIXED: Exclude slow category
         bullish_signals = (fast_bull * fast_weight) + (medium_bull * medium_weight) + (slow_bull * slow_weight)
         bearish_signals = (fast_bear * fast_weight) + (medium_bear * medium_weight) + (slow_bear * slow_weight)
         total_signals = (fast_total * fast_weight) + (medium_total * medium_weight) + (slow_total * slow_weight)
@@ -913,6 +1003,56 @@ class VolumeOrderBlocks:
                 nearby_blocks.append(block)
         
         return nearby_blocks
+
+# FIX 5: Add plotting function for VOB
+def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[Dict]) -> go.Figure:
+    """Plot Volume Order Blocks on candlestick chart"""
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                       vertical_spacing=0.03, 
+                       row_heights=[0.7, 0.3],
+                       subplot_titles=('Price with Volume Order Blocks', 'Volume'))
+    
+    # Candlestick
+    fig.add_trace(go.Candlestick(x=df.index,
+                                open=df['Open'],
+                                high=df['High'],
+                                low=df['Low'],
+                                close=df['Close'],
+                                name='Price'),
+                 row=1, col=1)
+    
+    # Add bullish blocks
+    for block in bullish_blocks:
+        fig.add_hline(y=block['upper'], line_dash="dash", line_color="green", 
+                     annotation_text=f"Bull Block", row=1, col=1)
+        fig.add_hline(y=block['lower'], line_dash="dash", line_color="green", row=1, col=1)
+        # Fill between lines
+        fig.add_shape(type="rect", x0=block['index'], x1=df.index[-1],
+                     y0=block['lower'], y1=block['upper'],
+                     fillcolor="green", opacity=0.1, line_width=0, row=1, col=1)
+    
+    # Add bearish blocks
+    for block in bearish_blocks:
+        fig.add_hline(y=block['upper'], line_dash="dash", line_color="red",
+                     annotation_text=f"Bear Block", row=1, col=1)
+        fig.add_hline(y=block['lower'], line_dash="dash", line_color="red", row=1, col=1)
+        # Fill between lines
+        fig.add_shape(type="rect", x0=block['index'], x1=df.index[-1],
+                     y0=block['lower'], y1=block['upper'],
+                     fillcolor="red", opacity=0.1, line_width=0, row=1, col=1)
+    
+    # Volume
+    colors = ['green' if close >= open_ else 'red' 
+              for close, open_ in zip(df['Close'], df['Open'])]
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color=colors),
+                 row=2, col=1)
+    
+    fig.update_layout(xaxis_rangeslider_visible=False, 
+                     template='plotly_dark',
+                     height=600,
+                     showlegend=True)
+    
+    return fig
 
 
 # =============================================
@@ -1129,6 +1269,13 @@ class GammaSequenceAnalyzer:
         return max(-100, min(100, final_score))
 
 
+# FIX 3: Add caching for Gamma analysis
+@st.cache_data(show_spinner=False, ttl=300)  # Cache for 5 minutes
+def cached_gamma_analysis(_analyzer, df_chain: pd.DataFrame, spot_price: float) -> Dict[str, Any]:
+    """Cached Gamma analysis to improve performance"""
+    return _analyzer.analyze_gamma_sequence_bias(df_chain, spot_price)
+
+
 # =============================================
 # INSTITUTIONAL OI ADVANCED ANALYZER
 # =============================================
@@ -1201,8 +1348,11 @@ class InstitutionalOIAdvanced:
     def analyze_atm_institutional_footprint(self, df_chain: pd.DataFrame, spot_price: float) -> Dict[str, Any]:
         """Comprehensive institutional footprint analysis for ATM ±2 strikes"""
         try:
+            # FIX 4: Normalize column names first
+            df_chain = normalize_chain_columns(df_chain)
+            
             # Get ATM ±2 strikes
-            strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0]
+            strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0] if len(df_chain) > 1 else 50
             atm_range = strike_diff * 2
             atm_strikes = df_chain[abs(df_chain['strikePrice'] - spot_price) <= atm_range].copy()
             
@@ -1217,14 +1367,14 @@ class InstitutionalOIAdvanced:
                 strike = strike_data['strikePrice']
                 
                 # Analyze CALL side
-                if pd.notna(strike_data['changeinOpenInterest_CE']):
+                if pd.notna(strike_data.get('change_oi_ce')):
                     ce_pattern = self.analyze_institutional_oi_pattern(
                         option_type='CALL',
-                        oi_change=strike_data['changeinOpenInterest_CE'],
-                        price_change=strike_data.get('lastPrice_CE', 0) - strike_data.get('previousClose_CE', strike_data.get('lastPrice_CE', 0)),
-                        volume=strike_data.get('totalTradedVolume_CE', 0),
-                        iv_change=strike_data.get('impliedVolatility_CE', 0) - strike_data.get('previousIV_CE', strike_data.get('impliedVolatility_CE', 0)),
-                        bid_ask_ratio=strike_data.get('bidQty_CE', 1) / max(1, strike_data.get('askQty_CE', 1))
+                        oi_change=strike_data.get('change_oi_ce', 0),
+                        price_change=strike_data.get('ltp_ce', 0) - strike_data.get('previousClose_CE', strike_data.get('ltp_ce', 0)),
+                        volume=strike_data.get('volume_ce', 0),
+                        iv_change=strike_data.get('iv_ce', 0) - strike_data.get('previousIV_CE', strike_data.get('iv_ce', 0)),
+                        bid_ask_ratio=strike_data.get('bid_ce', 1) / max(1, strike_data.get('ask_ce', 1))
                     )
                     ce_pattern['strike'] = strike
                     patterns.append(ce_pattern)
@@ -1235,14 +1385,14 @@ class InstitutionalOIAdvanced:
                     pattern_count += 1
                 
                 # Analyze PUT side
-                if pd.notna(strike_data['changeinOpenInterest_PE']):
+                if pd.notna(strike_data.get('change_oi_pe')):
                     pe_pattern = self.analyze_institutional_oi_pattern(
                         option_type='PUT',
-                        oi_change=strike_data['changeinOpenInterest_PE'],
-                        price_change=strike_data.get('lastPrice_PE', 0) - strike_data.get('previousClose_PE', strike_data.get('lastPrice_PE', 0)),
-                        volume=strike_data.get('totalTradedVolume_PE', 0),
-                        iv_change=strike_data.get('impliedVolatility_PE', 0) - strike_data.get('previousIV_PE', strike_data.get('impliedVolatility_PE', 0)),
-                        bid_ask_ratio=strike_data.get('bidQty_PE', 1) / max(1, strike_data.get('askQty_PE', 1))
+                        oi_change=strike_data.get('change_oi_pe', 0),
+                        price_change=strike_data.get('ltp_pe', 0) - strike_data.get('previousClose_PE', strike_data.get('ltp_pe', 0)),
+                        volume=strike_data.get('volume_pe', 0),
+                        iv_change=strike_data.get('iv_pe', 0) - strike_data.get('previousIV_PE', strike_data.get('iv_pe', 0)),
+                        bid_ask_ratio=strike_data.get('bid_pe', 1) / max(1, strike_data.get('ask_pe', 1))
                     )
                     pe_pattern['strike'] = strike
                     patterns.append(pe_pattern)
@@ -1265,8 +1415,8 @@ class InstitutionalOIAdvanced:
                 overall_bias = "NEUTRAL"
                 avg_score = 0
             
-            # Add Gamma sequencing analysis
-            gamma_analysis = self.gamma_analyzer.analyze_gamma_sequence_bias(df_chain, spot_price)
+            # Add Gamma sequencing analysis with caching
+            gamma_analysis = cached_gamma_analysis(self.gamma_analyzer, df_chain, spot_price)
             
             return {
                 'overall_bias': overall_bias,
@@ -1304,6 +1454,85 @@ class InstitutionalOIAdvanced:
         return base_score * multiplier
 
 
+# FIX 4: Add column normalization function
+def normalize_chain_columns(df_chain: pd.DataFrame) -> pd.DataFrame:
+    """Normalize option chain column names to handle different API formats"""
+    df = df_chain.copy()
+    
+    # Define column mapping for different API formats
+    column_mapping = {
+        # Standardize to our expected column names
+        'changeinOpenInterest_CE': 'change_oi_ce',
+        'changeinOpenInterest_PE': 'change_oi_pe',
+        'openInterest_CE': 'oi_ce', 
+        'openInterest_PE': 'oi_pe',
+        'impliedVolatility_CE': 'iv_ce',
+        'impliedVolatility_PE': 'iv_pe',
+        'lastPrice_CE': 'ltp_ce',
+        'lastPrice_PE': 'ltp_pe',
+        'totalTradedVolume_CE': 'volume_ce',
+        'totalTradedVolume_PE': 'volume_pe',
+        'bidQty_CE': 'bid_ce',
+        'askQty_CE': 'ask_ce',
+        'bidQty_PE': 'bid_pe', 
+        'askQty_PE': 'ask_pe',
+        
+        # Alternative column names (common in different APIs)
+        'CE_changeinOpenInterest': 'change_oi_ce',
+        'PE_changeinOpenInterest': 'change_oi_pe',
+        'CE_openInterest': 'oi_ce',
+        'PE_openInterest': 'oi_pe',
+        'CE_impliedVolatility': 'iv_ce',
+        'PE_impliedVolatility': 'iv_pe',
+        'CE_lastPrice': 'ltp_ce',
+        'PE_lastPrice': 'ltp_pe',
+        'CE_totalTradedVolume': 'volume_ce',
+        'PE_totalTradedVolume': 'volume_pe',
+        'CE_bidQty': 'bid_ce',
+        'CE_askQty': 'ask_ce',
+        'PE_bidQty': 'bid_pe',
+        'PE_askQty': 'ask_pe',
+        
+        # Very short column names
+        'chg_oi_ce': 'change_oi_ce',
+        'chg_oi_pe': 'change_oi_pe',
+        'oi_ce': 'oi_ce',
+        'oi_pe': 'oi_pe',
+        'iv_ce': 'iv_ce', 
+        'iv_pe': 'iv_pe',
+        'ltp_ce': 'ltp_ce',
+        'ltp_pe': 'ltp_pe',
+        'vol_ce': 'volume_ce',
+        'vol_pe': 'volume_pe'
+    }
+    
+    # Rename columns that exist in the dataframe
+    existing_columns = set(df.columns)
+    rename_dict = {}
+    
+    for old_col, new_col in column_mapping.items():
+        if old_col in existing_columns:
+            rename_dict[old_col] = new_col
+    
+    if rename_dict:
+        df = df.rename(columns=rename_dict)
+    
+    # Create missing columns with default values
+    required_columns = ['change_oi_ce', 'change_oi_pe', 'oi_ce', 'oi_pe', 'iv_ce', 'iv_pe', 
+                       'ltp_ce', 'ltp_pe', 'volume_ce', 'volume_pe', 'bid_ce', 'ask_ce', 'bid_pe', 'ask_pe']
+    
+    for col in required_columns:
+        if col not in df.columns:
+            df[col] = 0  # Default to 0 for missing columns
+    
+    # Calculate Greeks if not present (simplified calculation)
+    if 'Gamma_CE' not in df.columns:
+        df['Gamma_CE'] = 0.01  # Simplified gamma value
+        df['Gamma_PE'] = 0.01
+    
+    return df
+
+
 # =============================================
 # BREAKOUT & REVERSAL CONFIRMATION ANALYZER
 # =============================================
@@ -1322,8 +1551,11 @@ class BreakoutReversalAnalyzer:
         Returns confidence score 0-100 for breakout validity
         """
         try:
+            # FIX 4: Normalize column names first
+            df_chain = normalize_chain_columns(df_chain)
+            
             # Get ATM ±2 strikes for analysis
-            strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0]
+            strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0] if len(df_chain) > 1 else 50
             atm_strikes = df_chain[abs(df_chain['strikePrice'] - spot_price) <= strike_diff * 2].copy()
             
             if atm_strikes.empty:
@@ -1404,7 +1636,10 @@ class BreakoutReversalAnalyzer:
         Returns confidence score 0-100 for reversal validity
         """
         try:
-            strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0]
+            # FIX 4: Normalize column names first
+            df_chain = normalize_chain_columns(df_chain)
+            
+            strike_diff = df_chain['strikePrice'].iloc[1] - df_chain['strikePrice'].iloc[0] if len(df_chain) > 1 else 50
             atm_strikes = df_chain[abs(df_chain['strikePrice'] - spot_price) <= strike_diff * 2].copy()
             
             if atm_strikes.empty:
@@ -1478,8 +1713,8 @@ class BreakoutReversalAnalyzer:
         score = 0
         
         # Calculate total OI changes
-        total_ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
-        total_pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+        total_ce_oi_change = atm_strikes['change_oi_ce'].sum()
+        total_pe_oi_change = atm_strikes['change_oi_pe'].sum()
         
         if is_upside:
             # Upside breakout: CE OI should decrease, PE OI should increase
@@ -1516,18 +1751,18 @@ class BreakoutReversalAnalyzer:
         score = 0
         
         # Get dominant strike
-        dominant_strike = atm_strikes.loc[atm_strikes['openInterest_CE'].idxmax()] if is_upside else atm_strikes.loc[atm_strikes['openInterest_PE'].idxmax()]
+        dominant_strike = atm_strikes.loc[atm_strikes['oi_ce'].idxmax()] if is_upside else atm_strikes.loc[atm_strikes['oi_pe'].idxmax()]
         
         if is_upside:
             # Clean upside: Price ↑, CE OI ↓
-            if dominant_strike['changeinOpenInterest_CE'] < 0:
+            if dominant_strike['change_oi_ce'] < 0:
                 signals.append("✅ Clean breakout: Price ↑ + CE OI ↓ (short covering)")
                 score += 20
             else:
                 signals.append("❌ Fake breakout: Price ↑ + CE OI ↑ (sellers building wall)")
         else:
             # Clean downside: Price ↓, PE OI ↓
-            if dominant_strike['changeinOpenInterest_PE'] < 0:
+            if dominant_strike['change_oi_pe'] < 0:
                 signals.append("✅ Clean breakdown: Price ↓ + PE OI ↓ (put covering)")
                 score += 20
             else:
@@ -1540,8 +1775,8 @@ class BreakoutReversalAnalyzer:
         signals = []
         score = 0
         
-        avg_ce_iv = atm_strikes['impliedVolatility_CE'].mean()
-        avg_pe_iv = atm_strikes['impliedVolatility_PE'].mean()
+        avg_ce_iv = atm_strikes['iv_ce'].mean()
+        avg_pe_iv = atm_strikes['iv_pe'].mean()
         
         if is_upside:
             # Upside: CE IV should rise slightly, PE IV stable/fall
@@ -1573,8 +1808,8 @@ class BreakoutReversalAnalyzer:
         signals = []
         score = 0
         
-        total_ce_oi = df_chain['openInterest_CE'].sum()
-        total_pe_oi = df_chain['openInterest_PE'].sum()
+        total_ce_oi = df_chain['oi_ce'].sum()
+        total_pe_oi = df_chain['oi_pe'].sum()
         pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
         
         if is_upside:
@@ -1604,8 +1839,8 @@ class BreakoutReversalAnalyzer:
         score = 0
         
         # Simple max pain approximation (you can enhance this)
-        max_ce_oi_strike = df_chain.loc[df_chain['openInterest_CE'].idxmax()]['strikePrice']
-        max_pe_oi_strike = df_chain.loc[df_chain['openInterest_PE'].idxmax()]['strikePrice']
+        max_ce_oi_strike = df_chain.loc[df_chain['oi_ce'].idxmax()]['strikePrice']
+        max_pe_oi_strike = df_chain.loc[df_chain['oi_pe'].idxmax()]['strikePrice']
         
         if is_upside:
             if max_pe_oi_strike > spot_price:
@@ -1629,8 +1864,8 @@ class BreakoutReversalAnalyzer:
         
         if is_upside:
             # Upside: CE OI should unwind, PE OI should build
-            ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
-            pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+            ce_oi_change = atm_strikes['change_oi_ce'].sum()
+            pe_oi_change = atm_strikes['change_oi_pe'].sum()
             
             if ce_oi_change < 0:
                 signals.append("✅ CE OI wall breaking (unwinding)")
@@ -1640,8 +1875,8 @@ class BreakoutReversalAnalyzer:
                 score += 5
         else:
             # Downside: PE OI should unwind, CE OI should build
-            ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
-            pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+            ce_oi_change = atm_strikes['change_oi_ce'].sum()
+            pe_oi_change = atm_strikes['change_oi_pe'].sum()
             
             if pe_oi_change < 0:
                 signals.append("✅ PE OI wall breaking (unwinding)")
@@ -1657,8 +1892,8 @@ class BreakoutReversalAnalyzer:
         signals = []
         score = 0
         
-        ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
-        pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+        ce_oi_change = atm_strikes['change_oi_ce'].sum()
+        pe_oi_change = atm_strikes['change_oi_pe'].sum()
         
         if is_top_reversal:
             # Top reversal: Price ↑ but CE OI ↑ (sellers loading)
@@ -1683,7 +1918,7 @@ class BreakoutReversalAnalyzer:
         score = 0
         
         # Check if IV is collapsing (you might want historical comparison)
-        avg_iv = (atm_strikes['impliedVolatility_CE'].mean() + atm_strikes['impliedVolatility_PE'].mean()) / 2
+        avg_iv = (atm_strikes['iv_ce'].mean() + atm_strikes['iv_pe'].mean()) / 2
         
         if avg_iv < 15:
             signals.append(f"✅ IV Crash: Avg IV {avg_iv:.1f}% (smart money exiting)")
@@ -1705,10 +1940,10 @@ class BreakoutReversalAnalyzer:
             # Find resistance strike with high CE OI
             above_spot = df_chain[df_chain['strikePrice'] > spot_price]
             if not above_spot.empty:
-                resistance_strike = above_spot.nlargest(1, 'openInterest_CE')
+                resistance_strike = above_spot.nlargest(1, 'oi_ce')
                 if not resistance_strike.empty:
                     strike = resistance_strike['strikePrice'].values[0]
-                    oi = resistance_strike['openInterest_CE'].values[0]
+                    oi = resistance_strike['oi_ce'].values[0]
                     if oi > 1000000:  # 1M+ OI indicates strong resistance
                         signals.append(f"✅ Writer Defense: ₹{strike:.0f} CE OI {oi:,.0f}")
                         score += 25
@@ -1716,10 +1951,10 @@ class BreakoutReversalAnalyzer:
             # Find support strike with high PE OI
             below_spot = df_chain[df_chain['strikePrice'] < spot_price]
             if not below_spot.empty:
-                support_strike = below_spot.nlargest(1, 'openInterest_PE')
+                support_strike = below_spot.nlargest(1, 'oi_pe')
                 if not support_strike.empty:
                     strike = support_strike['strikePrice'].values[0]
-                    oi = support_strike['openInterest_PE'].values[0]
+                    oi = support_strike['oi_pe'].values[0]
                     if oi > 1000000:  # 1M+ OI indicates strong support
                         signals.append(f"✅ Writer Defense: ₹{strike:.0f} PE OI {oi:,.0f}")
                         score += 25
@@ -1734,8 +1969,8 @@ class BreakoutReversalAnalyzer:
         signals = []
         score = 0
         
-        ce_oi_change = atm_strikes['changeinOpenInterest_CE'].sum()
-        pe_oi_change = atm_strikes['changeinOpenInterest_PE'].sum()
+        ce_oi_change = atm_strikes['change_oi_ce'].sum()
+        pe_oi_change = atm_strikes['change_oi_pe'].sum()
         
         if is_top_reversal:
             # Top reversal: New CE writing happening during uptrend
@@ -1759,8 +1994,8 @@ class BreakoutReversalAnalyzer:
         signals = []
         score = 0
         
-        total_ce_oi = df_chain['openInterest_CE'].sum()
-        total_pe_oi = df_chain['openInterest_PE'].sum()
+        total_ce_oi = df_chain['oi_ce'].sum()
+        total_pe_oi = df_chain['oi_pe'].sum()
         pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
         
         if pcr > 1.4:
@@ -2439,6 +2674,9 @@ class NSEOptionsAnalyzer:
             df_pe = pd.DataFrame(puts)
             df_chain = pd.merge(df_ce, df_pe, on='strikePrice', suffixes=('_CE', '_PE')).sort_values('strikePrice')
             
+            # FIX 4: Normalize column names
+            df_chain = normalize_chain_columns(df_chain)
+            
             # Add institutional analysis
             institutional_analysis = self.institutional_analyzer.analyze_atm_institutional_footprint(df_chain, spot)
             
@@ -2547,6 +2785,21 @@ st.sidebar.header("Auto-Refresh Settings")
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
 refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, max_value=10, value=1)
 
+# Telegram Configuration
+st.sidebar.header("🔔 Telegram Alerts")
+if telegram_notifier.is_configured():
+    st.sidebar.success("✅ Telegram configured via secrets!")
+    telegram_enabled = st.sidebar.checkbox("Enable Telegram Alerts", value=True)
+else:
+    st.sidebar.warning("⚠️ Telegram not configured")
+    st.sidebar.info("Add to .streamlit/secrets.toml:")
+    st.sidebar.code("""
+[TELEGRAM]
+BOT_TOKEN = "your_bot_token_here"
+CHAT_ID = "your_chat_id_here"
+""")
+    telegram_enabled = False
+
 # Shared state storage
 if 'last_df' not in st.session_state:
     st.session_state['last_df'] = None
@@ -2566,6 +2819,12 @@ if 'overall_nifty_score' not in st.session_state:
     st.session_state.overall_nifty_score = 0
 if 'atm_detailed_bias' not in st.session_state:
     st.session_state.atm_detailed_bias = None
+if 'vob_blocks' not in st.session_state:  # FIX 5: Store VOB blocks
+    st.session_state.vob_blocks = {'bullish': [], 'bearish': []}
+if 'last_telegram_alert' not in st.session_state:
+    st.session_state.last_telegram_alert = None
+if 'analysis_complete' not in st.session_state:
+    st.session_state.analysis_complete = False
 
 # Function to calculate ATM detailed bias score
 def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
@@ -2642,6 +2901,16 @@ def run_complete_analysis():
         result = analysis.analyze_all_bias_indicators(symbol_input)
         st.session_state['last_result'] = result
 
+    # FIX 5: Run Volume Order Blocks analysis and store results
+    with st.spinner("Detecting Volume Order Blocks..."):
+        if st.session_state['last_df'] is not None:
+            df = st.session_state['last_df']
+            bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
+            st.session_state.vob_blocks = {
+                'bullish': bullish_blocks,
+                'bearish': bearish_blocks
+            }
+
     # Run ENHANCED options analysis with institutional footprint
     with st.spinner("Running institutional footprint analysis..."):
         enhanced_bias_data = []
@@ -2677,6 +2946,10 @@ def run_complete_analysis():
     # Calculate overall Nifty bias
     calculate_overall_nifty_bias()
     
+    # Send Telegram alert if conditions met
+    send_telegram_alert()
+    
+    st.session_state.analysis_complete = True
     return True
 
 # Function to calculate overall Nifty bias from all tabs
@@ -2728,9 +3001,9 @@ def calculate_overall_nifty_bias():
         bias_weights.append(0.15)
     
     # 4. Volume Order Blocks Bias (15% weight)
-    if st.session_state['last_df'] is not None:
-        df = st.session_state['last_df']
-        bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
+    if st.session_state.vob_blocks:
+        bullish_blocks = st.session_state.vob_blocks['bullish']
+        bearish_blocks = st.session_state.vob_blocks['bearish']
         
         vob_bias_score = 0
         if len(bullish_blocks) > len(bearish_blocks):
@@ -2770,12 +3043,52 @@ def calculate_overall_nifty_bias():
         st.session_state.overall_nifty_bias = overall_bias
         st.session_state.overall_nifty_score = weighted_score * 100
 
+# Function to send Telegram alerts
+def send_telegram_alert():
+    """Send Telegram alert when all three key components are aligned"""
+    if not telegram_enabled:
+        return
+    
+    # Get the three key components
+    technical_bias = "NEUTRAL"
+    options_bias = "NEUTRAL" 
+    atm_bias = "NEUTRAL"
+    
+    if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
+        technical_bias = st.session_state['last_result'].get('overall_bias', 'NEUTRAL')
+    
+    if st.session_state.market_bias_data:
+        for instrument_data in st.session_state.market_bias_data:
+            if instrument_data['instrument'] == 'NIFTY':
+                options_bias = instrument_data.get('combined_bias', instrument_data.get('overall_bias', 'NEUTRAL'))
+                break
+    
+    if st.session_state.atm_detailed_bias:
+        atm_bias = st.session_state.atm_detailed_bias['bias']
+    
+    # Send alert through Telegram notifier
+    telegram_notifier.send_bias_alert(
+        technical_bias=technical_bias,
+        options_bias=options_bias,
+        atm_bias=atm_bias,
+        overall_bias=st.session_state.overall_nifty_bias,
+        score=st.session_state.overall_nifty_score
+    )
+
+# AUTO-RUN ANALYSIS ON STARTUP
+if not st.session_state.analysis_complete:
+    with st.spinner("🚀 Starting initial analysis..."):
+        if run_complete_analysis():
+            st.success("✅ Initial analysis complete!")
+            st.rerun()
+
 # Refresh button
 col1, col2 = st.sidebar.columns([2, 1])
 with col1:
     if st.button("🔄 Refresh Analysis", type="primary", use_container_width=True):
         if run_complete_analysis():
             st.sidebar.success("Analysis refreshed!")
+            st.rerun()
 with col2:
     st.sidebar.metric("Auto-Refresh", "ON" if auto_refresh else "OFF")
 
@@ -2804,6 +3117,10 @@ if st.session_state.overall_nifty_bias:
         f"Score: {st.session_state.overall_nifty_score:.1f}"
     )
 
+# Display last update time
+if st.session_state.last_bias_update:
+    st.sidebar.caption(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')} IST")
+
 # Enhanced tabs with selected features
 tabs = st.tabs([
     "Overall Bias", "Bias Summary", "Price Action", "Option Chain", "Bias Tabulation"
@@ -2814,7 +3131,7 @@ with tabs[0]:
     st.header("🎯 Overall Nifty Bias Analysis")
     
     if not st.session_state.overall_nifty_bias:
-        st.info("No analysis run yet. Click **Refresh Analysis** to get started.")
+        st.info("No analysis run yet. Analysis runs automatically every minute...")
     else:
         col1, col2, col3 = st.columns([1, 2, 1])
         
@@ -2873,9 +3190,9 @@ with tabs[0]:
             })
         
         # Volume Analysis Component
-        if st.session_state['last_df'] is not None:
-            df = st.session_state['last_df']
-            bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
+        if st.session_state.vob_blocks:
+            bullish_blocks = st.session_state.vob_blocks['bullish']
+            bearish_blocks = st.session_state.vob_blocks['bearish']
             vob_score = len(bullish_blocks) - len(bearish_blocks)
             vob_bias = "BULLISH" if vob_score > 0 else "BEARISH" if vob_score < 0 else "NEUTRAL"
             
@@ -2937,7 +3254,7 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Technical Bias Summary")
     if st.session_state['last_result'] is None:
-        st.info("No analysis run yet. Click **Refresh Analysis** to get started.")
+        st.info("No analysis run yet. Analysis runs automatically every minute...")
     else:
         res = st.session_state['last_result']
         if not res.get('success', False):
@@ -2978,84 +3295,19 @@ with tabs[2]:
     st.header("📈 Price Action Analysis")
     
     if st.session_state['last_df'] is None:
-        st.info("No data loaded yet. Click **Refresh Analysis** to get started.")
+        st.info("No data loaded yet. Analysis runs automatically every minute...")
     else:
         df = st.session_state['last_df']
         
         # Create price action chart with volume order blocks
         st.subheader("Price Chart with Volume Order Blocks")
         
-        # Detect volume order blocks
-        bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
+        # FIX 5: Use stored VOB blocks
+        bullish_blocks = st.session_state.vob_blocks.get('bullish', [])
+        bearish_blocks = st.session_state.vob_blocks.get('bearish', [])
         
-        # Create the chart
-        fig = make_subplots(
-            rows=2, cols=1,
-            row_heights=[0.7, 0.3],
-            subplot_titles=("Price with Volume Order Blocks", "Volume"),
-            vertical_spacing=0.05,
-            shared_xaxes=True
-        )
-        
-        # Candlestick chart
-        fig.add_trace(
-            go.Candlestick(
-                x=df.index,
-                open=df['Open'],
-                high=df['High'],
-                low=df['Low'],
-                close=df['Close'],
-                name='Price',
-                increasing_line_color='#00ff88',
-                decreasing_line_color='#ff4444'
-            ),
-            row=1, col=1
-        )
-        
-        # Add Volume Order Blocks
-        for block in bullish_blocks:
-            fig.add_shape(
-                type="rect",
-                x0=block['index'], y0=block['upper'],
-                x1=df.index[-1], y1=block['lower'],
-                fillcolor='rgba(38, 186, 159, 0.1)',
-                line=dict(color='#26ba9f', width=1),
-                row=1, col=1
-            )
-        
-        for block in bearish_blocks:
-            fig.add_shape(
-                type="rect",
-                x0=block['index'], y0=block['upper'],
-                x1=df.index[-1], y1=block['lower'],
-                fillcolor='rgba(102, 38, 186, 0.1)',
-                line=dict(color='#6626ba', width=1),
-                row=1, col=1
-            )
-        
-        # Volume bars
-        bar_colors = ['#00ff88' if row['Close'] >= row['Open'] else '#ff4444' for _, row in df.iterrows()]
-        
-        fig.add_trace(
-            go.Bar(
-                x=df.index,
-                y=df['Volume'],
-                name='Volume',
-                marker_color=bar_colors,
-                opacity=0.7
-            ),
-            row=2, col=1
-        )
-        
-        # Update layout
-        fig.update_layout(
-            xaxis_rangeslider_visible=False,
-            template='plotly_dark',
-            height=600,
-            showlegend=True,
-            margin=dict(l=0, r=0, t=50, b=0)
-        )
-        
+        # Create the chart using the plotting function
+        fig = plot_vob(df, bullish_blocks, bearish_blocks)
         st.plotly_chart(fig, use_container_width=True)
         
         # Volume Order Blocks Summary
@@ -3273,14 +3525,14 @@ with tabs[3]:
                     st.metric("Breakout Score", f"{instrument_data.get('breakout_score', 0):.2f}")
     
     else:
-        st.info("No option chain data available. Please refresh analysis first.")
+        st.info("No option chain data available. Analysis runs automatically every minute...")
 
 # BIAS TABULATION TAB - ENHANCED
 with tabs[4]:
     st.header("📋 Comprehensive Bias Tabulation")
     
     if not st.session_state.market_bias_data:
-        st.info("No option chain data available. Please refresh analysis first.")
+        st.info("No option chain data available. Analysis runs automatically every minute...")
     else:
         for instrument_data in st.session_state.market_bias_data:
             with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True):
@@ -3430,3 +3682,4 @@ with tabs[4]:
 # Footer
 st.markdown("---")
 st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh, Overall Nifty Bias Analysis, and Institutional Breakout/Reversal Detection.")
+st.caption("🔔 Telegram alerts sent when Technical Analysis, Options Chain, and ATM Detailed Bias are aligned (Bullish/Bearish)")
