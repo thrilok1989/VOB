@@ -3363,13 +3363,14 @@ def add_enhanced_market_data_tab():
                     st.subheader("🏆 Sector Leaders")
                     if rotation['leaders']:
                         for i, leader in enumerate(rotation['leaders']):
-                            # Use unique keys for dynamic content
+                            # st.write does NOT accept key parameter - remove it
                             st.write(f"**{leader['sector']}**: {leader['change_pct']:.2f}%")
                 
                 with col2:
                     st.subheader("📉 Sector Laggards")
                     if rotation['laggards']:
                         for i, laggard in enumerate(rotation['laggards']):
+                            # st.write does NOT accept key parameter - remove it
                             st.write(f"**{laggard['sector']}**: {laggard['change_pct']:.2f}%")
         
         # Tab 4: Intraday Timing
@@ -3423,7 +3424,6 @@ def add_enhanced_market_data_tab():
                     st.metric("India VIX", f"{vix_data['value']:.2f}", vix_data['sentiment'])
                 else:
                     st.error("Failed to fetch India VIX data")
-
 
 # ============================================================================
 # INTEGRATE INTO MAIN APP
