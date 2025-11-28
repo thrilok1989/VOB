@@ -3364,13 +3364,13 @@ def add_enhanced_market_data_tab():
                     if rotation['leaders']:
                         for i, leader in enumerate(rotation['leaders']):
                             # Use unique keys for dynamic content
-                            st.write(f"**{leader['sector']}**: {leader['change_pct']:.2f}%", key=f"leader_{i}")
+                            st.write(f"**{leader['sector']}**: {leader['change_pct']:.2f}%")
                 
                 with col2:
                     st.subheader("📉 Sector Laggards")
                     if rotation['laggards']:
                         for i, laggard in enumerate(rotation['laggards']):
-                            st.write(f"**{laggard['sector']}**: {laggard['change_pct']:.2f}%", key=f"laggard_{i}")
+                            st.write(f"**{laggard['sector']}**: {laggard['change_pct']:.2f}%")
         
         # Tab 4: Intraday Timing
         with market_tabs[3]:
@@ -3557,33 +3557,35 @@ def add_enhanced_market_data_tab():
                 st.dataframe(intermarket_df, use_container_width=True)
         
         # Tab 3: Sector Rotation
-        with market_tabs[2]:
-            st.subheader("Sector Rotation Analysis")
-            
-            if data['sector_rotation'].get('success'):
-                rotation = data['sector_rotation']
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Sector Breadth", f"{rotation['sector_breadth']:.1f}%")
-                with col2:
-                    st.metric("Rotation Pattern", rotation['rotation_pattern'])
-                with col3:
-                    st.metric("Sector Sentiment", rotation['sector_sentiment'])
-                
-                # Leaders and Laggards
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.subheader("🏆 Sector Leaders")
-                    if rotation['leaders']:
-                        for leader in rotation['leaders']:
-                            st.write(f"**{leader['sector']}**: {leader['change_pct']:.2f}%")
-                
-                with col2:
-                    st.subheader("📉 Sector Laggards")
-                    if rotation['laggards']:
-                        for laggard in rotation['laggards']:
-                            st.write(f"**{laggard['sector']}**: {laggard['change_pct']:.2f}%")
+    with market_tabs[2]:
+    st.subheader("Sector Rotation Analysis")
+    
+    if data['sector_rotation'].get('success'):
+        rotation = data['sector_rotation']
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Sector Breadth", f"{rotation['sector_breadth']:.1f}%")
+        with col2:
+            st.metric("Rotation Pattern", rotation['rotation_pattern'])
+        with col3:
+            st.metric("Sector Sentiment", rotation['sector_sentiment'])
+        
+        # Leaders and Laggards
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("🏆 Sector Leaders")
+            if rotation['leaders']:
+                for i, leader in enumerate(rotation['leaders']):
+                    # st.write does NOT accept key parameter - remove it
+                    st.write(f"**{leader['sector']}**: {leader['change_pct']:.2f}%")
+        
+        with col2:
+            st.subheader("📉 Sector Laggards")
+            if rotation['laggards']:
+                for i, laggard in enumerate(rotation['laggards']):
+                    # st.write does NOT accept key parameter - remove it
+                    st.write(f"**{laggard['sector']}**: {laggard['change_pct']:.2f}%")
         
         # Tab 4: Intraday Timing
         with market_tabs[3]:
