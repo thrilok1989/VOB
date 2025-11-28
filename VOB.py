@@ -3362,6 +3362,105 @@ def calculate_overall_nifty_bias():
     # 6. Breakout/Reversal Analysis (20% weight)
     if st.session_state.market_bias_data:
         for instrument_data in st.session_state.market_bias_data:
+# Function to calculate overall Nifty bias from all tabs
+def calculate_overall_nifty_bias():
+    """Calculate overall Nifty bias by combining all analysis methods"""
+    bias_scores = []
+    bias_weights = []
+    
+    # 1. Technical Analysis Bias (20% weight)
+    if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
+        tech_result = st.session_state['last_result']
+        tech_bias = tech_result.get('overall_bias', 'NEUTRAL')
+        tech_score = tech_result.get('overall_score', 0)
+        
+        if tech_bias == "BULLISH":
+            bias_scores.append(1.0)
+        elif tech_bias == "BEARISH":
+            bias_scores.append(-1.0)
+        else:
+            bias_scores.append(0.0)
+        bias_weights.append(0.20)
+    
+    # 2. Enhanced Options Chain Bias (25% weight) - Reduced from 30%
+    if st.session_state.market_bias_data:
+        for instrument_data in st.session_state.market_bias_data:
+            if instrument_data['instrument'] == 'NIFTY':
+                # Use combined bias if available
+                options_bias = instrument_data.get('combined_bias', instrument_data.get('overall_bias', 'Neutral'))
+                options_score = instrument_data.get('combined_score', instrument_data.get('bias_score', 0))
+                
+                # Normalize score to -1 to 1 range
+                normalized_score = max(-1, min(1, options_score / 4))
+                
+                bias_scores.append(normalized_score)
+                bias_weights.append(0.25)  # Reduced weight
+                break
+    
+    # 3. INSTITUTIONAL OI BIAS (15% weight) - NEW COMPONENT
+    if st.session_state.market_bias_data:
+        for instrument_data in st.session_state.market_bias_data:
+            if instrument_data['instrument'] == 'NIFTY' and 'institutional_analysis' in instrument_data:
+                inst_analysis = instrument_data['institutional_analysis']
+                inst_bias_analysis = inst_analysis.get('institutional_bias_analysis', {})
+                
+                if inst_bias_analysis:
+                    inst_bias = inst_bias_analysis.get('overall_bias', 'NEUTRAL')
+                    inst_score = inst_bias_analysis.get('bias_score', 0)
+                    
+                    # Normalize institutional bias score to -1 to 1 range
+                    if inst_bias == "BULLISH":
+                        inst_normalized = 1.0
+                    elif inst_bias == "BEARISH":
+                        inst_normalized = -1.0
+                    else:
+                        inst_normalized = 0.0
+                    
+                    # Apply confidence multiplier
+                    confidence = inst_bias_analysis.get('confidence', 'LOW')
+                    confidence_multipliers = {
+                        'VERY_HIGH': 1.2,
+                        'HIGH': 1.1,
+                        'MEDIUM': 1.0,
+                        'LOW': 0.8
+                    }
+                    multiplier = confidence_multipliers.get(confidence, 1.0)
+                    
+                    bias_scores.append(inst_normalized * multiplier)
+                    bias_weights.append(0.15)  # 15% weight for institutional OI
+                break
+    
+    # 4. ATM Detailed Bias (10% weight) - Reduced from 15%
+    if st.session_state.atm_detailed_bias:
+        atm_data = st.session_state.atm_detailed_bias
+        atm_bias = atm_data['bias']
+        atm_score = atm_data['score']
+        
+        if atm_bias == "BULLISH":
+            bias_scores.append(1.0)
+        elif atm_bias == "BEARISH":
+            bias_scores.append(-1.0)
+        else:
+            bias_scores.append(0.0)
+        bias_weights.append(0.10)  # Reduced weight
+    
+    # 5. Volume Order Blocks Bias (10% weight) - Reduced from 15%
+    if st.session_state.vob_blocks:
+        bullish_blocks = st.session_state.vob_blocks['bullish']
+        bearish_blocks = st.session_state.vob_blocks['bearish']
+        
+        vob_bias_score = 0
+        if len(bullish_blocks) > len(bearish_blocks):
+            vob_bias_score = 1.0
+        elif len(bearish_blocks) > len(bullish_blocks):
+            vob_bias_score = -1.0
+        
+        bias_scores.append(vob_bias_score)
+        bias_weights.append(0.10)  # Reduced weight
+    
+    # 6. Breakout/Reversal Analysis (15% weight) - Reduced from 20%
+    if st.session_state.market_bias_data:
+        for instrument_data in st.session_state.market_bias_data:
             if instrument_data['instrument'] == 'NIFTY' and 'breakout_reversal_analysis' in instrument_data:
                 breakout_data = instrument_data['breakout_reversal_analysis']
                 breakout_score = breakout_data.get('overall_score', 0)
@@ -3370,8 +3469,79 @@ def calculate_overall_nifty_bias():
                 normalized_breakout_score = max(-1, min(1, breakout_score / 100))
                 
                 bias_scores.append(normalized_breakout_score)
-                bias_weights.append(0.20)
+                bias_weights.append(0.15)  # Reduced weight
                 break
+    
+    # 7. TRADING SIGNALS BIAS (5% weight) - NEW COMPONENT
+    trading_signal_bias_score = 0
+    if st.session_state['last_df'] is not None:
+        try:
+            # Prepare data for signal engine
+            df_signal = st.session_state['last_df'].reset_index().rename(columns={
+                'Timestamp': 'time',
+                'Open': 'open',
+                'High': 'high', 
+                'Low': 'low',
+                'Close': 'close',
+                'Volume': 'volume'
+            })
+            
+            # Calculate VOB zones for consolidation detection
+            bullish_blocks = st.session_state.vob_blocks.get('bullish', [])
+            bearish_blocks = st.session_state.vob_blocks.get('bearish', [])
+            
+            vob_zones = {
+                'high': df_signal['high'].max() if not bullish_blocks else max([block['upper'] for block in bullish_blocks] + [df_signal['high'].max()]),
+                'low': df_signal['low'].min() if not bearish_blocks else min([block['lower'] for block in bearish_blocks] + [df_signal['low'].min()])
+            }
+            
+            # Get current bias from analysis
+            current_bias = "NEUTRAL"
+            if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
+                bias_result = st.session_state['last_result'].get('overall_bias', 'NEUTRAL')
+                if "BULL" in bias_result.upper():
+                    current_bias = "BULL"
+                elif "BEAR" in bias_result.upper():
+                    current_bias = "BEAR"
+            
+            # Multi-timeframe analysis
+            tf_analysis = {
+                "5m": process_timeframe("5m", df_signal)
+            }
+            
+            # Generate trading signal
+            signal = generate_signal(
+                df_signal, 
+                vob_zones, 
+                current_bias, 
+                tf_analysis,
+                telegram_notifier.bot_token if telegram_notifier.is_configured() else "",
+                telegram_notifier.chat_id if telegram_notifier.is_configured() else ""
+            )
+            
+            # Convert signal to bias score
+            if signal:
+                if "BUY" in signal:
+                    trading_signal_bias_score = 1.0
+                elif "SELL" in signal:
+                    trading_signal_bias_score = -1.0
+                elif "BREAKOUT_BUY" in signal:
+                    trading_signal_bias_score = 0.8
+                elif "BREAKDOWN_SELL" in signal:
+                    trading_signal_bias_score = -0.8
+                elif "REVERSAL_BUY" in signal:
+                    trading_signal_bias_score = 0.6
+                elif "REVERSAL_SELL" in signal:
+                    trading_signal_bias_score = -0.6
+            
+            bias_scores.append(trading_signal_bias_score)
+            bias_weights.append(0.05)  # 5% weight for trading signals
+            
+        except Exception as e:
+            print(f"Error calculating trading signal bias: {e}")
+            # Add neutral score if error occurs
+            bias_scores.append(0.0)
+            bias_weights.append(0.05)
     
     # Calculate weighted average
     if bias_scores and bias_weights:
@@ -3387,7 +3557,6 @@ def calculate_overall_nifty_bias():
         
         st.session_state.overall_nifty_bias = overall_bias
         st.session_state.overall_nifty_score = weighted_score * 100
-
 # Function to send Telegram alerts
 def send_telegram_alert():
     """Send Telegram alert when all three key components are aligned"""
