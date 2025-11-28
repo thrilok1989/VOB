@@ -370,11 +370,6 @@ class BiasAnalysisPro:
             'reversal_fast_weight': 5.0,
             'reversal_medium_weight': 3.0,
             'reversal_slow_weight': 2.0,
-
-            # REMOVED: Unused stocks configuration
-            # REMOVED: Unused volatility parameters  
-            # REMOVED: Unused OBV, Force Index, Price ROC
-            # REMOVED: Unused Market Breadth, Divergence, Choppiness
         }
 
     # DATA FETCHING (UNCHANGED)
@@ -616,7 +611,7 @@ class BiasAnalysisPro:
 
         return vob_bullish, vob_bearish, ema1.iloc[-1], ema2.iloc[-1]
 
-    # COMPREHENSIVE BIAS ANALYSIS (SIMPLIFIED)
+    # COMPREHENSIVE BIAS ANALYSIS (FIXED)
     def analyze_all_bias_indicators(self, symbol: str = "^NSEI") -> Dict:
         """Analyze all 8 bias indicators with simplified logic"""
         df = self.fetch_data(symbol, period='7d', interval='5m')
@@ -754,7 +749,7 @@ class BiasAnalysisPro:
             'category': 'fast'
         })
 
-        # CALCULATE OVERALL BIAS
+        # CALCULATE OVERALL BIAS - COMPLETELY SIMPLIFIED
         fast_bull = sum(1 for bias in bias_results if 'BULLISH' in bias['bias'] and bias['category'] == 'fast')
         fast_bear = sum(1 for bias in bias_results if 'BEARISH' in bias['bias'] and bias['category'] == 'fast')
         fast_total = sum(1 for bias in bias_results if bias['category'] == 'fast')
@@ -762,31 +757,13 @@ class BiasAnalysisPro:
         fast_bull_pct = (fast_bull / fast_total) * 100 if fast_total > 0 else 0
         fast_bear_pct = (fast_bear / fast_total) * 100 if fast_total > 0 else 0
 
-        # Disable slow category completely
-        slow_bull_pct = 0
-        slow_bear_pct = 0
-
-        # Adaptive weighting
-        divergence_threshold = self.config['divergence_threshold']
-        bullish_divergence = slow_bull_pct >= 66 and fast_bear_pct >= divergence_threshold
-        bearish_divergence = slow_bear_pct >= 66 and fast_bull_pct >= divergence_threshold
-        divergence_detected = bullish_divergence or bearish_divergence
-
-        if divergence_detected:
-            fast_weight = self.config['reversal_fast_weight']
-            medium_weight = self.config['reversal_medium_weight']
-            slow_weight = self.config['reversal_slow_weight']
-            mode = "REVERSAL"
-        else:
-            fast_weight = self.config['normal_fast_weight']
-            medium_weight = self.config['normal_medium_weight']
-            slow_weight = 0
-            mode = "NORMAL"
-
-        # Calculate weighted scores
-        bullish_signals = (fast_bull * fast_weight) + (slow_bull * slow_weight)
-        bearish_signals = (fast_bear * fast_weight) + (slow_bear * slow_weight)
-        total_signals = (fast_total * fast_weight) + (slow_weight)
+        # SIMPLIFIED: Use only fast indicators with simple weighting
+        fast_weight = self.config['normal_fast_weight']
+        
+        # Calculate weighted scores using only fast indicators
+        bullish_signals = fast_bull * fast_weight
+        bearish_signals = fast_bear * fast_weight
+        total_signals = fast_total * fast_weight
 
         bullish_bias_pct = (bullish_signals / total_signals) * 100 if total_signals > 0 else 0
         bearish_bias_pct = (bearish_signals / total_signals) * 100 if total_signals > 0 else 0
@@ -820,7 +797,7 @@ class BiasAnalysisPro:
             'bearish_count': fast_bear,
             'neutral_count': fast_total - fast_bull - fast_bear,
             'total_indicators': len(bias_results),
-            'mode': mode,
+            'mode': "NORMAL",
             'fast_bull_pct': fast_bull_pct,
             'fast_bear_pct': fast_bear_pct,
             'bullish_bias_pct': bullish_bias_pct,
@@ -938,8 +915,6 @@ class VolumeOrderBlocks:
                 filtered_blocks.append(block)
         
         return filtered_blocks
-
-    # REMOVED: check_price_near_blocks method (was never used)
 
 # =============================================
 # SIMPLIFIED GAMMA SEQUENCE ANALYZER
@@ -1890,7 +1865,6 @@ st.markdown("**OPTIMIZED VERSION** - Removed duplicates, consolidated utilities,
 analysis = BiasAnalysisPro()
 options_analyzer = ConsolidatedOptionsAnalyzer()
 vob_indicator = VolumeOrderBlocks(sensitivity=5)
-telegram_notifier = TelegramNotifier()
 
 # Initialize single state management
 if 'analysis_state' not in st.session_state:
