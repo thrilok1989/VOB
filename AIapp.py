@@ -3244,18 +3244,19 @@ def add_enhanced_market_data_tab():
     if 'enhanced_market_data' not in st.session_state:
         st.session_state.enhanced_market_data = None
     
-    # Refresh controls - USE UNIQUE KEYS
+    # Refresh controls - USE UNIQUE KEYS for buttons only
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        # Add unique key to button
+        # Add unique key to button (buttons need keys)
         if st.button("🔄 Refresh All Market Data", type="primary", use_container_width=True, key="refresh_market_data_btn"):
             with st.spinner("Fetching comprehensive market data from all sources..."):
                 st.session_state.enhanced_market_data = st.session_state.enhanced_market_fetcher.fetch_all_enhanced_data()
                 st.success("Market data refreshed!")
     
     with col2:
-        st.metric("Auto-Refresh", "ON" if st.session_state.get('auto_refresh', False) else "OFF", key="auto_refresh_metric_market")
+        # st.metric does NOT accept key parameter - remove it
+        st.metric("Auto-Refresh", "ON" if st.session_state.get('auto_refresh', False) else "OFF")
     
     with col3:
         if st.session_state.enhanced_market_data:
@@ -3272,16 +3273,16 @@ def add_enhanced_market_data_tab():
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total Data Points", summary['total_data_points'], key="total_points_metric")
+            st.metric("Total Data Points", summary['total_data_points'])
         with col2:
-            st.metric("Bullish Signals", summary['bullish_count'], key="bullish_metric")
+            st.metric("Bullish Signals", summary['bullish_count'])
         with col3:
-            st.metric("Bearish Signals", summary['bearish_count'], key="bearish_metric")
+            st.metric("Bearish Signals", summary['bearish_count'])
         with col4:
             sentiment_color = "🟢" if summary['overall_sentiment'] == 'BULLISH' else "🔴" if summary['overall_sentiment'] == 'BEARISH' else "🟡"
-            st.metric("Overall Sentiment", f"{sentiment_color} {summary['overall_sentiment']}", key="sentiment_metric")
+            st.metric("Overall Sentiment", f"{sentiment_color} {summary['overall_sentiment']}")
         
-        # Create tabs for different data categories - USE UNIQUE KEYS
+        # Create tabs for different data categories
         market_tabs = st.tabs([
             "🇮🇳 Indian Markets", 
             "🌍 Global Markets", 
@@ -3299,14 +3300,14 @@ def add_enhanced_market_data_tab():
                 vix_data = data['india_vix']
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("India VIX", f"{vix_data['value']:.2f}", key="vix_value")
+                    st.metric("India VIX", f"{vix_data['value']:.2f}")
                 with col2:
-                    st.metric("Sentiment", vix_data['sentiment'], key="vix_sentiment")
+                    st.metric("Sentiment", vix_data['sentiment'])
                 with col3:
                     bias_color = "🟢" if "BULLISH" in vix_data['bias'] else "🔴" if "BEARISH" in vix_data['bias'] else "🟡"
-                    st.metric("Bias", f"{bias_color} {vix_data['bias']}", key="vix_bias")
+                    st.metric("Bias", f"{bias_color} {vix_data['bias']}")
                 with col4:
-                    st.metric("Source", vix_data['source'], key="vix_source")
+                    st.metric("Source", vix_data['source'])
             
             # Sector Indices
             st.subheader("Sector Performance")
@@ -3323,7 +3324,8 @@ def add_enhanced_market_data_tab():
                         return 'background-color: #FFFFE0'
                 
                 styled_sectors = sectors_df.style.map(color_sector_bias, subset=['bias'])
-                st.dataframe(styled_sectors, use_container_width=True, key="sectors_table")
+                # Dataframes don't need keys for display
+                st.dataframe(styled_sectors, use_container_width=True)
         
         # Tab 2: Global Markets
         with market_tabs[1]:
@@ -3332,13 +3334,13 @@ def add_enhanced_market_data_tab():
             # Global Markets
             if data['global_markets']:
                 global_df = pd.DataFrame(data['global_markets'])
-                st.dataframe(global_df, use_container_width=True, key="global_markets_table")
+                st.dataframe(global_df, use_container_width=True)
             
             # Intermarket Data
             st.subheader("Intermarket Analysis")
             if data['intermarket']:
                 intermarket_df = pd.DataFrame(data['intermarket'])
-                st.dataframe(intermarket_df, use_container_width=True, key="intermarket_table")
+                st.dataframe(intermarket_df, use_container_width=True)
         
         # Tab 3: Sector Rotation
         with market_tabs[2]:
@@ -3349,11 +3351,11 @@ def add_enhanced_market_data_tab():
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Sector Breadth", f"{rotation['sector_breadth']:.1f}%", key="sector_breadth")
+                    st.metric("Sector Breadth", f"{rotation['sector_breadth']:.1f}%")
                 with col2:
-                    st.metric("Rotation Pattern", rotation['rotation_pattern'], key="rotation_pattern")
+                    st.metric("Rotation Pattern", rotation['rotation_pattern'])
                 with col3:
-                    st.metric("Sector Sentiment", rotation['sector_sentiment'], key="sector_sentiment")
+                    st.metric("Sector Sentiment", rotation['sector_sentiment'])
                 
                 # Leaders and Laggards
                 col1, col2 = st.columns(2)
@@ -3361,6 +3363,7 @@ def add_enhanced_market_data_tab():
                     st.subheader("🏆 Sector Leaders")
                     if rotation['leaders']:
                         for i, leader in enumerate(rotation['leaders']):
+                            # Use unique keys for dynamic content
                             st.write(f"**{leader['sector']}**: {leader['change_pct']:.2f}%", key=f"leader_{i}")
                 
                 with col2:
@@ -3378,11 +3381,11 @@ def add_enhanced_market_data_tab():
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Current Session", seasonality['session'], key="current_session")
+                    st.metric("Current Session", seasonality['session'])
                 with col2:
-                    st.metric("Session Bias", seasonality['session_bias'], key="session_bias")
+                    st.metric("Session Bias", seasonality['session_bias'])
                 with col3:
-                    st.metric("Weekday", seasonality['weekday'], key="weekday")
+                    st.metric("Weekday", seasonality['weekday'])
                 
                 st.info(f"**Session Characteristics**: {seasonality['session_characteristics']}")
                 st.warning(f"**Trading Recommendation**: {seasonality['trading_recommendation']}")
@@ -3397,27 +3400,27 @@ def add_enhanced_market_data_tab():
                 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Instrument", gamma['instrument'], key="gamma_instrument")
+                    st.metric("Instrument", gamma['instrument'])
                 with col2:
-                    st.metric("Gamma Exposure", f"{gamma['gamma_exposure']:,.0f}", key="gamma_exposure")
+                    st.metric("Gamma Exposure", f"{gamma['gamma_exposure']:,.0f}")
                 with col3:
                     risk_color = "🔴" if "HIGH" in gamma['squeeze_risk'] else "🟡" if "MODERATE" in gamma['squeeze_risk'] else "🟢"
-                    st.metric("Squeeze Risk", f"{risk_color} {gamma['squeeze_risk']}", key="squeeze_risk")
+                    st.metric("Squeeze Risk", f"{risk_color} {gamma['squeeze_risk']}")
                 with col4:
                     bias_color = "🟢" if "BULLISH" in gamma['squeeze_bias'] else "🔴" if "BEARISH" in gamma['squeeze_bias'] else "🟡"
-                    st.metric("Gamma Bias", f"{bias_color} {gamma['squeeze_bias']}", key="gamma_bias")
+                    st.metric("Gamma Bias", f"{bias_color} {gamma['squeeze_bias']}")
                 
                 st.info(f"**Interpretation**: {gamma['interpretation']}")
     
     else:
         st.info("Click 'Refresh All Market Data' to load comprehensive market intelligence")
         
-        # Quick data preview - USE UNIQUE KEY
+        # Quick data preview - USE UNIQUE KEY for button only
         if st.button("Quick Preview - India VIX Only", key="quick_preview_btn"):
             with st.spinner("Fetching India VIX..."):
                 vix_data = st.session_state.enhanced_market_fetcher.fetch_india_vix()
                 if vix_data.get('success'):
-                    st.metric("India VIX", f"{vix_data['value']:.2f}", vix_data['sentiment'], key="quick_vix")
+                    st.metric("India VIX", f"{vix_data['value']:.2f}", vix_data['sentiment'])
                 else:
                     st.error("Failed to fetch India VIX data")
 
