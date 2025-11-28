@@ -3137,6 +3137,12 @@ if 'last_telegram_alert' not in st.session_state:
 if 'analysis_complete' not in st.session_state:
     st.session_state.analysis_complete = False
 
+# Initialize session state for auto-refresh
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = datetime.now()
+if 'refresh_count' not in st.session_state:
+    st.session_state.refresh_count = 0
+
 # Function to calculate ATM detailed bias score
 def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
     """Calculate overall ATM bias from detailed bias metrics"""
@@ -3195,73 +3201,78 @@ def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
 # Function to run complete analysis
 def run_complete_analysis():
     """Run complete analysis for all tabs"""
-    st.session_state['last_symbol'] = symbol_input
-    
-    # Technical Analysis
-    with st.spinner("Fetching data and running technical analysis..."):
-        df_fetched = analysis.fetch_data(symbol_input, period=period_input, interval=interval_input)
-        st.session_state['last_df'] = df_fetched
-        st.session_state['fetch_time'] = datetime.now(IST)
-
-    if df_fetched is None or df_fetched.empty:
-        st.error("No data fetched. Check symbol or network.")
-        return False
-
-    # Run bias analysis
-    with st.spinner("Running full bias analysis..."):
-        result = analysis.analyze_all_bias_indicators(symbol_input)
-        st.session_state['last_result'] = result
-
-    # FIX 5: Run Volume Order Blocks analysis and store results
-    with st.spinner("Detecting Volume Order Blocks..."):
-        if st.session_state['last_df'] is not None:
-            df = st.session_state['last_df']
-            bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
-            st.session_state.vob_blocks = {
-                'bullish': bullish_blocks,
-                'bearish': bearish_blocks
-            }
-
-    # Run ENHANCED options analysis with institutional footprint
-    with st.spinner("Running institutional footprint analysis..."):
-        enhanced_bias_data = []
-        instruments = list(options_analyzer.NSE_INSTRUMENTS['indices'].keys())
+    try:
+        st.session_state['last_symbol'] = symbol_input
         
-        for instrument in instruments:
-            try:
-                bias_data = options_analyzer.analyze_comprehensive_institutional_bias(instrument)
-                if bias_data:
-                    enhanced_bias_data.append(bias_data)
-            except Exception as e:
-                print(f"Error in enhanced analysis for {instrument}: {e}")
-                # Fallback to basic analysis
-                basic_data = options_analyzer.analyze_comprehensive_atm_bias(instrument)
-                if basic_data:
-                    enhanced_bias_data.append(basic_data)
-        
-        st.session_state.market_bias_data = enhanced_bias_data
-        st.session_state.last_bias_update = datetime.now(IST)
-    
-    # Calculate ATM detailed bias
-    if st.session_state.market_bias_data:
-        for instrument_data in st.session_state.market_bias_data:
-            if instrument_data['instrument'] == 'NIFTY' and 'detailed_atm_bias' in instrument_data:
-                atm_bias, atm_score = calculate_atm_detailed_bias(instrument_data['detailed_atm_bias'])
-                st.session_state.atm_detailed_bias = {
-                    'bias': atm_bias,
-                    'score': atm_score,
-                    'details': instrument_data['detailed_atm_bias']
+        # Technical Analysis
+        with st.spinner("Fetching data and running technical analysis..."):
+            df_fetched = analysis.fetch_data(symbol_input, period=period_input, interval=interval_input)
+            if df_fetched is None or df_fetched.empty:
+                st.error("No data fetched. Check symbol or network.")
+                return False
+                
+            st.session_state['last_df'] = df_fetched
+            st.session_state['fetch_time'] = datetime.now(IST)
+
+        # Run bias analysis
+        with st.spinner("Running full bias analysis..."):
+            result = analysis.analyze_all_bias_indicators(symbol_input)
+            st.session_state['last_result'] = result
+
+        # FIX 5: Run Volume Order Blocks analysis and store results
+        with st.spinner("Detecting Volume Order Blocks..."):
+            if st.session_state['last_df'] is not None:
+                df = st.session_state['last_df']
+                bullish_blocks, bearish_blocks = vob_indicator.detect_volume_order_blocks(df)
+                st.session_state.vob_blocks = {
+                    'bullish': bullish_blocks,
+                    'bearish': bearish_blocks
                 }
-                break
-    
-    # Calculate overall Nifty bias
-    calculate_overall_nifty_bias()
-    
-    # Send Telegram alert if conditions met
-    send_telegram_alert()
-    
-    st.session_state.analysis_complete = True
-    return True
+
+        # Run ENHANCED options analysis with institutional footprint
+        with st.spinner("Running institutional footprint analysis..."):
+            enhanced_bias_data = []
+            instruments = list(options_analyzer.NSE_INSTRUMENTS['indices'].keys())
+            
+            for instrument in instruments:
+                try:
+                    bias_data = options_analyzer.analyze_comprehensive_institutional_bias(instrument)
+                    if bias_data:
+                        enhanced_bias_data.append(bias_data)
+                except Exception as e:
+                    print(f"Error in enhanced analysis for {instrument}: {e}")
+                    # Fallback to basic analysis
+                    basic_data = options_analyzer.analyze_comprehensive_atm_bias(instrument)
+                    if basic_data:
+                        enhanced_bias_data.append(basic_data)
+            
+            st.session_state.market_bias_data = enhanced_bias_data
+            st.session_state.last_bias_update = datetime.now(IST)
+        
+        # Calculate ATM detailed bias
+        if st.session_state.market_bias_data:
+            for instrument_data in st.session_state.market_bias_data:
+                if instrument_data['instrument'] == 'NIFTY' and 'detailed_atm_bias' in instrument_data:
+                    atm_bias, atm_score = calculate_atm_detailed_bias(instrument_data['detailed_atm_bias'])
+                    st.session_state.atm_detailed_bias = {
+                        'bias': atm_bias,
+                        'score': atm_score,
+                        'details': instrument_data['detailed_atm_bias']
+                    }
+                    break
+        
+        # Calculate overall Nifty bias
+        calculate_overall_nifty_bias()
+        
+        # Send Telegram alert if conditions met
+        send_telegram_alert()
+        
+        st.session_state.analysis_complete = True
+        return True
+        
+    except Exception as e:
+        st.error(f"Error in analysis: {e}")
+        return False
 
 # Function to calculate overall Nifty bias from all tabs
 def calculate_overall_nifty_bias():
@@ -3427,29 +3438,62 @@ if not st.session_state.analysis_complete:
             st.success("✅ Initial analysis complete!")
             st.rerun()
 
-# Refresh button
+# Refresh button and auto-refresh logic
 col1, col2 = st.sidebar.columns([2, 1])
 with col1:
     if st.button("🔄 Refresh Analysis", type="primary", use_container_width=True):
         if run_complete_analysis():
+            st.session_state.last_refresh = datetime.now()
+            st.session_state.refresh_count += 1
             st.sidebar.success("Analysis refreshed!")
             st.rerun()
 with col2:
     st.sidebar.metric("Auto-Refresh", "ON" if auto_refresh else "OFF")
+    st.sidebar.metric("Refresh Count", st.session_state.refresh_count)
 
-# Auto-refresh logic
+# Enhanced Auto-refresh with better UX
 if auto_refresh:
-    if 'last_refresh' not in st.session_state:
-        st.session_state.last_refresh = datetime.now()
-    
     current_time = datetime.now()
-    time_diff = (current_time - st.session_state.last_refresh).total_seconds() / 60
+    time_diff = (current_time - st.session_state.last_refresh).total_seconds()
+    refresh_seconds = refresh_interval * 60
     
-    if time_diff >= refresh_interval:
-        with st.spinner("Auto-refreshing analysis..."):
+    # Create a placeholder for the countdown
+    countdown_placeholder = st.sidebar.empty()
+    
+    # Update countdown
+    time_remaining = max(0, refresh_seconds - time_diff)
+    countdown_placeholder.info(f"🕐 Next auto-refresh in: {int(time_remaining)} seconds")
+    
+    # Progress bar
+    progress = max(0, min(1, 1 - (time_remaining / refresh_seconds)))
+    st.sidebar.progress(progress)
+    
+    # Auto-refresh logic
+    if time_remaining <= 0:
+        with st.spinner("🔄 Auto-refreshing analysis..."):
             if run_complete_analysis():
-                st.session_state.last_refresh = current_time
+                st.session_state.last_refresh = datetime.now()
+                st.session_state.refresh_count += 1
                 st.rerun()
+
+# JavaScript-based auto-refresh as backup
+if auto_refresh:
+    refresh_seconds = refresh_interval * 60
+    auto_refresh_js = f"""
+    <script>
+        function checkRefresh() {{
+            console.log('Auto-refresh enabled: refreshing in {refresh_seconds} seconds');
+        }}
+        
+        // Refresh the page after specified interval
+        setTimeout(function() {{
+            window.location.reload();
+        }}, {refresh_seconds * 1000});
+        
+        checkRefresh();
+    </script>
+    """
+    st.components.v1.html(auto_refresh_js, height=0)
 
 # Display overall Nifty bias prominently
 st.sidebar.markdown("---")
@@ -3465,6 +3509,15 @@ if st.session_state.overall_nifty_bias:
 # Display last update time
 if st.session_state.last_bias_update:
     st.sidebar.caption(f"Last update: {st.session_state.last_bias_update.strftime('%H:%M:%S')} IST")
+
+# Display weights in sidebar
+st.sidebar.markdown("**Bias Weights:**")
+st.sidebar.markdown("- Technical: 20%")
+st.sidebar.markdown("- Options Chain: 25%")
+st.sidebar.markdown("- Institutional OI: 15%")
+st.sidebar.markdown("- ATM Detailed: 10%")
+st.sidebar.markdown("- Volume Blocks: 10%")
+st.sidebar.markdown("- Breakout/Reversal: 20%")
 
 # Enhanced tabs with selected features
 tabs = st.tabs([
@@ -4192,12 +4245,3 @@ with tabs[4]:
 st.markdown("---")
 st.caption("BiasAnalysisPro — Complete Enhanced Dashboard with Auto-Refresh, Overall Nifty Bias Analysis, and Institutional Breakout/Reversal Detection.")
 st.caption("🔔 Telegram alerts sent when Technical Analysis, Options Chain, and ATM Detailed Bias are aligned (Bullish/Bearish)")
-
-# Display weights in sidebar
-st.sidebar.markdown("**Bias Weights:**")
-st.sidebar.markdown("- Technical: 20%")
-st.sidebar.markdown("- Options Chain: 25%")
-st.sidebar.markdown("- Institutional OI: 15%")
-st.sidebar.markdown("- ATM Detailed: 10%")
-st.sidebar.markdown("- Volume Blocks: 10%")
-st.sidebar.markdown("- Breakout/Reversal: 20%")
