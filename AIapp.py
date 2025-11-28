@@ -3258,7 +3258,7 @@ def add_enhanced_market_data_tab():
                 st.success("Market data refreshed!")
     
     with col2:
-        st.metric("Auto-Refresh", "ON" if auto_refresh else "OFF")
+       st.metric("Auto-Refresh", "ON" if st.session_state.get('auto_refresh', False) else "OFF")
     
     with col3:
         if st.session_state.enhanced_market_data:
@@ -4759,6 +4759,7 @@ interval_input = st.sidebar.selectbox("Interval", options=['1m', '5m', '15m', '1
 # Auto-refresh configuration
 st.sidebar.header("Auto-Refresh Settings")
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
+st.session_state.auto_refresh = auto_refresh  # Store in session state
 refresh_interval = st.sidebar.slider("Refresh Interval (minutes)", min_value=1, max_value=10, value=1)
 
 # Telegram Configuration
@@ -5119,11 +5120,11 @@ with col1:
             st.sidebar.success("Analysis refreshed!")
             st.rerun()
 with col2:
-    st.sidebar.metric("Auto-Refresh", "ON" if auto_refresh else "OFF")
+    st.metric("Auto-Refresh", "ON" if st.session_state.get('auto_refresh', False) else "OFF")
     st.sidebar.metric("Refresh Count", st.session_state.refresh_count)
 
 # Enhanced Auto-refresh with better UX
-if auto_refresh:
+if st.session_state.get('auto_refresh', False):
     current_time = datetime.now()
     time_diff = (current_time - st.session_state.last_refresh).total_seconds()
     refresh_seconds = refresh_interval * 60
