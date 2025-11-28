@@ -76,3 +76,21 @@ aiohttp
 
 
 yfinance==0.2.18
+
+streamlit
+pandas
+numpy
+yfinance
+pytz
+plotly
+requests
+scipy
+scikit-learn
+joblib
+lightgbm
+xgboost
+beautifulsoup4
+lxml
+ta
+matplotlib
+seaborn
