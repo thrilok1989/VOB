@@ -1056,6 +1056,190 @@ def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[
 
 
 # =============================================
+# TRADING SIGNAL ENGINE FUNCTIONS
+# =============================================
+
+# ================================================================
+# 1. CONSOLIDATION DETECTION
+# ================================================================
+def is_consolidation(df, vob_zones):
+    last_15 = df.tail(15)
+
+    # Condition A — Tight Range < 0.35%
+    price_range = last_15['high'].max() - last_15['low'].min()
+    tight_range = price_range < (df.iloc[-1]['close'] * 0.0035)
+
+    # Condition B — Small bodies vs wicks
+    body = abs(last_15['close'] - last_15['open']).mean()
+    wick = ((last_15['high'] - last_15['low']) - body).mean()
+    small_bodies = body < (0.5 * wick)
+
+    # Condition C — Flat EMA20
+    df['ema20'] = df['close'].ewm(span=20).mean()
+    ema_slope = df['ema20'].iloc[-1] - df['ema20'].iloc[-5]
+    ema_flat = abs(ema_slope) < (df.iloc[-1]['close'] * 0.0007)
+
+    # Condition D — Inside VOB trap zone
+    inside_vob = df.iloc[-1]['low'] < vob_zones['high'] and df.iloc[-1]['high'] > vob_zones['low']
+
+    conditions_true = sum([tight_range, small_bodies, ema_flat, inside_vob])
+    return conditions_true >= 2
+
+# ================================================================
+# 2. SUPPORT & RESISTANCE CALCULATION
+# ================================================================
+def find_swing_levels(df, lookback=5):
+    swing_highs = []
+    swing_lows = []
+
+    for i in range(lookback, len(df)-lookback):
+        high_slice = df['high'].iloc[i-lookback:i+lookback+1]
+        low_slice = df['low'].iloc[i-lookback:i+lookback+1]
+
+        if df['high'].iloc[i] == high_slice.max():
+            swing_highs.append((df['time'].iloc[i], df['high'].iloc[i]))
+        if df['low'].iloc[i] == low_slice.min():
+            swing_lows.append((df['time'].iloc[i], df['low'].iloc[i]))
+
+    return swing_highs, swing_lows
+
+def calculate_sr(df):
+    swing_highs, swing_lows = find_swing_levels(df)
+    last_highs = sorted(swing_highs, key=lambda x: x[0], reverse=True)[:5]
+    last_lows = sorted(swing_lows, key=lambda x: x[0], reverse=True)[:5]
+    resistance_levels = [h[1] for h in last_highs]
+    support_levels = [l[1] for l in last_lows]
+    return support_levels, resistance_levels
+
+# ================================================================
+# 3. TREND DETECTION
+# ================================================================
+def detect_trend(df):
+    df["ema20"] = df["close"].ewm(span=20).mean()
+    df["ema50"] = df["close"].ewm(span=50).mean()
+    df["ema100"] = df["close"].ewm(span=100).mean()
+    last = df.iloc[-1]
+
+    if last["close"] > last["ema20"] > last["ema50"]:
+        return "Strong Uptrend"
+    if last["close"] < last["ema20"] < last["ema50"]:
+        return "Strong Downtrend"
+    if last["ema20"] > last["ema50"] > last["ema100"]:
+        return "Uptrend"
+    if last["ema20"] < last["ema50"] < last["ema100"]:
+        return "Downtrend"
+    return "Sideways"
+
+# ================================================================
+# 4. MULTI-TIMEFRAME ANALYSIS
+# ================================================================
+def process_timeframe(tf_name, df):
+    trend = detect_trend(df)
+    supports, resistances = calculate_sr(df)
+    return {
+        "timeframe": tf_name,
+        "trend": trend,
+        "supports": supports,
+        "resistances": resistances
+    }
+
+def multi_tf_analysis(data_dict):
+    results = {}
+    for tf_name, df in data_dict.items():
+        results[tf_name] = process_timeframe(tf_name, df)
+    return results
+
+# ================================================================
+# 5. BREAKOUT / BREAKDOWN / REVERSAL DETECTION
+# ================================================================
+def is_breakout(df, resistances):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    if not resistances:
+        return False
+    res = min(resistances, key=lambda x: abs(x - last['close']))
+    breakout = last['close'] > res and last['close'] > last['open'] and last['volume'] > prev['volume']
+    return breakout
+
+def is_breakdown(df, supports):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    if not supports:
+        return False
+    sup = min(supports, key=lambda x: abs(x - last['close']))
+    breakdown = last['close'] < sup and last['close'] < last['open'] and last['volume'] > prev['volume']
+    return breakdown
+
+def is_reversal(df, supports, resistances, vob_zones):
+    last = df.iloc[-1]
+
+    # Bullish Reversal
+    for s in supports:
+        if abs(last['low'] - s) < (last['close'] * 0.0015) and last['close'] > last['open']:
+            if not (last['low'] < vob_zones['high'] and last['high'] > vob_zones['low']):
+                return "BULL_REVERSAL"
+
+    # Bearish Reversal
+    for r in resistances:
+        if abs(last['high'] - r) < (last['close'] * 0.0015) and last['close'] < last['open']:
+            if not (last['low'] < vob_zones['high'] and last['high'] > vob_zones['low']):
+                return "BEAR_REVERSAL"
+    return None
+
+# ================================================================
+# 6. MASTER SIGNAL ENGINE
+# ================================================================
+def generate_signal(df, vob_zones, app_bias, tf_analysis, bot_token, chat_id):
+    if is_consolidation(df, vob_zones):
+        print("NO SIGNAL — Market in consolidation")
+        return None
+
+    current_tf = tf_analysis["5m"]
+    trend = current_tf["trend"]
+    supports = current_tf["supports"]
+    resistances = current_tf["resistances"]
+
+    # 1. Trend + Bias Signal
+    if app_bias == "BULL" and "Up" in trend:
+        send_telegram("📈 BUY SIGNAL — Trend + Bias Confirmed", bot_token, chat_id)
+        return "BUY"
+    if app_bias == "BEAR" and "Down" in trend:
+        send_telegram("📉 SELL SIGNAL — Trend + Bias Confirmed", bot_token, chat_id)
+        return "SELL"
+
+    # 2. Breakout / Breakdown
+    if is_breakout(df, resistances):
+        send_telegram("🚀 BREAKOUT BUY — Resistance Cleared", bot_token, chat_id)
+        return "BREAKOUT_BUY"
+    if is_breakdown(df, supports):
+        send_telegram("⚠️ BREAKDOWN SELL — Support Broken", bot_token, chat_id)
+        return "BREAKDOWN_SELL"
+
+    # 3. Reversal
+    rev = is_reversal(df, supports, resistances, vob_zones)
+    if rev == "BULL_REVERSAL":
+        send_telegram("🔄 BULLISH REVERSAL — Support Rejected", bot_token, chat_id)
+        return "REVERSAL_BUY"
+    if rev == "BEAR_REVERSAL":
+        send_telegram("🔄 BEARISH REVERSAL — Resistance Rejected", bot_token, chat_id)
+        return "REVERSAL_SELL"
+
+    print("NO SIGNAL — No breakout/breakdown/reversal")
+    return None
+
+# ================================================================
+# 7. TELEGRAM ALERTS
+# ================================================================
+def send_telegram(message, bot_token, chat_id):
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message}
+    try:
+        requests.post(url, json=payload)
+    except:
+        pass
+
+
+# =============================================
 # GAMMA SEQUENCE ANALYZER
 # =============================================
 
@@ -3488,8 +3672,150 @@ with tabs[2]:
         fig = plot_vob(df, bullish_blocks, bearish_blocks)
         st.plotly_chart(fig, use_container_width=True)
         
-        # Volume Order Blocks Summary
-        st.subheader("Volume Order Blocks Analysis")
+        # ================================================================
+        # TRADING SIGNAL ENGINE INTEGRATION
+        # ================================================================
+        st.subheader("🎯 Trading Signal Engine")
+        
+        # Prepare data for signal engine
+        try:
+            # Convert dataframe to required format
+            df_signal = df.reset_index().rename(columns={
+                'Timestamp': 'time',
+                'Open': 'open',
+                'High': 'high', 
+                'Low': 'low',
+                'Close': 'close',
+                'Volume': 'volume'
+            })
+            
+            # Calculate VOB zones for consolidation detection
+            vob_zones = {
+                'high': df['High'].max() if not bullish_blocks else max([block['upper'] for block in bullish_blocks] + [df['High'].max()]),
+                'low': df['Low'].min() if not bearish_blocks else min([block['lower'] for block in bearish_blocks] + [df['Low'].min()])
+            }
+            
+            # Get current bias from analysis
+            current_bias = "NEUTRAL"
+            if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
+                bias_result = st.session_state['last_result'].get('overall_bias', 'NEUTRAL')
+                if "BULL" in bias_result.upper():
+                    current_bias = "BULL"
+                elif "BEAR" in bias_result.upper():
+                    current_bias = "BEAR"
+            
+            # Multi-timeframe analysis (using current data as all timeframes for demo)
+            tf_analysis = {
+                "5m": process_timeframe("5m", df_signal)
+            }
+            
+            # Generate trading signal
+            signal = generate_signal(
+                df_signal, 
+                vob_zones, 
+                current_bias, 
+                tf_analysis,
+                telegram_notifier.bot_token if telegram_notifier.is_configured() else "",
+                telegram_notifier.chat_id if telegram_notifier.is_configured() else ""
+            )
+            
+            # Display signal results
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                # Signal Status
+                if signal:
+                    if "BUY" in signal:
+                        st.success(f"🎯 SIGNAL: {signal}")
+                    elif "SELL" in signal:
+                        st.error(f"🎯 SIGNAL: {signal}")
+                    else:
+                        st.info(f"🎯 SIGNAL: {signal}")
+                else:
+                    st.warning("🎯 NO CLEAR SIGNAL")
+            
+            with col2:
+                # Trend Analysis
+                trend = detect_trend(df_signal)
+                trend_color = "🟢" if "Up" in trend else "🔴" if "Down" in trend else "🟡"
+                st.metric("Trend", f"{trend_color} {trend}")
+            
+            with col3:
+                # Consolidation Status
+                consolidation = is_consolidation(df_signal, vob_zones)
+                st.metric("Consolidation", "Yes" if consolidation else "No")
+            
+            with col4:
+                # Current Bias
+                bias_color = "🟢" if current_bias == "BULL" else "🔴" if current_bias == "BEAR" else "🟡"
+                st.metric("Bias", f"{bias_color} {current_bias}")
+            
+            # Support & Resistance Levels
+            st.subheader("📊 Support & Resistance Levels")
+            supports, resistances = calculate_sr(df_signal)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Support Levels:**")
+                for i, level in enumerate(supports[:3], 1):
+                    st.write(f"{i}. ₹{level:.2f}")
+            
+            with col2:
+                st.write("**Resistance Levels:**")
+                for i, level in enumerate(resistances[:3], 1):
+                    st.write(f"{i}. ₹{level:.2f}")
+            
+            # Breakout/Breakdown Analysis
+            st.subheader("🔍 Breakout/Breakdown Analysis")
+            
+            breakout_status = is_breakout(df_signal, resistances)
+            breakdown_status = is_breakdown(df_signal, supports)
+            reversal_status = is_reversal(df_signal, supports, resistances, vob_zones)
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Breakout", "Yes" if breakout_status else "No")
+            
+            with col2:
+                st.metric("Breakdown", "Yes" if breakdown_status else "No")
+            
+            with col3:
+                st.metric("Reversal", reversal_status if reversal_status else "No")
+            
+            # Detailed Analysis
+            with st.expander("📈 Detailed Technical Analysis"):
+                # EMA Analysis
+                df_signal["ema20"] = df_signal["close"].ewm(span=20).mean()
+                df_signal["ema50"] = df_signal["close"].ewm(span=50).mean()
+                df_signal["ema100"] = df_signal["close"].ewm(span=100).mean()
+                
+                last = df_signal.iloc[-1]
+                st.write("**EMA Values:**")
+                st.write(f"- EMA20: ₹{last['ema20']:.2f}")
+                st.write(f"- EMA50: ₹{last['ema50']:.2f}") 
+                st.write(f"- EMA100: ₹{last['ema100']:.2f}")
+                
+                # Price relative to EMAs
+                st.write("**Price vs EMAs:**")
+                above_ema20 = last['close'] > last['ema20']
+                above_ema50 = last['close'] > last['ema50'] 
+                above_ema100 = last['close'] > last['ema100']
+                
+                st.write(f"- Above EMA20: {'✅' if above_ema20 else '❌'}")
+                st.write(f"- Above EMA50: {'✅' if above_ema50 else '❌'}")
+                st.write(f"- Above EMA100: {'✅' if above_ema100 else '❌'}")
+                
+                # Volume analysis
+                volume_trend = "Increasing" if last['volume'] > df_signal['volume'].mean() else "Decreasing"
+                st.write(f"**Volume Trend:** {volume_trend}")
+                
+        except Exception as e:
+            st.error(f"Error in signal engine: {e}")
+        
+        # Volume Order Blocks Summary (existing code)
+        st.subheader("📦 Volume Order Blocks Analysis")
         col1, col2 = st.columns(2)
         
         with col1:
