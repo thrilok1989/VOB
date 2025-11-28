@@ -3438,7 +3438,7 @@ tabs = st.tabs([
 # Then in your main app code, add the new tab call:
 # In the section where you display tabs, add:
 
-with tabs[5]:  # This is the new Market Data tab
+with tabs[5]:  # This is the Market Data tab
     add_enhanced_market_data_tab()
     
 # ============================================================================
