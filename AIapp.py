@@ -3244,18 +3244,16 @@ def add_enhanced_market_data_tab():
     if 'enhanced_market_data' not in st.session_state:
         st.session_state.enhanced_market_data = None
     
-    # Refresh controls - USE UNIQUE KEYS for buttons only
+    # Refresh controls
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        # Add unique key to button (buttons need keys)
         if st.button("🔄 Refresh All Market Data", type="primary", use_container_width=True, key="refresh_market_data_btn"):
             with st.spinner("Fetching comprehensive market data from all sources..."):
                 st.session_state.enhanced_market_data = st.session_state.enhanced_market_fetcher.fetch_all_enhanced_data()
                 st.success("Market data refreshed!")
     
     with col2:
-        # st.metric does NOT accept key parameter - remove it
         st.metric("Auto-Refresh", "ON" if st.session_state.get('auto_refresh', False) else "OFF")
     
     with col3:
@@ -3324,7 +3322,6 @@ def add_enhanced_market_data_tab():
                         return 'background-color: #FFFFE0'
                 
                 styled_sectors = sectors_df.style.map(color_sector_bias, subset=['bias'])
-                # Dataframes don't need keys for display
                 st.dataframe(styled_sectors, use_container_width=True)
         
         # Tab 2: Global Markets
@@ -3362,15 +3359,13 @@ def add_enhanced_market_data_tab():
                 with col1:
                     st.subheader("🏆 Sector Leaders")
                     if rotation['leaders']:
-                        for i, leader in enumerate(rotation['leaders']):
-                            # st.write does NOT accept key parameter - remove it
+                        for leader in rotation['leaders']:
                             st.write(f"**{leader['sector']}**: {leader['change_pct']:.2f}%")
                 
                 with col2:
                     st.subheader("📉 Sector Laggards")
                     if rotation['laggards']:
-                        for i, laggard in enumerate(rotation['laggards']):
-                            # st.write does NOT accept key parameter - remove it
+                        for laggard in rotation['laggards']:
                             st.write(f"**{laggard['sector']}**: {laggard['change_pct']:.2f}%")
         
         # Tab 4: Intraday Timing
@@ -3416,7 +3411,7 @@ def add_enhanced_market_data_tab():
     else:
         st.info("Click 'Refresh All Market Data' to load comprehensive market intelligence")
         
-        # Quick data preview - USE UNIQUE KEY for button only
+        # Quick data preview
         if st.button("Quick Preview - India VIX Only", key="quick_preview_btn"):
             with st.spinner("Fetching India VIX..."):
                 vix_data = st.session_state.enhanced_market_fetcher.fetch_india_vix()
@@ -3424,7 +3419,6 @@ def add_enhanced_market_data_tab():
                     st.metric("India VIX", f"{vix_data['value']:.2f}", vix_data['sentiment'])
                 else:
                     st.error("Failed to fetch India VIX data")
-
 # ============================================================================
 # INTEGRATE INTO MAIN APP
 # ============================================================================
