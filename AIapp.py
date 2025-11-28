@@ -561,18 +561,6 @@ class MasterTrigger:
         return current_price * 0.985
 
 # =============================================
-# YOUR ORIGINAL APP CODE CONTINUES...
-# =============================================
-
-# Import Dhan API for Indian indices volume data
-try:
-    from dhan_data_fetcher import DhanDataFetcher
-    DHAN_AVAILABLE = True
-except ImportError:
-    DHAN_AVAILABLE = False
-    print("Warning: Dhan API not available. Volume data may be missing for Indian indices.")
-
-# =============================================
 # TELEGRAM NOTIFICATION SYSTEM
 # =============================================
 
@@ -658,6 +646,10 @@ class TelegramNotifier:
 
 # Initialize Telegram Notifier
 telegram_notifier = TelegramNotifier()
+
+# =============================================
+# BIAS ANALYSIS PRO CORE ENGINE
+# =============================================
 
 class BiasAnalysisPro:
     """
@@ -752,56 +744,7 @@ class BiasAnalysisPro:
     # =========================================================================
 
     def fetch_data(self, symbol: str, period: str = '7d', interval: str = '5m') -> pd.DataFrame:
-        """Fetch data from Dhan API (for Indian indices) or Yahoo Finance (for others)"""
-        # Check if this is an Indian index that needs Dhan API
-        indian_indices = {'^NSEI': 'NIFTY', '^BSESN': 'SENSEX', '^NSEBANK': 'BANKNIFTY'}
-
-        if symbol in indian_indices and DHAN_AVAILABLE:
-            try:
-                # Use Dhan API for Indian indices to get proper volume data
-                dhan_instrument = indian_indices[symbol]
-                fetcher = DhanDataFetcher()
-
-                # Convert interval to Dhan API format (1, 5, 15, 25, 60)
-                interval_map = {'1m': '1', '5m': '5', '15m': '15', '1h': '60'}
-                dhan_interval = interval_map.get(interval, '5')
-
-                # Calculate date range for historical data (7 days) - Use IST timezone
-                now_ist = datetime.now(IST)
-                to_date = now_ist.strftime('%Y-%m-%d %H:%M:%S')
-                from_date = (now_ist - timedelta(days=7)).replace(hour=9, minute=15, second=0).strftime('%Y-%m-%d %H:%M:%S')
-
-                # Fetch intraday data with 7 days historical range
-                result = fetcher.fetch_intraday_data(dhan_instrument, interval=dhan_interval, from_date=from_date, to_date=to_date)
-
-                if result.get('success') and result.get('data') is not None:
-                    df = result['data']
-
-                    # Ensure column names match yfinance format (capitalized)
-                    df.columns = [col.capitalize() for col in df.columns]
-
-                    # Set timestamp as index
-                    if 'Timestamp' in df.columns:
-                        df.set_index('Timestamp', inplace=True)
-
-                    # Ensure volume column exists and has valid data
-                    if 'Volume' not in df.columns:
-                        df['Volume'] = 0
-                    else:
-                        # Replace NaN volumes with 0
-                        df['Volume'] = df['Volume'].fillna(0)
-
-                    if not df.empty:
-                        print(f"✅ Fetched {len(df)} candles for {symbol} from Dhan API with volume data (from {from_date} to {to_date})")
-                        return df
-                    else:
-                        print(f"⚠️  Warning: Empty data from Dhan API for {symbol}, falling back to yfinance")
-                else:
-                    print(f"Warning: Dhan API failed for {symbol}: {result.get('error')}, falling back to yfinance")
-            except Exception as e:
-                print(f"Error fetching from Dhan API for {symbol}: {e}, falling back to yfinance")
-
-        # Fallback to Yahoo Finance for non-Indian indices or if Dhan fails
+        """Fetch data from Yahoo Finance"""
         try:
             ticker = yf.Ticker(symbol)
             df = ticker.history(period=period, interval=interval)
@@ -816,10 +759,6 @@ class BiasAnalysisPro:
             else:
                 # Replace NaN volumes with 0
                 df['Volume'] = df['Volume'].fillna(0)
-
-            # Warn if volume is all zeros (common for Yahoo Finance indices)
-            if df['Volume'].sum() == 0 and symbol in indian_indices:
-                print(f"⚠️  Warning: Volume data is zero for {symbol} from Yahoo Finance")
 
             return df
         except Exception as e:
@@ -893,25 +832,6 @@ class BiasAnalysisPro:
         adx = dx.rolling(window=smoothing).mean()
 
         return plus_di, minus_di, adx
-
-    def calculate_vwap(self, df: pd.DataFrame) -> pd.Series:
-        """Calculate VWAP with NaN/zero handling"""
-        # Check if volume data is available
-        if df['Volume'].sum() == 0:
-            # Return typical price as fallback if no volume data
-            return (df['High'] + df['Low'] + df['Close']) / 3
-
-        typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-        cumulative_volume = df['Volume'].cumsum()
-
-        # Avoid division by zero
-        cumulative_volume_safe = cumulative_volume.replace(0, np.nan)
-        vwap = (typical_price * df['Volume']).cumsum() / cumulative_volume_safe
-
-        # Fill NaN with typical price
-        vwap = vwap.fillna(typical_price)
-
-        return vwap
 
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate ATR"""
@@ -1083,7 +1003,6 @@ class BiasAnalysisPro:
 
         # Initialize bias results list
         bias_results = []
-        stock_data = []  # Empty since we removed Weighted Stocks indicators
 
         # =====================================================================
         # FAST INDICATORS (8 total)
@@ -1280,7 +1199,7 @@ class BiasAnalysisPro:
         })
 
         # =====================================================================
-        # CALCULATE OVERALL BIAS (MATCHING PINE SCRIPT LOGIC) - FIXED
+        # CALCULATE OVERALL BIAS
         # =====================================================================
         fast_bull = 0
         fast_bear = 0
@@ -1290,10 +1209,9 @@ class BiasAnalysisPro:
         medium_bear = 0
         medium_total = 0
 
-        # FIX 1: Disable slow category completely
         slow_bull = 0
         slow_bear = 0
-        slow_total = 0  # Set to zero to avoid division by zero
+        slow_total = 0
 
         bullish_count = 0
         bearish_count = 0
@@ -1306,14 +1224,12 @@ class BiasAnalysisPro:
                     fast_bull += 1
                 elif bias['category'] == 'medium':
                     medium_bull += 1
-                # Skip slow category
             elif 'BEARISH' in bias['bias']:
                 bearish_count += 1
                 if bias['category'] == 'fast':
                     fast_bear += 1
                 elif bias['category'] == 'medium':
                     medium_bear += 1
-                # Skip slow category
             else:
                 neutral_count += 1
 
@@ -1321,41 +1237,35 @@ class BiasAnalysisPro:
                 fast_total += 1
             elif bias['category'] == 'medium':
                 medium_total += 1
-            # Skip slow category counting
 
-        # Calculate percentages - FIXED for slow category
+        # Calculate percentages
         fast_bull_pct = (fast_bull / fast_total) * 100 if fast_total > 0 else 0
         fast_bear_pct = (fast_bear / fast_total) * 100 if fast_total > 0 else 0
 
         medium_bull_pct = (medium_bull / medium_total) * 100 if medium_total > 0 else 0
         medium_bear_pct = (medium_bear / medium_total) * 100 if medium_total > 0 else 0
 
-        # FIX 1: Set slow percentages to 0 since we disabled slow indicators
         slow_bull_pct = 0
         slow_bear_pct = 0
 
-        # Adaptive weighting (matching Pine Script)
-        # Check for divergence - FIXED for slow category
+        # Adaptive weighting
         divergence_threshold = self.config['divergence_threshold']
-        # Since slow_bull_pct is 0, divergence won't trigger incorrectly
         bullish_divergence = slow_bull_pct >= 66 and fast_bear_pct >= divergence_threshold
         bearish_divergence = slow_bear_pct >= 66 and fast_bull_pct >= divergence_threshold
         divergence_detected = bullish_divergence or bearish_divergence
 
-        # Determine mode - FIXED: Always use normal mode since slow indicators disabled
-        if divergence_detected and slow_total > 0:  # Only if we had slow indicators
+        if divergence_detected and slow_total > 0:
             fast_weight = self.config['reversal_fast_weight']
             medium_weight = self.config['reversal_medium_weight']
             slow_weight = self.config['reversal_slow_weight']
             mode = "REVERSAL"
         else:
-            # Use normal weights, ignore slow weight
             fast_weight = self.config['normal_fast_weight']
             medium_weight = self.config['normal_medium_weight']
-            slow_weight = 0  # FIX: Set slow weight to 0 since no slow indicators
+            slow_weight = 0
             mode = "NORMAL"
 
-        # Calculate weighted scores - FIXED: Exclude slow category
+        # Calculate weighted scores
         bullish_signals = (fast_bull * fast_weight) + (medium_bull * medium_weight) + (slow_bull * slow_weight)
         bearish_signals = (fast_bear * fast_weight) + (medium_bear * medium_weight) + (slow_bear * slow_weight)
         total_signals = (fast_total * fast_weight) + (medium_total * medium_weight) + (slow_total * slow_weight)
@@ -1392,7 +1302,6 @@ class BiasAnalysisPro:
             'bearish_count': bearish_count,
             'neutral_count': neutral_count,
             'total_indicators': len(bias_results),
-            'stock_data': stock_data,
             'mode': mode,
             'fast_bull_pct': fast_bull_pct,
             'fast_bear_pct': fast_bear_pct,
@@ -1403,11 +1312,11 @@ class BiasAnalysisPro:
         }
 
 # =============================================
-# VOLUME ORDER BLOCKS (FROM SECOND APP)
+# VOLUME ORDER BLOCKS
 # =============================================
 
 class VolumeOrderBlocks:
-    """Python implementation of Volume Order Blocks indicator by BigBeluga"""
+    """Python implementation of Volume Order Blocks indicator"""
     
     def __init__(self, sensitivity=5):
         self.length1 = sensitivity
@@ -1525,22 +1434,7 @@ class VolumeOrderBlocks:
                 filtered_blocks.append(block)
         
         return filtered_blocks
-    
-    def check_price_near_blocks(self, current_price: float, blocks: List[Dict[str, Any]], threshold: float = 5) -> List[Dict[str, Any]]:
-        nearby_blocks = []
-        for block in blocks:
-            distance_to_upper = abs(current_price - block['upper'])
-            distance_to_lower = abs(current_price - block['lower'])
-            distance_to_mid = abs(current_price - block['mid'])
-            
-            if (distance_to_upper <= threshold or 
-                distance_to_lower <= threshold or 
-                distance_to_mid <= threshold):
-                nearby_blocks.append(block)
-        
-        return nearby_blocks
 
-# FIX 5: Add plotting function for VOB
 def plot_vob(df: pd.DataFrame, bullish_blocks: List[Dict], bearish_blocks: List[Dict]) -> go.Figure:
     """Plot Volume Order Blocks on candlestick chart"""
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
@@ -1604,7 +1498,6 @@ def main():
 
     # Initialize all analyzers
     analysis = BiasAnalysisPro()
-    options_analyzer = NSEOptionsAnalyzer()
     vob_indicator = VolumeOrderBlocks(sensitivity=5)
 
     # Initialize ML System
@@ -1617,7 +1510,7 @@ def main():
 
     # Sidebar inputs
     st.sidebar.header("Data & Symbol")
-    symbol_input = st.sidebar.text_input("Symbol (Yahoo/Dhan)", value="^NSEI")
+    symbol_input = st.sidebar.text_input("Symbol (Yahoo Finance)", value="^NSEI")
     period_input = st.sidebar.selectbox("Period", options=['1d', '5d', '7d', '1mo'], index=2)
     interval_input = st.sidebar.selectbox("Interval", options=['1m', '5m', '15m', '1h'], index=1)
 
@@ -1652,8 +1545,6 @@ def main():
         st.session_state.overall_nifty_bias = "NEUTRAL"
     if 'overall_nifty_score' not in st.session_state:
         st.session_state.overall_nifty_score = 0
-    if 'atm_detailed_bias' not in st.session_state:
-        st.session_state.atm_detailed_bias = None
     if 'vob_blocks' not in st.session_state:
         st.session_state.vob_blocks = {'bullish': [], 'bearish': []}
     if 'last_telegram_alert' not in st.session_state:
@@ -1671,72 +1562,17 @@ def main():
     if 'refresh_count' not in st.session_state:
         st.session_state.refresh_count = 0
 
-    # Function to calculate ATM detailed bias score
-    def calculate_atm_detailed_bias(detailed_bias_data: Dict) -> Tuple[str, float]:
-        """Calculate overall ATM bias from detailed bias metrics"""
-        if not detailed_bias_data:
-            return "NEUTRAL", 0
-        
-        bias_scores = []
-        bias_weights = []
-        
-        # Define bias mappings with weights
-        bias_mappings = {
-            'OI_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 2.0},
-            'ChgOI_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 2.0},
-            'Volume_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
-            'Delta_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
-            'Gamma_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.0},
-            'Premium_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.0},
-            'AskQty_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.0},
-            'BidQty_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.0},
-            'IV_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
-            'DVP_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
-            'Delta_Exposure_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 2.0},
-            'Gamma_Exposure_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5},
-            'IV_Skew_Bias': {'Bullish': 1, 'Bearish': -1, 'weight': 1.5}
-        }
-        
-        # Calculate weighted scores
-        total_weight = 0
-        total_score = 0
-        
-        for bias_key, mapping in bias_mappings.items():
-            if bias_key in detailed_bias_data:
-                bias_value = detailed_bias_data[bias_key]
-                if bias_value in mapping:
-                    score = mapping[bias_value]
-                    weight = mapping['weight']
-                    total_score += score * weight
-                    total_weight += weight
-        
-        if total_weight == 0:
-            return "NEUTRAL", 0
-        
-        # Normalize score to -100 to 100 range
-        normalized_score = (total_score / total_weight) * 100
-        
-        # Determine bias direction
-        if normalized_score > 15:
-            bias = "BULLISH"
-        elif normalized_score < -15:
-            bias = "BEARISH"
-        else:
-            bias = "NEUTRAL"
-        
-        return bias, normalized_score
-
     # Function to prepare ML features
     def prepare_ml_features(technical_data, volume_data, options_data):
         """Prepare features for ML analysis"""
         
-        # Create market intel placeholder (you can enhance this)
+        # Create market intel placeholder
         market_intel = {
-            'vix_trend': 0,  # Placeholder - integrate with real VIX data
-            'sgx_gap': 0,    # Placeholder - integrate with SGX Nifty
-            'global_corr': 0, # Placeholder - global correlation
-            'fii_dii_flow': 0, # Placeholder - institutional flow
-            'sector_rotation': 0, # Placeholder
+            'vix_trend': 0,
+            'sgx_gap': 0,
+            'global_corr': 0,
+            'fii_dii_flow': 0,
+            'sector_rotation': 0,
             'sentiment_score': 50
         }
         
@@ -1777,10 +1613,10 @@ def main():
                         'bearish': bearish_blocks
                     }
 
-            # Run options analysis
+            # Create mock options data for demo
             with st.spinner("Running options analysis..."):
                 enhanced_bias_data = []
-                instruments = ['NIFTY']  # Focus on NIFTY for demo
+                instruments = ['NIFTY']
                 
                 for instrument in instruments:
                     try:
@@ -1815,7 +1651,7 @@ def main():
                     technical_data = st.session_state['last_result']
                     volume_data = {
                         'block_imbalance': len(st.session_state.vob_blocks['bullish']) - len(st.session_state.vob_blocks['bearish']),
-                        'volume_spike_ratio': 1.0,  # Placeholder
+                        'volume_spike_ratio': 1.0,
                         'bullish_blocks': len(st.session_state.vob_blocks['bullish']),
                         'bearish_blocks': len(st.session_state.vob_blocks['bearish']),
                         'structure_broken': False,
@@ -1832,7 +1668,7 @@ def main():
                     st.session_state.ml_collector.add_data_point(ml_features)
             
             # NEW: CHECK MASTER TRIGGER FOR AI ANALYSIS
-            unified_bias = st.session_state.overall_nifty_score  # Your existing unified bias
+            unified_bias = st.session_state.overall_nifty_score
             
             should_trigger_ai, ml_confidence = st.session_state.master_trigger.should_trigger_ai_analysis(
                 unified_bias, ml_features
@@ -1845,7 +1681,7 @@ def main():
                 ai_results = st.session_state.master_trigger.trigger_ai_analysis_pipeline(ml_features)
                 st.session_state.ai_results = ai_results
             
-            # Your existing calculations
+            # Calculate overall bias
             calculate_overall_nifty_bias()
             
             st.session_state.analysis_complete = True
@@ -1855,10 +1691,9 @@ def main():
             st.error(f"Error in analysis: {e}")
             return False
 
-    # Function to calculate overall Nifty bias from all tabs
+    # Function to calculate overall Nifty bias
     def calculate_overall_nifty_bias():
         """Calculate overall Nifty bias by combining all analysis methods"""
-        # Simplified calculation for demo
         if st.session_state['last_result'] and st.session_state['last_result'].get('success'):
             tech_score = st.session_state['last_result'].get('overall_score', 0)
             # Normalize to 0-100 scale
