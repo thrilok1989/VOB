@@ -4133,7 +4133,7 @@ with tabs[2]:
         
         # Create the chart using the plotting function
         fig = plot_vob(df, bullish_blocks, bearish_blocks)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="main_price_chart")
         
         # ================================================================
         # TRADING SIGNAL ENGINE INTEGRATION
@@ -4492,7 +4492,7 @@ with tabs[4]:
     if not st.session_state.market_bias_data:
         st.info("No option chain data available. Analysis runs automatically every minute...")
     else:
-        for instrument_data in st.session_state.market_bias_data:
+        for idx, instrument_data in enumerate(st.session_state.market_bias_data):
             with st.expander(f"🎯 {instrument_data['instrument']} - Complete Bias Analysis", expanded=True):
                 
                 # Basic Information Table
@@ -4571,7 +4571,7 @@ with tabs[4]:
                         col2.metric("Bearish Metrics", bear_count)
                         col3.metric("Neutral Metrics", neutral_count)
                         
-                        # Create bias distribution chart
+                        # Create bias distribution chart with UNIQUE KEY
                         fig = px.pie(
                             names=['Bullish', 'Bearish', 'Neutral'],
                             values=[bull_count, bear_count, neutral_count],
@@ -4579,7 +4579,7 @@ with tabs[4]:
                             color=['Bullish', 'Bearish', 'Neutral'],
                             color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444', 'Neutral': '#ffaa00'}
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, key=f"bias_pie_{instrument_data['instrument']}_{idx}")
                 
                 # Institutional OI Bias Analysis - NEW SECTION
                 if 'institutional_analysis' in instrument_data:
@@ -4612,6 +4612,7 @@ with tabs[4]:
                     }
                     pattern_df = pd.DataFrame(pattern_data)
                     
+                    # Create pattern distribution chart with UNIQUE KEY
                     fig_patterns = px.bar(
                         pattern_df, 
                         x='Type', 
@@ -4620,7 +4621,7 @@ with tabs[4]:
                         color='Type',
                         color_discrete_map={'Bullish': '#00ff88', 'Bearish': '#ff4444', 'Neutral': '#ffaa00'}
                     )
-                    st.plotly_chart(fig_patterns, use_container_width=True)
+                    st.plotly_chart(fig_patterns, use_container_width=True, key=f"pattern_bar_{instrument_data['instrument']}_{idx}")
                     
                     # Institution moves breakdown
                     if bias_analysis.get('institution_moves'):
