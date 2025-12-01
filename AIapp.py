@@ -32,7 +32,153 @@ try:
 except ImportError:
     DHAN_AVAILABLE = False
     print("Warning: Dhan API not available. Volume data may be missing for Indian indices.")
+# Add these imports at the top of your file, after the existing imports
+try:
+    import groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    print("Warning: Groq package not available. FINLLMS AI features will be limited.")
 
+# Add this function to handle the missing tab gracefully
+def add_ml_signal_tab():
+    """Add ML Signal Generation tab with proper error handling"""
+    
+    st.header("🤖 FINLLMS AI Signal Generator")
+    st.markdown("### Advanced Options Trading Signals with FINLLMS on Groq")
+    
+    if not GROQ_AVAILABLE:
+        st.error("""
+        ❌ **Groq Package Not Available**
+        
+        To enable FINLLMS AI Signal Generation, install the Groq package:
+        ```bash
+        pip install groq
+        ```
+        
+        And add your Groq API key to Streamlit secrets:
+        ```toml
+        # .streamlit/secrets.toml
+        [GROQ]
+        API_KEY = "your_groq_api_key_here"
+        ```
+        """)
+        
+        st.info("""
+        **Available Features (without Groq):**
+        - Basic alignment checking
+        - Market snapshot
+        - Component analysis
+        """)
+        
+        # Show basic alignment status even without Groq
+        if 'ml_signal_generator' not in st.session_state:
+            st.session_state.ml_signal_generator = AdvancedMLSignalGenerator()
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔍 Check Alignment Status", use_container_width=True):
+                alignment_data = st.session_state.ml_signal_generator.check_alignment_conditions()
+                display_alignment_status(alignment_data)
+        
+        with col2:
+            if st.button("📊 Market Snapshot", use_container_width=True):
+                display_market_snapshot()
+        
+        return
+    
+    # Display Groq status
+    if (st.session_state.ml_signal_generator and 
+        st.session_state.ml_signal_generator.groq_client):
+        st.success("✅ Groq Client: ACTIVE (FINLLMS models available)")
+    else:
+        st.error("❌ Groq Client: INACTIVE - Check API key in secrets")
+    
+    # Rest of the existing tab code remains the same...
+    # Signal generation controls
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        if st.button("🎯 Generate FINLLMS AI Signal", type="primary", use_container_width=True):
+            with st.spinner("🤖 FINLLMS analyzing market alignment..."):
+                result = st.session_state.ml_signal_generator.generate_final_entry_signal()
+                
+                if result['signal_generated']:
+                    display_finllms_signal_result(result)
+                else:
+                    st.warning(f"❌ No strong signal: {result.get('reason', 'Unknown reason')}")
+    
+    with col2:
+        if st.button("🔄 Check Alignment", use_container_width=True):
+            alignment_data = st.session_state.ml_signal_generator.check_alignment_conditions()
+            display_alignment_status(alignment_data)
+    
+    with col3:
+        if st.button("📊 Market Snapshot", use_container_width=True):
+            display_market_snapshot()
+    
+    # Auto-signal generation
+    st.subheader("🔄 Auto-Signal Generation")
+    auto_signals = st.checkbox("Enable Real-time Signal Monitoring", value=False)
+    
+    if auto_signals:
+        col1, col2 = st.columns(2)
+        with col1:
+            signal_interval = st.slider("Check Interval (minutes)", 1, 10, 2)
+        with col2:
+            min_confidence = st.slider("Min Confidence %", 70, 95, 80)
+        
+        # Auto-check logic
+        if 'last_auto_check' not in st.session_state:
+            st.session_state.last_auto_check = datetime.now()
+        
+        current_time = datetime.now()
+        time_diff = (current_time - st.session_state.last_auto_check).total_seconds() / 60
+        
+        if time_diff >= signal_interval:
+            with st.spinner("🔍 Auto-checking for aligned signals..."):
+                result = st.session_state.ml_signal_generator.generate_final_entry_signal()
+                
+                if (result['signal_generated'] and 
+                    result['alignment_data']['confidence'] >= min_confidence):
+                    
+                    st.success("🎯 AUTO-SIGNAL GENERATED!")
+                    display_finllms_signal_result(result)
+                    st.balloons()
+                
+                st.session_state.last_auto_check = datetime.now()
+
+# Also update the AdvancedMLSignalGenerator class to handle missing Groq
+class AdvancedMLSignalGenerator:
+    """
+    Advanced ML Signal Generator that aligns multiple analysis dimensions
+    and uses Groq (including FINLLMS models) for final entry decision
+    """
+    
+    def __init__(self):
+        self.groq_client = None
+        self.setup_groq_client()
+        self.finllms_models = [
+            "finllm-1.5b-preview",
+            "finllm-7b-preview", 
+            "llama3-70b-8192"
+        ]
+        
+    def setup_groq_client(self):
+        """Setup Groq client with FINLLMS models"""
+        if not GROQ_AVAILABLE:
+            return
+            
+        try:
+            groq_api_key = st.secrets.get("GROQ", {}).get("API_KEY")
+            if groq_api_key:
+                self.groq_client = groq.Groq(api_key=groq_api_key)
+            else:
+                st.error("❌ Groq API key not found in secrets")
+        except Exception as e:
+            st.error(f"❌ Groq client setup failed: {e}")
+
+    # ... rest of the class methods remain the same
 # =============================================
 # ENHANCED MARKET DATA FETCHER
 # =============================================
