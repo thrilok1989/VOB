@@ -41,12 +41,18 @@ except ImportError:
     print("Warning: Groq package not available. FINLLMS AI features will be limited.")
 
 # Add this function to handle the missing tab gracefully
+# Fix the add_ml_signal_tab function to handle the missing session state properly
 def add_ml_signal_tab():
     """Add ML Signal Generation tab with proper error handling"""
     
     st.header("🤖 FINLLMS AI Signal Generator")
     st.markdown("### Advanced Options Trading Signals with FINLLMS on Groq")
     
+    # Initialize the signal generator in session state if it doesn't exist
+    if 'ml_signal_generator' not in st.session_state:
+        st.session_state.ml_signal_generator = AdvancedMLSignalGenerator()
+    
+    # Check Groq availability
     if not GROQ_AVAILABLE:
         st.error("""
         ❌ **Groq Package Not Available**
@@ -72,9 +78,6 @@ def add_ml_signal_tab():
         """)
         
         # Show basic alignment status even without Groq
-        if 'ml_signal_generator' not in st.session_state:
-            st.session_state.ml_signal_generator = AdvancedMLSignalGenerator()
-        
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🔍 Check Alignment Status", use_container_width=True):
@@ -94,7 +97,6 @@ def add_ml_signal_tab():
     else:
         st.error("❌ Groq Client: INACTIVE - Check API key in secrets")
     
-    # Rest of the existing tab code remains the same...
     # Signal generation controls
     col1, col2, col3 = st.columns([2, 1, 1])
     
@@ -148,7 +150,7 @@ def add_ml_signal_tab():
                 
                 st.session_state.last_auto_check = datetime.now()
 
-# Also update the AdvancedMLSignalGenerator class to handle missing Groq
+# Also update the AdvancedMLSignalGenerator class to handle missing Groq gracefully
 class AdvancedMLSignalGenerator:
     """
     Advanced ML Signal Generator that aligns multiple analysis dimensions
@@ -167,18 +169,468 @@ class AdvancedMLSignalGenerator:
     def setup_groq_client(self):
         """Setup Groq client with FINLLMS models"""
         if not GROQ_AVAILABLE:
+            st.warning("⚠️ Groq package not available. Install with: pip install groq")
             return
             
         try:
-            groq_api_key = st.secrets.get("GROQ", {}).get("API_KEY")
+            # Try to get API key from secrets
+            groq_api_key = None
+            try:
+                groq_api_key = st.secrets.get("GROQ", {}).get("API_KEY")
+            except (FileNotFoundError, AttributeError):
+                st.warning("⚠️ Streamlit secrets not available")
+                
             if groq_api_key:
                 self.groq_client = groq.Groq(api_key=groq_api_key)
+                st.success("✅ Groq client initialized successfully")
             else:
                 st.error("❌ Groq API key not found in secrets")
         except Exception as e:
             st.error(f"❌ Groq client setup failed: {e}")
 
-    # ... rest of the class methods remain the same
+    def check_alignment_conditions(self) -> Dict:
+        """
+        Check if all analysis dimensions are aligned for high-confidence signal
+        """
+        alignment_data = {
+            'all_aligned': False,
+            'direction': None,
+            'confidence': 0,
+            'alignment_details': {},
+            'trigger_conditions': {}
+        }
+        
+        try:
+            # Get all analysis components with safe fallbacks
+            technical_bias = self.get_technical_bias()
+            options_bias = self.get_options_bias()
+            atm_bias = self.get_atm_bias()
+            trend_analysis = self.get_trend_analysis()
+            breakout_signal = self.get_breakout_signal()
+            
+            alignment_data['alignment_details'] = {
+                'technical_bias': technical_bias,
+                'options_bias': options_bias,
+                'atm_bias': atm_bias,
+                'trend_analysis': trend_analysis,
+                'breakout_signal': breakout_signal
+            }
+            
+            # Check alignment conditions
+            bullish_aligned = (
+                technical_bias.get('bias') == 'BULLISH' and
+                options_bias.get('bias') == 'BULLISH' and
+                atm_bias.get('bias') == 'BULLISH' and
+                trend_analysis.get('trend') in ['UPTREND', 'STRONG UPTREND'] and
+                breakout_signal.get('signal_type') in ['BREAKOUT_BUY', 'REVERSAL_BUY', 'TREND_CONTINUATION']
+            )
+            
+            bearish_aligned = (
+                technical_bias.get('bias') == 'BEARISH' and
+                options_bias.get('bias') == 'BEARISH' and
+                atm_bias.get('bias') == 'BEARISH' and
+                trend_analysis.get('trend') in ['DOWNTREND', 'STRONG DOWNTREND'] and
+                breakout_signal.get('signal_type') in ['BREAKDOWN_SELL', 'REVERSAL_SELL', 'TREND_CONTINUATION']
+            )
+            
+            if bullish_aligned:
+                alignment_data['all_aligned'] = True
+                alignment_data['direction'] = 'BULLISH'
+                alignment_data['confidence'] = self.calculate_alignment_confidence(alignment_data['alignment_details'])
+                alignment_data['trigger_conditions'] = {
+                    'entry_type': 'CALL',
+                    'signal_strength': 'STRONG',
+                    'timeframe': 'INTRADAY',
+                    'option_type': 'CE'
+                }
+                
+            elif bearish_aligned:
+                alignment_data['all_aligned'] = True
+                alignment_data['direction'] = 'BEARISH'
+                alignment_data['confidence'] = self.calculate_alignment_confidence(alignment_data['alignment_details'])
+                alignment_data['trigger_conditions'] = {
+                    'entry_type': 'PUT', 
+                    'signal_strength': 'STRONG',
+                    'timeframe': 'INTRADAY',
+                    'option_type': 'PE'
+                }
+            
+            return alignment_data
+            
+        except Exception as e:
+            print(f"Alignment check error: {e}")
+            return alignment_data
+
+    def get_technical_bias(self) -> Dict:
+        """Get technical analysis bias from session state"""
+        try:
+            if st.session_state.get('last_result') and st.session_state['last_result'].get('success'):
+                result = st.session_state['last_result']
+                return {
+                    'bias': result.get('overall_bias', 'NEUTRAL'),
+                    'score': result.get('overall_score', 0),
+                    'confidence': result.get('overall_confidence', 0),
+                    'bullish_count': result.get('bullish_count', 0),
+                    'bearish_count': result.get('bearish_count', 0)
+                }
+        except:
+            pass
+        return {'bias': 'NEUTRAL', 'score': 0, 'confidence': 0}
+
+    def get_options_bias(self) -> Dict:
+        """Get options chain bias from session state"""
+        try:
+            if st.session_state.get('market_bias_data'):
+                for instrument_data in st.session_state.market_bias_data:
+                    if instrument_data['instrument'] == 'NIFTY':
+                        return {
+                            'bias': instrument_data.get('combined_bias', 'Neutral'),
+                            'score': instrument_data.get('combined_score', 0),
+                            'pcr_oi': instrument_data.get('pcr_oi', 1.0),
+                            'total_ce_oi': instrument_data.get('total_ce_oi', 0),
+                            'total_pe_oi': instrument_data.get('total_pe_oi', 0)
+                        }
+        except:
+            pass
+        return {'bias': 'NEUTRAL', 'score': 0, 'pcr_oi': 1.0}
+
+    def get_atm_bias(self) -> Dict:
+        """Get ATM detailed bias from session state"""
+        try:
+            if st.session_state.get('atm_detailed_bias'):
+                atm_data = st.session_state.atm_detailed_bias
+                return {
+                    'bias': atm_data.get('bias', 'NEUTRAL'),
+                    'score': atm_data.get('score', 0),
+                    'details': atm_data.get('details', {})
+                }
+        except:
+            pass
+        return {'bias': 'NEUTRAL', 'score': 0}
+
+    def get_trend_analysis(self) -> Dict:
+        """Get trend analysis from ML predictor"""
+        try:
+            if (st.session_state.get('ml_predictor') and 
+                st.session_state.ml_predictor.is_trained and 
+                st.session_state.get('last_df') is not None):
+                
+                trend, confidence = st.session_state.ml_predictor.predict_trend(st.session_state['last_df'])
+                return {
+                    'trend': trend,
+                    'confidence': confidence,
+                    'source': 'ML_PREDICTOR'
+                }
+        except:
+            pass
+        
+        # Fallback to basic trend detection
+        try:
+            if st.session_state.get('last_df') is not None:
+                df = st.session_state['last_df']
+                df_signal = df.reset_index().rename(columns={
+                    'Timestamp': 'time', 'Open': 'open', 'High': 'high', 
+                    'Low': 'low', 'Close': 'close', 'Volume': 'volume'
+                })
+                trend = self.detect_trend_basic(df_signal)
+                return {
+                    'trend': trend,
+                    'confidence': 0.7,
+                    'source': 'BASIC'
+                }
+        except:
+            pass
+        
+        return {'trend': 'SIDEWAYS', 'confidence': 0, 'source': 'UNKNOWN'}
+
+    def get_breakout_signal(self) -> Dict:
+        """Get breakout/reversal signals"""
+        try:
+            if st.session_state.get('market_bias_data'):
+                for instrument_data in st.session_state.market_bias_data:
+                    if (instrument_data['instrument'] == 'NIFTY' and 
+                        'breakout_reversal_analysis' in instrument_data):
+                        
+                        breakout_data = instrument_data['breakout_reversal_analysis']
+                        trading_signal = breakout_data.get('trading_signal', {})
+                        
+                        return {
+                            'signal_type': trading_signal.get('action', 'WAIT'),
+                            'confidence': trading_signal.get('confidence', 'LOW'),
+                            'message': trading_signal.get('message', ''),
+                            'market_state': breakout_data.get('market_state', 'NEUTRAL')
+                        }
+        except:
+            pass
+        return {'signal_type': 'NO_SIGNAL', 'confidence': 'LOW', 'market_state': 'NEUTRAL'}
+
+    def detect_trend_basic(self, df) -> str:
+        """Basic trend detection as fallback"""
+        try:
+            df["ema20"] = df["close"].ewm(span=20).mean()
+            df["ema50"] = df["close"].ewm(span=50).mean()
+            last = df.iloc[-1]
+
+            if last["close"] > last["ema20"] > last["ema50"]:
+                return "STRONG UPTREND"
+            elif last["close"] < last["ema20"] < last["ema50"]:
+                return "STRONG DOWNTREND"
+            elif last["ema20"] > last["ema50"]:
+                return "UPTREND"
+            elif last["ema20"] < last["ema50"]:
+                return "DOWNTREND"
+            else:
+                return "SIDEWAYS"
+        except:
+            return "UNKNOWN"
+
+    def calculate_alignment_confidence(self, alignment_details: Dict) -> float:
+        """Calculate overall alignment confidence score (0-100)"""
+        try:
+            confidence_score = 0
+            max_score = 0
+            
+            # Technical bias weight (25%)
+            tech_bias = alignment_details['technical_bias']
+            if tech_bias['bias'] != 'NEUTRAL':
+                confidence_score += tech_bias['confidence'] * 0.25
+            max_score += 25
+            
+            # Options bias weight (25%)
+            options_bias = alignment_details['options_bias']
+            if options_bias['bias'] != 'NEUTRAL':
+                score_normalized = min(100, abs(options_bias['score']) * 25)
+                confidence_score += score_normalized * 0.25
+            max_score += 25
+            
+            # ATM bias weight (20%)
+            atm_bias = alignment_details['atm_bias']
+            if atm_bias['bias'] != 'NEUTRAL':
+                score_normalized = min(100, abs(atm_bias['score']))
+                confidence_score += score_normalized * 0.20
+            max_score += 20
+            
+            # Trend analysis weight (15%)
+            trend = alignment_details['trend_analysis']
+            if trend['confidence'] > 0:
+                confidence_score += trend['confidence'] * 100 * 0.15
+            max_score += 15
+            
+            # Breakout signal weight (15%)
+            breakout = alignment_details['breakout_signal']
+            if breakout['confidence'] == 'HIGH':
+                confidence_score += 15
+            elif breakout['confidence'] == 'MEDIUM':
+                confidence_score += 10
+            elif breakout['confidence'] == 'LOW':
+                confidence_score += 5
+            max_score += 15
+            
+            return min(100, confidence_score)
+        except:
+            return 0
+
+    def generate_final_entry_signal(self) -> Dict:
+        """
+        Main function to generate final entry signal
+        """
+        start_time = time.time()
+        
+        try:
+            # Step 1: Check alignment conditions
+            alignment_data = self.check_alignment_conditions()
+            
+            if not alignment_data['all_aligned']:
+                return {
+                    'signal_generated': False,
+                    'reason': 'Analysis components not aligned',
+                    'alignment_data': alignment_data,
+                    'processing_time': time.time() - start_time
+                }
+            
+            # Step 2: Prepare market data
+            market_data = self.prepare_market_data()
+            
+            # Step 3: Try AI analysis if Groq is available
+            ai_analysis = {}
+            if self.groq_client:
+                try:
+                    ai_analysis = self.analyze_with_finllms_groq(market_data, alignment_data)
+                except Exception as e:
+                    st.warning(f"AI analysis failed: {e}")
+                    ai_analysis = {'error': str(e)}
+            else:
+                ai_analysis = {'error': 'Groq client not available'}
+            
+            # Step 4: Generate final signal
+            final_signal = self.create_basic_signal(alignment_data, market_data, ai_analysis)
+            
+            return {
+                'signal_generated': True,
+                'final_signal': final_signal,
+                'alignment_data': alignment_data,
+                'ai_analysis': ai_analysis,
+                'market_data': market_data,
+                'processing_time': time.time() - start_time
+            }
+            
+        except Exception as e:
+            return {
+                'signal_generated': False,
+                'error': str(e),
+                'processing_time': time.time() - start_time
+            }
+
+    def prepare_market_data(self) -> Dict:
+        """Prepare comprehensive market data for analysis"""
+        current_price = 0
+        if st.session_state.get('last_df') is not None:
+            current_price = st.session_state['last_df'].iloc[-1]['Close']
+        
+        return {
+            'current_price': current_price,
+            'overall_bias': st.session_state.get('overall_nifty_bias', 'NEUTRAL'),
+            'overall_score': st.session_state.get('overall_nifty_score', 0),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'market_hour': 'OPEN' if 9 <= datetime.now().hour < 16 else 'CLOSED'
+        }
+
+    def create_basic_signal(self, alignment_data: Dict, market_data: Dict, ai_analysis: Dict) -> Dict:
+        """Create basic trading signal when AI is not available"""
+        direction = alignment_data['direction']
+        confidence = alignment_data['confidence']
+        
+        if direction == 'BULLISH':
+            signal_type = 'STRONG_BUY_CALL'
+            strike = f"{int(market_data['current_price']) + 100}CE"
+        else:
+            signal_type = 'STRONG_SELL_PUT'
+            strike = f"{int(market_data['current_price']) - 100}PE"
+        
+        return {
+            'signal': signal_type,
+            'strike_recommendation': strike,
+            'entry_premium': 'Market Price',
+            'target_premium': '15-20% premium move',
+            'stoploss_premium': '8-10% premium move',
+            'position_size': '3-5% of capital',
+            'risk_reward': '1:2',
+            'confidence_level': 'HIGH' if confidence > 80 else 'MEDIUM',
+            'rationale': f"Multiple analysis components aligned for {direction} move",
+            'ai_source': 'BASIC_ALIGNMENT',
+            'analysis_type': 'COMPONENT_ALIGNMENT'
+        }
+
+    def analyze_with_finllms_groq(self, market_data: Dict, alignment_data: Dict) -> Dict:
+        """Placeholder for FINLLMS analysis - would be implemented when Groq is available"""
+        return {
+            'signal': 'ANALYSIS_UNAVAILABLE',
+            'error': 'FINLLMS analysis requires Groq API access',
+            'ai_source': 'FINLLMS_UNAVAILABLE'
+        }
+
+# Display functions
+def display_finllms_signal_result(result: Dict):
+    """Display FINLLMS-generated trading signal"""
+    final_signal = result['final_signal']
+    alignment_data = result['alignment_data']
+    
+    st.success("🎯 **TRADING SIGNAL GENERATED!**")
+    
+    # Main signal card
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        signal_color = "🟢" if "BUY" in final_signal['signal'] else "🔴" if "SELL" in final_signal['signal'] else "🟡"
+        st.metric("Signal", f"{signal_color} {final_signal['signal']}")
+    
+    with col2:
+        confidence_color = "🟢" if final_signal.get('confidence_level') in ['HIGH', 'VERY_HIGH'] else "🟡"
+        st.metric("Confidence", f"{confidence_color} {final_signal.get('confidence_level', 'MEDIUM')}")
+    
+    with col3:
+        st.metric("Alignment", f"{alignment_data['confidence']:.1f}%")
+    
+    with col4:
+        st.metric("Source", final_signal.get('ai_source', 'BASIC'))
+    
+    # Trading details
+    st.subheader("💎 Trading Details")
+    
+    details_col1, details_col2 = st.columns(2)
+    
+    with details_col1:
+        st.info(f"**Strike:** {final_signal.get('strike_recommendation', 'N/A')}")
+        st.info(f"**Entry:** {final_signal.get('entry_premium', 'N/A')}")
+        st.success(f"**Target:** {final_signal.get('target_premium', 'N/A')}")
+    
+    with details_col2:
+        st.error(f"**Stoploss:** {final_signal.get('stoploss_premium', 'N/A')}")
+        st.warning(f"**Position Size:** {final_signal.get('position_size', 'N/A')}")
+        st.info(f"**Risk-Reward:** {final_signal.get('risk_reward', 'N/A')}")
+    
+    # Rationale
+    st.subheader("💡 Analysis Rationale")
+    st.write(final_signal.get('rationale', 'No detailed rationale provided'))
+    
+    st.caption(f"⏱️ Processing time: {result['processing_time']:.2f}s")
+
+def display_alignment_status(alignment_data: Dict):
+    """Display current alignment status"""
+    
+    st.subheader("⚖️ Component Alignment Status")
+    
+    if alignment_data['all_aligned']:
+        st.success(f"✅ ALL COMPONENTS ALIGNED - {alignment_data['direction']}")
+        st.metric("Overall Confidence", f"{alignment_data['confidence']:.1f}%")
+    else:
+        st.warning("❌ Components Not Aligned - No trade signal")
+    
+    # Detailed component status
+    st.subheader("🔧 Component Analysis")
+    
+    alignment_details = alignment_data['alignment_details']
+    
+    for component, data in alignment_details.items():
+        with st.expander(f"{component.replace('_', ' ').title()}", expanded=False):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                bias = data.get('bias', 'NEUTRAL')
+                bias_color = "🟢" if bias == 'BULLISH' else "🔴" if bias == 'BEARISH' else "🟡"
+                st.write(f"**Bias:** {bias_color} {bias}")
+            
+            with col2:
+                score = data.get('score', data.get('confidence', 0))
+                if isinstance(score, float):
+                    st.write(f"**Score:** {score:.1f}")
+                else:
+                    st.write(f"**Score:** {score}")
+
+def display_market_snapshot():
+    """Display current market snapshot"""
+    st.subheader("🌐 Market Snapshot")
+    
+    # Current price and bias
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.session_state.get('last_df') is not None:
+            current_price = st.session_state['last_df'].iloc[-1]['Close']
+            st.metric("Nifty Current", f"₹{current_price:.2f}")
+    
+    with col2:
+        if st.session_state.get('overall_nifty_bias'):
+            bias_color = "🟢" if st.session_state.overall_nifty_bias == "BULLISH" else "🔴" if st.session_state.overall_nifty_bias == "BEARISH" else "🟡"
+            st.metric("Overall Bias", f"{bias_color} {st.session_state.overall_nifty_bias}")
+    
+    with col3:
+        st.metric("Overall Score", f"{st.session_state.get('overall_nifty_score', 0):.1f}")
+    
+    # Market hour status
+    current_hour = datetime.now().hour
+    market_status = "🟢 OPEN" if 9 <= current_hour < 16 else "🔴 CLOSED"
+    st.write(f"**Market Status:** {market_status}")
 # =============================================
 # ENHANCED MARKET DATA FETCHER
 # =============================================
