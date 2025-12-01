@@ -320,6 +320,19 @@ def display_market_snapshot():
     except Exception as e:
         st.error(f"Error displaying market snapshot: {e}")
 
+warnings.filterwarnings('ignore')
+
+# Indian Standard Time (IST)
+IST = pytz.timezone('Asia/Kolkata')
+
+# Import Dhan API for Indian indices volume data
+try:
+    from dhan_data_fetcher import DhanDataFetcher
+    DHAN_AVAILABLE = True
+except ImportError:
+    DHAN_AVAILABLE = False
+    print("Warning: Dhan API not available. Volume data may be missing for Indian indices.")
+
 # =============================================
 # ENHANCED MARKET DATA FETCHER
 # =============================================
