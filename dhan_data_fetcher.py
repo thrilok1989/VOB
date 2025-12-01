@@ -28,7 +28,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import streamlit as st
-from config import get_dhan_credentials
+import pytz
+from config import get_dhan_credentials, IST, get_current_time_ist
+from api_request_limiter import global_rate_limiter
 
 # Dhan Security IDs (from instrument master)
 SECURITY_IDS = {
@@ -105,26 +107,17 @@ class DhanDataFetcher:
 
     def _rate_limit_wait(self, api_type: str):
         """
-        Wait for rate limit compliance
+        Wait for rate limit compliance using global rate limiter
 
         Args:
             api_type: 'quote' (1/sec), 'data' (5/sec), or 'option_chain' (1/3sec)
+
+        Note:
+            Now uses global rate limiter for thread-safe, cross-instance rate limiting
         """
-        rate_limits = {
-            'quote': 1.0,       # 1 second between requests
-            'data': 0.2,        # 0.2 seconds (5 req/sec)
-            'option_chain': 3.0  # 3 seconds between requests
-        }
-
-        min_interval = rate_limits.get(api_type, 1.0)
-
-        if api_type in self.last_request_time:
-            elapsed = time.time() - self.last_request_time[api_type]
-            if elapsed < min_interval:
-                wait_time = min_interval - elapsed
-                time.sleep(wait_time)
-
-        self.last_request_time[api_type] = time.time()
+        # Use global rate limiter instead of per-instance rate limiting
+        if not global_rate_limiter.wait_for_slot(api_type):
+            raise Exception(f"Circuit breaker active for {api_type}. Please wait and try again.")
 
     def fetch_ohlc_data(self, instruments: List[str]) -> Dict[str, Any]:
         """
@@ -157,6 +150,9 @@ class DhanDataFetcher:
             response = requests.post(url, json=payload, headers=self.headers, timeout=10)
 
             if response.status_code == 200:
+                # Track success for rate limiter
+                global_rate_limiter.handle_success('quote')
+
                 data = response.json()
 
                 # Parse response
@@ -176,12 +172,16 @@ class DhanDataFetcher:
                                 'high': instrument_data.get('ohlc', {}).get('high'),
                                 'low': instrument_data.get('ohlc', {}).get('low'),
                                 'close': instrument_data.get('ohlc', {}).get('close'),
-                                'timestamp': datetime.now()
+                                'timestamp': get_current_time_ist()
                             }
                         else:
                             result[instrument] = {'success': False, 'error': 'No data found'}
 
                 return result
+            elif response.status_code == 429:
+                # Handle rate limit error with exponential backoff
+                global_rate_limiter.handle_rate_limit_error('quote')
+                return {'success': False, 'error': f'API returned {response.status_code}', 'message': 'Rate limit exceeded. Will retry with exponential backoff.'}
             else:
                 return {'success': False, 'error': f'API returned {response.status_code}', 'message': response.text}
 
@@ -215,11 +215,11 @@ class DhanDataFetcher:
 
         # Default dates
         if not from_date:
-            today = datetime.now()
+            today = get_current_time_ist()
             from_date = today.replace(hour=9, minute=15, second=0).strftime('%Y-%m-%d %H:%M:%S')
 
         if not to_date:
-            to_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            to_date = get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S')
 
         payload = {
             "securityId": security_id,
@@ -235,6 +235,9 @@ class DhanDataFetcher:
             response = requests.post(url, json=payload, headers=self.headers, timeout=15)
 
             if response.status_code == 200:
+                # Track success for rate limiter
+                global_rate_limiter.handle_success('data')
+
                 data = response.json()
 
                 # Convert to DataFrame
@@ -252,8 +255,12 @@ class DhanDataFetcher:
                     'data': df,
                     'instrument': instrument,
                     'interval': interval,
-                    'timestamp': datetime.now()
+                    'timestamp': get_current_time_ist()
                 }
+            elif response.status_code == 429:
+                # Handle rate limit error with exponential backoff
+                global_rate_limiter.handle_rate_limit_error('data')
+                return {'success': False, 'error': f'API returned {response.status_code}', 'message': 'Rate limit exceeded. Will retry with exponential backoff.'}
             else:
                 return {'success': False, 'error': f'API returned {response.status_code}', 'message': response.text}
 
@@ -292,6 +299,9 @@ class DhanDataFetcher:
             response = requests.post(url, json=payload, headers=self.headers, timeout=15)
 
             if response.status_code == 200:
+                # Track success for rate limiter
+                global_rate_limiter.handle_success('option_chain')
+
                 data = response.json()
 
                 return {
@@ -299,8 +309,12 @@ class DhanDataFetcher:
                     'data': data.get('data', {}),
                     'instrument': instrument,
                     'expiry': expiry,
-                    'timestamp': datetime.now()
+                    'timestamp': get_current_time_ist()
                 }
+            elif response.status_code == 429:
+                # Handle rate limit error with exponential backoff
+                global_rate_limiter.handle_rate_limit_error('option_chain')
+                return {'success': False, 'error': f'API returned {response.status_code}', 'message': 'Rate limit exceeded. Will retry with exponential backoff.'}
             else:
                 return {'success': False, 'error': f'API returned {response.status_code}', 'message': response.text}
 
@@ -335,14 +349,21 @@ class DhanDataFetcher:
             response = requests.post(url, json=payload, headers=self.headers, timeout=10)
 
             if response.status_code == 200:
+                # Track success for rate limiter
+                global_rate_limiter.handle_success('option_chain')
+
                 data = response.json()
 
                 return {
                     'success': True,
                     'expiry_dates': data.get('data', []),
                     'instrument': instrument,
-                    'timestamp': datetime.now()
+                    'timestamp': get_current_time_ist()
                 }
+            elif response.status_code == 429:
+                # Handle rate limit error with exponential backoff
+                global_rate_limiter.handle_rate_limit_error('option_chain')
+                return {'success': False, 'error': f'API returned {response.status_code}', 'message': 'Rate limit exceeded. Will retry with exponential backoff.'}
             else:
                 return {'success': False, 'error': f'API returned {response.status_code}', 'message': response.text}
 
@@ -365,7 +386,7 @@ class DhanDataFetcher:
         """
         result = {
             'success': True,
-            'fetch_start': datetime.now(),
+            'fetch_start': get_current_time_ist(),
             'nifty': {},
             'sensex': {},
             'option_chain': {},
@@ -391,7 +412,7 @@ class DhanDataFetcher:
                 result['errors'].append(f"Sensex chart: {sensex_chart.get('error')}")
 
             # Wait to reach 10-second mark
-            elapsed = (datetime.now() - result['fetch_start']).total_seconds()
+            elapsed = (get_current_time_ist() - result['fetch_start']).total_seconds()
             if elapsed < 10:
                 time.sleep(10 - elapsed)
 
@@ -411,7 +432,7 @@ class DhanDataFetcher:
                 result['errors'].append(f"Sensex OHLC: {ohlc_data.get('SENSEX', {}).get('error')}")
 
             # Wait to reach 20-second mark
-            elapsed = (datetime.now() - result['fetch_start']).total_seconds()
+            elapsed = (get_current_time_ist() - result['fetch_start']).total_seconds()
             if elapsed < 20:
                 time.sleep(20 - elapsed)
 
@@ -424,7 +445,7 @@ class DhanDataFetcher:
                 result['nifty']['expiry_list'] = nifty_expiry
 
                 # Wait to reach 30-second mark
-                elapsed = (datetime.now() - result['fetch_start']).total_seconds()
+                elapsed = (get_current_time_ist() - result['fetch_start']).total_seconds()
                 if elapsed < 30:
                     time.sleep(30 - elapsed)
 
@@ -451,7 +472,7 @@ class DhanDataFetcher:
                 sensex_ltp = result['sensex']['ohlc']['last_price']
                 result['sensex']['atm_strike'] = round(sensex_ltp / 100) * 100
 
-            result['fetch_end'] = datetime.now()
+            result['fetch_end'] = get_current_time_ist()
             result['total_time'] = (result['fetch_end'] - result['fetch_start']).total_seconds()
             result['success'] = len(result['errors']) == 0
 
@@ -488,10 +509,32 @@ def get_nifty_data() -> Dict[str, Any]:
             ohlc = nifty.get('ohlc', {})
             expiry_list = nifty.get('expiry_list', {})
 
+            # Check if we have valid price data
+            spot_price = ohlc.get('last_price', 0)
+            atm_strike = nifty.get('atm_strike', 0)
+
+            # If spot price is 0 or None, it means API failed
+            if not spot_price or spot_price == 0:
+                error_msg = ', '.join(all_data.get('errors', [])) if all_data.get('errors') else 'API returned no data'
+                return {
+                    'success': False,
+                    'error': f'Unable to fetch NIFTY price data: {error_msg}',
+                    'spot_price': None,
+                    'atm_strike': None,
+                    'open': None,
+                    'high': None,
+                    'low': None,
+                    'close': None,
+                    'expiry_dates': [],
+                    'current_expiry': 'N/A',
+                    'chart_data': None,
+                    'timestamp': get_current_time_ist()
+                }
+
             return {
                 'success': True,
-                'spot_price': ohlc.get('last_price', 0),
-                'atm_strike': nifty.get('atm_strike', 0),
+                'spot_price': spot_price,
+                'atm_strike': atm_strike,
                 'open': ohlc.get('open', 0),
                 'high': ohlc.get('high', 0),
                 'low': ohlc.get('low', 0),
@@ -499,7 +542,7 @@ def get_nifty_data() -> Dict[str, Any]:
                 'expiry_dates': expiry_list.get('expiry_dates', []),
                 'current_expiry': expiry_list.get('expiry_dates', [''])[0] if expiry_list.get('expiry_dates') else '',
                 'chart_data': nifty.get('chart', {}).get('data'),
-                'timestamp': datetime.now()
+                'timestamp': get_current_time_ist()
             }
         else:
             return {
@@ -508,9 +551,13 @@ def get_nifty_data() -> Dict[str, Any]:
             }
 
     except Exception as e:
+        error_msg = str(e)
+        # Check if it's a credentials error
+        if 'credentials' in error_msg.lower() or 'access_token' in error_msg.lower():
+            error_msg = 'DhanHQ credentials not configured. Please set up .streamlit/secrets.toml'
         return {
             'success': False,
-            'error': str(e)
+            'error': error_msg
         }
 
 
@@ -529,16 +576,36 @@ def get_sensex_data() -> Dict[str, Any]:
             sensex = all_data.get('sensex', {})
             ohlc = sensex.get('ohlc', {})
 
+            # Check if we have valid price data
+            spot_price = ohlc.get('last_price', 0)
+            atm_strike = sensex.get('atm_strike', 0)
+
+            # If spot price is 0 or None, it means API failed
+            if not spot_price or spot_price == 0:
+                error_msg = ', '.join(all_data.get('errors', [])) if all_data.get('errors') else 'API returned no data'
+                return {
+                    'success': False,
+                    'error': f'Unable to fetch SENSEX price data: {error_msg}',
+                    'spot_price': None,
+                    'atm_strike': None,
+                    'open': None,
+                    'high': None,
+                    'low': None,
+                    'close': None,
+                    'chart_data': None,
+                    'timestamp': get_current_time_ist()
+                }
+
             return {
                 'success': True,
-                'spot_price': ohlc.get('last_price', 0),
-                'atm_strike': sensex.get('atm_strike', 0),
+                'spot_price': spot_price,
+                'atm_strike': atm_strike,
                 'open': ohlc.get('open', 0),
                 'high': ohlc.get('high', 0),
                 'low': ohlc.get('low', 0),
                 'close': ohlc.get('close', 0),
                 'chart_data': sensex.get('chart', {}).get('data'),
-                'timestamp': datetime.now()
+                'timestamp': get_current_time_ist()
             }
         else:
             return {
@@ -547,9 +614,13 @@ def get_sensex_data() -> Dict[str, Any]:
             }
 
     except Exception as e:
+        error_msg = str(e)
+        # Check if it's a credentials error
+        if 'credentials' in error_msg.lower() or 'access_token' in error_msg.lower():
+            error_msg = 'DhanHQ credentials not configured. Please set up .streamlit/secrets.toml'
         return {
             'success': False,
-            'error': str(e)
+            'error': error_msg
         }
 
 
