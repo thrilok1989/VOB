@@ -19,16 +19,16 @@ from collections import deque
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-import groq
 
-# Add these imports at the top of your file, after the existing imports
+# Groq import with proper error handling
 try:
     import groq
     GROQ_AVAILABLE = True
 except ImportError:
     GROQ_AVAILABLE = False
     print("Warning: Groq package not available. FINLLMS AI features will be limited.")
-    warnings.filterwarnings('ignore')
+
+warnings.filterwarnings('ignore')
 
 # Indian Standard Time (IST)
 IST = pytz.timezone('Asia/Kolkata')
