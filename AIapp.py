@@ -36,6 +36,10 @@ def add_ml_signal_tab():
     st.header("🤖 FINLLMS AI Signal Generator")
     st.markdown("### Advanced Options Trading Signals with FINLLMS on Groq")
     
+    # Initialize the signal generator if not exists
+    if 'ml_signal_generator' not in st.session_state:
+        st.session_state.ml_signal_generator = AdvancedMLSignalGenerator()
+    
     if not GROQ_AVAILABLE:
         st.error("""
         ❌ **Groq Package Not Available**
@@ -61,50 +65,63 @@ def add_ml_signal_tab():
         """)
         
         # Show basic alignment status even without Groq
-        if 'ml_signal_generator' not in st.session_state:
-            st.session_state.ml_signal_generator = AdvancedMLSignalGenerator()
-        
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🔍 Check Alignment Status", use_container_width=True):
-                alignment_data = st.session_state.ml_signal_generator.check_alignment_conditions()
-                display_alignment_status(alignment_data)
+                try:
+                    alignment_data = st.session_state.ml_signal_generator.check_alignment_conditions()
+                    display_alignment_status(alignment_data)
+                except Exception as e:
+                    st.error(f"Error checking alignment: {e}")
         
         with col2:
             if st.button("📊 Market Snapshot", use_container_width=True):
-                display_market_snapshot()
+                try:
+                    display_market_snapshot()
+                except Exception as e:
+                    st.error(f"Error displaying market snapshot: {e}")
         
         return
     
     # Display Groq status
-    if (st.session_state.ml_signal_generator and 
-        st.session_state.ml_signal_generator.groq_client):
-        st.success("✅ Groq Client: ACTIVE (FINLLMS models available)")
-    else:
-        st.error("❌ Groq Client: INACTIVE - Check API key in secrets")
+    try:
+        if st.session_state.ml_signal_generator.groq_client:
+            st.success("✅ Groq Client: ACTIVE (FINLLMS models available)")
+        else:
+            st.error("❌ Groq Client: INACTIVE - Check API key in secrets")
+    except Exception as e:
+        st.error(f"Error checking Groq status: {e}")
     
-    # Rest of the existing tab code remains the same...
     # Signal generation controls
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
         if st.button("🎯 Generate FINLLMS AI Signal", type="primary", use_container_width=True):
             with st.spinner("🤖 FINLLMS analyzing market alignment..."):
-                result = st.session_state.ml_signal_generator.generate_final_entry_signal()
-                
-                if result['signal_generated']:
-                    display_finllms_signal_result(result)
-                else:
-                    st.warning(f"❌ No strong signal: {result.get('reason', 'Unknown reason')}")
+                try:
+                    result = st.session_state.ml_signal_generator.generate_final_entry_signal()
+                    
+                    if result['signal_generated']:
+                        display_finllms_signal_result(result)
+                    else:
+                        st.warning(f"❌ No strong signal: {result.get('reason', 'Unknown reason')}")
+                except Exception as e:
+                    st.error(f"Error generating signal: {e}")
     
     with col2:
         if st.button("🔄 Check Alignment", use_container_width=True):
-            alignment_data = st.session_state.ml_signal_generator.check_alignment_conditions()
-            display_alignment_status(alignment_data)
+            try:
+                alignment_data = st.session_state.ml_signal_generator.check_alignment_conditions()
+                display_alignment_status(alignment_data)
+            except Exception as e:
+                st.error(f"Error checking alignment: {e}")
     
     with col3:
         if st.button("📊 Market Snapshot", use_container_width=True):
-            display_market_snapshot()
+            try:
+                display_market_snapshot()
+            except Exception as e:
+                st.error(f"Error displaying market snapshot: {e}")
     
     # Auto-signal generation
     st.subheader("🔄 Auto-Signal Generation")
@@ -126,61 +143,182 @@ def add_ml_signal_tab():
         
         if time_diff >= signal_interval:
             with st.spinner("🔍 Auto-checking for aligned signals..."):
-                result = st.session_state.ml_signal_generator.generate_final_entry_signal()
-                
-                if (result['signal_generated'] and 
-                    result['alignment_data']['confidence'] >= min_confidence):
+                try:
+                    result = st.session_state.ml_signal_generator.generate_final_entry_signal()
                     
-                    st.success("🎯 AUTO-SIGNAL GENERATED!")
-                    display_finllms_signal_result(result)
-                    st.balloons()
-                
-                st.session_state.last_auto_check = datetime.now()
-
-# Also update the AdvancedMLSignalGenerator class to handle missing Groq
-class AdvancedMLSignalGenerator:
-    """
-    Advanced ML Signal Generator that aligns multiple analysis dimensions
-    and uses Groq (including FINLLMS models) for final entry decision
-    """
-    
-    def __init__(self):
-        self.groq_client = None
-        self.setup_groq_client()
-        self.finllms_models = [
-            "finllm-1.5b-preview",
-            "finllm-7b-preview", 
-            "llama3-70b-8192"
-        ]
+                    if (result['signal_generated'] and 
+                        result['alignment_data']['confidence'] >= min_confidence):
+                        
+                        st.success("🎯 AUTO-SIGNAL GENERATED!")
+                        display_finllms_signal_result(result)
+                        st.balloons()
+                    
+                    st.session_state.last_auto_check = datetime.now()
+                except Exception as e:
+                    st.error(f"Error in auto-signal generation: {e}")
+def display_finllms_signal_result(result: Dict):
+    """Display FINLLMS-generated trading signal"""
+    try:
+        final_signal = result['final_signal']
+        alignment_data = result['alignment_data']
         
-    def setup_groq_client(self):
-        """Setup Groq client with FINLLMS models"""
-        if not GROQ_AVAILABLE:
-            return
+        st.success("🎯 **FINLLMS AI TRADING SIGNAL GENERATED!**")
+        
+        # Main signal card
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            signal_color = "🟢" if "BUY" in final_signal['signal'] else "🔴" if "SELL" in final_signal['signal'] else "🟡"
+            st.metric("AI Signal", f"{signal_color} {final_signal['signal']}")
+        
+        with col2:
+            confidence_color = "🟢" if final_signal.get('confidence_level') in ['HIGH', 'VERY_HIGH'] else "🟡"
+            st.metric("Confidence", f"{confidence_color} {final_signal.get('confidence_level', 'MEDIUM')}")
+        
+        with col3:
+            st.metric("Alignment", f"{alignment_data['confidence']:.1f}%")
+        
+        with col4:
+            st.metric("AI Model", final_signal.get('ai_source', 'FINLLMS'))
+        
+        # Options trading details
+        st.subheader("💎 Options Trading Details")
+        
+        details_col1, details_col2, details_col3 = st.columns(3)
+        
+        with details_col1:
+            st.info(f"**Strike:** {final_signal.get('strike_recommendation', 'N/A')}")
+            st.info(f"**Entry Premium:** {final_signal.get('entry_premium', 'N/A')}")
+        
+        with details_col2:
+            st.success(f"**Target Premium:** {final_signal.get('target_premium', 'N/A')}")
+            st.success(f"**Risk-Reward:** {final_signal.get('risk_reward', 'N/A')}")
+        
+        with details_col3:
+            st.error(f"**Stoploss Premium:** {final_signal.get('stoploss_premium', 'N/A')}")
+            st.error(f"**Position Size:** {final_signal.get('position_size', 'N/A')}")
+        
+        # Greeks analysis
+        if final_signal.get('delta_range') != 'N/A' or final_signal.get('theta_impact') != 'N/A':
+            st.subheader("📊 Greeks Analysis")
+            greeks_col1, greeks_col2 = st.columns(2)
             
-        try:
-            groq_api_key = st.secrets.get("GROQ", {}).get("API_KEY")
-            if groq_api_key:
-                self.groq_client = groq.Groq(api_key=groq_api_key)
-            else:
-                st.error("❌ Groq API key not found in secrets")
-        except Exception as e:
-            st.error(f"❌ Groq client setup failed: {e}")
+            with greeks_col1:
+                st.write(f"**Delta Range:** {final_signal.get('delta_range', 'N/A')}")
+                st.write(f"**Theta Impact:** {final_signal.get('theta_impact', 'N/A')}")
+            
+            with greeks_col2:
+                st.write(f"**Expiry Focus:** {final_signal.get('expiry_focus', 'Current Week')}")
+                st.write(f"**Analysis Type:** {final_signal.get('analysis_type', 'FINANCIAL_OPTIONS')}")
+        
+        # AI Rationale
+        st.subheader("💡 FINLLMS Analysis Rationale")
+        st.write(final_signal.get('rationale', 'No detailed rationale provided'))
+        
+        # Raw AI responses
+        with st.expander("🤖 Raw AI Analysis"):
+            tab1, tab2 = st.tabs(["FINLLMS Response", "Groq Response"])
+            
+            with tab1:
+                if 'finllms_analysis' in result and 'raw_response' in result['finllms_analysis']:
+                    st.text_area("FINLLMS Analysis", result['finllms_analysis']['raw_response'], height=250)
+                else:
+                    st.write("No FINLLMS response available")
+            
+            with tab2:
+                if 'groq_analysis' in result and 'raw_response' in result['groq_analysis']:
+                    st.text_area("Groq Analysis", result['groq_analysis']['raw_response'], height=200)
+                else:
+                    st.write("No Groq response available")
+        
+        st.caption(f"⏱️ Processing time: {result['processing_time']:.2f}s")
+    
+    except Exception as e:
+        st.error(f"Error displaying signal result: {e}")
 
-    # ... rest of the class methods remain the same
+def display_alignment_status(alignment_data: Dict):
+    """Display current alignment status"""
+    try:
+        st.subheader("⚖️ Component Alignment Status")
+        
+        if alignment_data['all_aligned']:
+            st.success(f"✅ ALL COMPONENTS ALIGNED - {alignment_data['direction']}")
+            st.metric("Overall Confidence", f"{alignment_data['confidence']:.1f}%")
+            
+            # Show trigger conditions
+            st.info(f"**Trigger:** {alignment_data['trigger_conditions'].get('entry_type', 'N/A')} "
+                   f"| Strength: {alignment_data['trigger_conditions'].get('signal_strength', 'N/A')}")
+        else:
+            st.warning("❌ Components Not Aligned - No trade signal")
+        
+        # Detailed component status
+        st.subheader("🔧 Detailed Component Analysis")
+        
+        alignment_details = alignment_data['alignment_details']
+        
+        for component, data in alignment_details.items():
+            with st.expander(f"{component.replace('_', ' ').title()}", expanded=False):
+                col1, col2, col3 = st.columns([2, 1, 2])
+                
+                with col1:
+                    st.write("**Status**")
+                    bias = data.get('bias', 'NEUTRAL')
+                    bias_color = "🟢" if bias == 'BULLISH' else "🔴" if bias == 'BEARISH' else "🟡"
+                    st.write(f"{bias_color} {bias}")
+                
+                with col2:
+                    st.write("**Score**")
+                    score = data.get('score', data.get('confidence', 0))
+                    if isinstance(score, float):
+                        st.write(f"{score:.1f}")
+                    else:
+                        st.write(str(score))
+                
+                with col3:
+                    st.write("**Details**")
+                    for key, value in list(data.items())[:3]:
+                        if key not in ['bias', 'score', 'confidence']:
+                            st.write(f"{key}: {value}")
+    
+    except Exception as e:
+        st.error(f"Error displaying alignment status: {e}")
 
-warnings.filterwarnings('ignore')
-
-# Indian Standard Time (IST)
-IST = pytz.timezone('Asia/Kolkata')
-
-# Import Dhan API for Indian indices volume data
-try:
-    from dhan_data_fetcher import DhanDataFetcher
-    DHAN_AVAILABLE = True
-except ImportError:
-    DHAN_AVAILABLE = False
-    print("Warning: Dhan API not available. Volume data may be missing for Indian indices.")
+def display_market_snapshot():
+    """Display current market snapshot"""
+    try:
+        st.subheader("🌐 Market Snapshot")
+        
+        # Current price and bias
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.session_state.get('last_df') is not None:
+                current_price = st.session_state['last_df'].iloc[-1]['Close']
+                st.metric("Nifty Current", f"₹{current_price:.2f}")
+        
+        with col2:
+            if st.session_state.get('overall_nifty_bias'):
+                bias_color = "🟢" if st.session_state.overall_nifty_bias == "BULLISH" else "🔴" if st.session_state.overall_nifty_bias == "BEARISH" else "🟡"
+                st.metric("Overall Bias", f"{bias_color} {st.session_state.overall_nifty_bias}")
+        
+        with col3:
+            st.metric("Overall Score", f"{st.session_state.get('overall_nifty_score', 0):.1f}")
+        
+        # ML trend prediction
+        if (st.session_state.get('ml_predictor') and 
+            st.session_state.ml_predictor.is_trained and
+            st.session_state.get('last_df') is not None):
+            
+            trend, confidence = st.session_state.ml_predictor.predict_trend(st.session_state['last_df'])
+            st.info(f"🤖 ML Trend Prediction: **{trend}** (Confidence: {confidence:.1%})")
+        
+        # Market hour status
+        current_hour = datetime.now().hour
+        market_status = "🟢 OPEN" if 9 <= current_hour < 16 else "🔴 CLOSED"
+        st.write(f"**Market Status:** {market_status}")
+    
+    except Exception as e:
+        st.error(f"Error displaying market snapshot: {e}")
 
 # =============================================
 # ENHANCED MARKET DATA FETCHER
