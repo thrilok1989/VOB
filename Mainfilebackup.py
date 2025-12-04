@@ -14,7 +14,7 @@ Features:
  - Breakout Probability Index (heuristic)
  - ATM-shift detection (center-of-mass)
  - Auto Trade Suggestion (heuristic)
- - Developer tuning controls
+ - Credentials stored in Streamlit Secrets
 """
 
 import streamlit as st
@@ -28,10 +28,16 @@ from datetime import datetime, timedelta
 import json
 
 # -----------------------
-#  DHAN API CONFIGURATION
+#  DHAN API CONFIGURATION (FROM SECRETS)
 # -----------------------
-DHAN_CLIENT_ID = "YOUR_CLIENT_ID_HERE"  # Replace with your Client ID (numeric)
-DHAN_ACCESS_TOKEN = "YOUR_ACCESS_TOKEN_HERE"  # Replace with your Access Token (starts with eyJ)
+try:
+    # Try to load from Streamlit secrets
+    DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
+    DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
+except Exception:
+    # Fallback to hardcoded values for local testing
+    DHAN_CLIENT_ID = "YOUR_CLIENT_ID_HERE"
+    DHAN_ACCESS_TOKEN = "YOUR_ACCESS_TOKEN_HERE"
 
 # Strip whitespace
 DHAN_CLIENT_ID = str(DHAN_CLIENT_ID).strip()
@@ -414,19 +420,36 @@ def center_of_mass_oi(merged_df, col):
 with st.sidebar:
     st.header("⚙️ DhanHQ Configuration")
     
+    # Check if credentials are set
     if DHAN_CLIENT_ID == "YOUR_CLIENT_ID_HERE" or DHAN_ACCESS_TOKEN == "YOUR_ACCESS_TOKEN_HERE":
         st.error("⚠️ **CREDENTIALS NOT SET!**")
-        st.warning("""
-Please update the script with your credentials:
+        st.info("""
+**Setup Streamlit Secrets:**
 
+**For Local Development:**
+Create `.streamlit/secrets.toml`:
+```toml
+DHAN_CLIENT_ID = "1100003626"
+DHAN_ACCESS_TOKEN = "eyJhbGc..."
+```
+
+**For Streamlit Cloud:**
+1. Go to App Settings
+2. Click "Secrets" section
+3. Add:
+```
+DHAN_CLIENT_ID = "your_id"
+DHAN_ACCESS_TOKEN = "your_token"
+```
+
+**Get Credentials:**
 1. Go to web.dhan.co
-2. Login → Profile → Access DhanHQ APIs  
-3. Generate Access Token
-4. Copy Client ID and Token
-5. Update script lines 28-29
+2. Profile → Access DhanHQ APIs
+3. Generate Access Token (24hr validity)
         """)
         st.stop()
     
+    # Token validity check
     token_valid, token_info = check_token_validity()
     
     if token_valid:
@@ -434,14 +457,13 @@ Please update the script with your credentials:
     else:
         st.error(f"❌ Token Issue: {token_info}")
         st.warning("""
-**Token expired or invalid!**
+**Token expired!**
 
-Generate new token:
 1. Go to web.dhan.co
 2. Profile → Access DhanHQ APIs
-3. Click "Generate Access Token"
-4. Copy entire token (starts with eyJ)
-5. Update in script
+3. Generate new token
+4. Update secrets file/cloud config
+5. Restart app
         """)
     
     st.markdown("---")
@@ -458,14 +480,7 @@ with st.spinner("📡 Fetching NIFTY spot price..."):
     spot = get_nifty_spot_price()
 
 if spot == 0.0:
-    st.error("❌ Unable to fetch NIFTY spot price")
-    st.info("""
-**Troubleshooting:**
-1. Check your Client ID is numeric (e.g., 1100003626)
-2. Check your token starts with 'eyJ'
-3. Generate fresh token (valid 24 hours)
-4. Ensure no extra spaces in credentials
-    """)
+    st.error("❌ Unable to fetch NIFTY spot price. Check credentials and token validity.")
     st.stop()
 
 expiries = get_expiry_list()
@@ -519,6 +534,7 @@ try:
 except:
     tau = 7.0 / 365.0
 
+# Calculate Greeks and metrics for each strike
 for i, row in merged.iterrows():
     strike = int(row["strikePrice"])
     
@@ -601,6 +617,7 @@ for i, row in merged.iterrows():
     merged.at[i, "CE_IV_Delta"] = ce_iv_delta
     merged.at[i, "PE_IV_Delta"] = pe_iv_delta
 
+# Market bias calculation
 polarity = 0.0
 for _, r in merged.iterrows():
     s = r["strikePrice"]
@@ -630,6 +647,7 @@ elif polarity < -1:
 else:
     market_bias = "Neutral"
 
+# Aggregate metrics
 total_CE_OI = merged["OI_CE"].sum()
 total_PE_OI = merged["OI_PE"].sum()
 total_CE_chg = merged["Chg_OI_CE"].sum()
@@ -685,26 +703,26 @@ atm_shift_str = " | ".join(atm_shift) if atm_shift else "Neutral"
 # -----------------------
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Underlying (Spot)", f"{spot:.2f}")
-    st.metric("ATM Strike", atm_strike)
+    st.metric("Underlying (Spot)", f"₹{spot:.2f}")
+    st.metric("ATM Strike", f"₹{atm_strike}")
 with col2:
-    st.metric("Total CE OI (window)", int(total_CE_OI))
-    st.metric("Total PE OI (window)", int(total_PE_OI))
+    st.metric("Total CE OI", f"{int(total_CE_OI):,}")
+    st.metric("Total PE OI", f"{int(total_PE_OI):,}")
 with col3:
-    st.metric("Total CE ΔOI", int(total_CE_chg))
-    st.metric("Total PE ΔOI", int(total_PE_chg))
+    st.metric("Total CE ΔOI", f"{int(total_CE_chg):,}")
+    st.metric("Total PE ΔOI", f"{int(total_PE_chg):,}")
 with col4:
-    st.metric("Net Delta Exposure (est)", int(net_delta_exposure))
+    st.metric("Net Delta Exposure", f"{int(net_delta_exposure):,}")
     st.metric("Market Bias", market_bias)
 
 st.markdown("### 🔎 ITM / OTM Pressure Summary (ATM ± 8 strikes)")
 pressure_table = pd.DataFrame([
-    {"Category": "ITM CE OI", "Value": int(ITM_CE_OI), "Winding_Count": int(ITM_CE_winding_count), "Winding_%": round(itm_ce_winding_pct, 1)},
-    {"Category": "OTM CE OI", "Value": int(OTM_CE_OI), "Winding_Count": int(OTM_CE_winding_count), "Winding_%": round(otm_ce_winding_pct, 1)},
-    {"Category": "ITM PE OI", "Value": int(ITM_PE_OI), "Winding_Count": int(ITM_PE_winding_count), "Winding_%": round(itm_pe_winding_pct, 1)},
-    {"Category": "OTM PE OI", "Value": int(OTM_PE_OI), "Winding_Count": int(OTM_PE_winding_count), "Winding_%": round(otm_pe_winding_pct, 1)}
+    {"Category": "ITM CE OI", "Value": f"{int(ITM_CE_OI):,}", "Winding_Count": int(ITM_CE_winding_count), "Winding_%": f"{itm_ce_winding_pct:.1f}%"},
+    {"Category": "OTM CE OI", "Value": f"{int(OTM_CE_OI):,}", "Winding_Count": int(OTM_CE_winding_count), "Winding_%": f"{otm_ce_winding_pct:.1f}%"},
+    {"Category": "ITM PE OI", "Value": f"{int(ITM_PE_OI):,}", "Winding_Count": int(ITM_PE_winding_count), "Winding_%": f"{itm_pe_winding_pct:.1f}%"},
+    {"Category": "OTM PE OI", "Value": f"{int(OTM_PE_OI):,}", "Winding_Count": int(OTM_PE_winding_count), "Winding_%": f"{otm_pe_winding_pct:.1f}%"}
 ])
-st.dataframe(pressure_table, use_container_width=True)
+st.dataframe(pressure_table, use_container_width=True, hide_index=True)
 
 st.markdown("### 🔁 Winding vs Unwinding Summary")
 winding_unwind_summary = pd.DataFrame([
@@ -713,13 +731,15 @@ winding_unwind_summary = pd.DataFrame([
     {"Metric": "PE Winding Count", "Value": int((merged["PE_Winding"] == "Winding").sum())},
     {"Metric": "PE Unwinding Count", "Value": int((merged["PE_Winding"] == "Unwinding").sum())}
 ])
-st.dataframe(winding_unwind_summary, use_container_width=True)
+st.dataframe(winding_unwind_summary, use_container_width=True, hide_index=True)
 
 st.markdown("### 🧾 Strike-level Table (ATM ± 8 strikes)")
 display_cols = [
     "strikePrice",
-    "OI_CE", "Chg_OI_CE", "Vol_CE", "LTP_CE", "CE_Price_Delta", "CE_IV_Delta", "CE_Winding", "CE_Divergence", "Delta_CE", "Gamma_CE", "GEX_CE",
-    "OI_PE", "Chg_OI_PE", "Vol_PE", "LTP_PE", "PE_Price_Delta", "PE_IV_Delta", "PE_Winding", "PE_Divergence", "Delta_PE", "Gamma_PE", "GEX_PE",
+    "OI_CE", "Chg_OI_CE", "Vol_CE", "LTP_CE", "CE_Price_Delta", "CE_IV_Delta", "CE_Winding", "CE_Divergence", 
+    "Delta_CE", "Gamma_CE", "GEX_CE",
+    "OI_PE", "Chg_OI_PE", "Vol_PE", "LTP_PE", "PE_Price_Delta", "PE_IV_Delta", "PE_Winding", "PE_Divergence", 
+    "Delta_PE", "Gamma_PE", "GEX_PE",
     "Strength_Score", "Gamma_Pressure", "Interpretation"
 ]
 
@@ -727,9 +747,20 @@ for c in display_cols:
     if c not in merged.columns:
         merged[c] = np.nan
 
-st.dataframe(merged[display_cols].reset_index(drop=True), use_container_width=True)
+# Format numeric columns
+display_df = merged[display_cols].copy()
+display_df["LTP_CE"] = display_df["LTP_CE"].apply(lambda x: f"₹{x:.2f}" if pd.notna(x) else "")
+display_df["LTP_PE"] = display_df["LTP_PE"].apply(lambda x: f"₹{x:.2f}" if pd.notna(x) else "")
+display_df["CE_Price_Delta"] = display_df["CE_Price_Delta"].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "")
+display_df["PE_Price_Delta"] = display_df["PE_Price_Delta"].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "")
+display_df["Delta_CE"] = display_df["Delta_CE"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "")
+display_df["Delta_PE"] = display_df["Delta_PE"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "")
+display_df["Gamma_CE"] = display_df["Gamma_CE"].apply(lambda x: f"{x:.5f}" if pd.notna(x) else "")
+display_df["Gamma_PE"] = display_df["Gamma_PE"].apply(lambda x: f"{x:.5f}" if pd.notna(x) else "")
 
-st.markdown("### 🔥 Change-in-OI Heatmap (visual hint)")
+st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+st.markdown("### 🔥 Change-in-OI Heatmap")
 chg_oi_heatmap = merged[["strikePrice", "Chg_OI_CE", "Chg_OI_PE"]].set_index("strikePrice")
 
 def color_chg(val):
@@ -745,26 +776,26 @@ def color_chg(val):
 
 st.dataframe(chg_oi_heatmap.style.applymap(color_chg), use_container_width=True)
 
-st.markdown("### 🧠 Max Pain (approx) & ATM Shift")
+st.markdown("### 🧠 Max Pain & ATM Shift")
 col1, col2 = st.columns([1,2])
 with col1:
-    st.metric("Approx. Max Pain", max_pain)
+    st.metric("Approx. Max Pain", f"₹{max_pain}" if max_pain else "N/A")
 with col2:
-    st.info(f"ATM Shift info: {atm_shift_str}")
+    st.info(f"**ATM Shift:** {atm_shift_str}")
 
 st.markdown("### ⚙️ Greeks / Exposure Summary")
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("Total GEX CE (approx)", int(total_gex_ce))
-    st.metric("Total GEX PE (approx)", int(total_gex_pe))
+    st.metric("Total GEX CE", f"{int(total_gex_ce):,}")
+    st.metric("Total GEX PE", f"{int(total_gex_pe):,}")
 with col2:
-    st.metric("Net GEX (CE - PE)", int(total_gex_net))
+    st.metric("Net GEX (CE - PE)", f"{int(total_gex_net):,}")
     st.metric("Breakout Index", f"{breakout_index}%")
 with col3:
-    st.metric("Net Delta Exposure (est)", int(net_delta_exposure))
-    st.metric("Lot Size used", LOT_SIZE)
+    st.metric("Net Delta Exposure", f"{int(net_delta_exposure):,}")
+    st.metric("Lot Size", LOT_SIZE)
 
-st.markdown("### 🤖 Auto Trade Suggestion (heuristic & explainable)")
+st.markdown("### 🤖 Auto Trade Suggestion")
 suggestions = []
 
 if market_bias in ["Strong Bullish", "Bullish"] and breakout_index >= 60 and (ITM_CE_winding_count <= ITM_PE_winding_count):
@@ -785,24 +816,26 @@ if not suggestions:
 
 for tag, text in suggestions:
     if tag == "BULL":
-        st.success(f"🟩 {tag}: {text}")
+        st.success(f"🟩 **{tag}:** {text}")
     elif tag == "BEAR":
-        st.error(f"🟥 {tag}: {text}")
+        st.error(f"🟥 **{tag}:** {text}")
     else:
-        st.warning(f"⚠️ {tag}: {text}")
+        st.warning(f"⚠️ **{tag}:** {text}")
 
-with st.expander("⚙️ Developer / Tuning Controls & Notes"):
+with st.expander("⚙️ Developer / Tuning Controls"):
     st.write("**DhanHQ API Integration**")
-    st.write(f" - NIFTY Security ID: {NIFTY_UNDERLYING_SCRIP}")
-    st.write(f" - Selected Expiry: {expiry}")
-    st.write(f" - Time to Expiry: {tau*365:.1f} days")
-    st.write(f" - Strike gap detected: {strike_gap}")
-    st.write("**Tuning constants:**")
-    st.write(f" - AUTO_REFRESH_SEC = {AUTO_REFRESH_SEC}")
-    st.write(f" - LOT_SIZE = {LOT_SIZE}")
-    st.write(f" - RISK_FREE_RATE = {RISK_FREE_RATE}")
-    st.write(f" - ATM_STRIKE_WINDOW = {ATM_STRIKE_WINDOW}")
-    st.write(" - Score weights:", SCORE_WEIGHTS)
-    st.write(" - Breakout index weights:", BREAKOUT_INDEX_WEIGHTS)
+    st.write(f"- NIFTY Security ID: {NIFTY_UNDERLYING_SCRIP}")
+    st.write(f"- Selected Expiry: {expiry}")
+    st.write(f"- Time to Expiry: {tau*365:.1f} days")
+    st.write(f"- Strike gap detected: {strike_gap}")
+    st.write("**Tuning Constants:**")
+    st.json({
+        "AUTO_REFRESH_SEC": AUTO_REFRESH_SEC,
+        "LOT_SIZE": LOT_SIZE,
+        "RISK_FREE_RATE": RISK_FREE_RATE,
+        "ATM_STRIKE_WINDOW": ATM_STRIKE_WINDOW,
+        "SCORE_WEIGHTS": SCORE_WEIGHTS,
+        "BREAKOUT_INDEX_WEIGHTS": BREAKOUT_INDEX_WEIGHTS
+    })
 
-st.caption("✅ **DhanHQ Integration** | Real-time data from DhanHQ API | All calculations preserved")
+st.caption("✅ **DhanHQ Integration** | Credentials stored securely in Streamlit Secrets | Real-time option chain analysis")
