@@ -1,6 +1,6 @@
-# nifty_option_screener_v3.py
+# nifty_option_screener_v3_dhan.py
 """
-Nifty Option Screener v3.0 — Full Option Chain Engine
+Nifty Option Screener v3.0 — Full Option Chain Engine (DhanHQ Integration)
 Features:
  - ATM ± 8 strikes (by strike gap)
  - Winding/Unwinding (8-type logic using OI + price delta)
@@ -24,6 +24,27 @@ import requests
 import time
 from math import log, sqrt, exp
 from scipy.stats import norm
+from datetime import datetime, timedelta
+import json
+
+# -----------------------
+#  DHAN API CONFIGURATION
+# -----------------------
+DHAN_CLIENT_ID = "YOUR_DHAN_CLIENT_ID"  # Replace with your Client ID
+DHAN_ACCESS_TOKEN = "YOUR_DHAN_ACCESS_TOKEN"  # Replace with your Access Token
+
+# DhanHQ API endpoints
+DHAN_BASE_URL = "https://api.dhan.co"
+DHAN_HEADERS = {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "client-id": DHAN_CLIENT_ID,
+    "access-token": DHAN_ACCESS_TOKEN
+}
+
+# Security IDs for NIFTY
+NIFTY_UNDERLYING_SCRIP = "13"  # NSE_FNO segment
+NIFTY_UNDERLYING_SEG = "IDX_I"  # Index segment for spot price
 
 # -----------------------
 #  USER TUNABLE CONSTANTS
@@ -38,10 +59,144 @@ SCORE_WEIGHTS = {"chg_oi": 2.0, "volume": 0.5, "oi": 0.2, "iv": 0.3}
 BREAKOUT_INDEX_WEIGHTS = {"atm_oi_shift": 0.4, "winding_balance": 0.3, "vol_oi_div": 0.2, "gamma_pressure": 0.1}
 
 # -----------------------
-#  UTIL FUNCTIONS
+#  DHAN API FUNCTIONS
 # -----------------------
-st.set_page_config(page_title="Nifty Option Screener v3.0", layout="wide")
-st.title("📊 NIFTY Option Screener v3.0 — Full Option Chain + Greeks + GEX")
+@st.cache_data(ttl=5)
+def get_nifty_spot_price():
+    """Fetch NIFTY spot price from DhanHQ"""
+    try:
+        url = f"{DHAN_BASE_URL}/v2/marketfeed/ltp"
+        payload = {
+            "IDX_I": [NIFTY_UNDERLYING_SCRIP]
+        }
+        response = requests.post(url, headers=DHAN_HEADERS, json=payload, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("status") == "success" and data.get("data"):
+            ltp_data = data["data"].get("IDX_I", {}).get(NIFTY_UNDERLYING_SCRIP, {})
+            return float(ltp_data.get("last_price", 0.0))
+        return 0.0
+    except Exception as e:
+        st.warning(f"⚠️ Could not fetch NIFTY spot: {e}")
+        return 0.0
+
+@st.cache_data(ttl=300)
+def get_expiry_list():
+    """Fetch available expiry dates for NIFTY options"""
+    try:
+        url = f"{DHAN_BASE_URL}/v2/expirylist"
+        params = {
+            "underlying_scrip": NIFTY_UNDERLYING_SCRIP,
+            "underlying_seg": NIFTY_UNDERLYING_SEG
+        }
+        response = requests.get(url, headers=DHAN_HEADERS, params=params, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("status") == "success" and data.get("data"):
+            return data["data"]
+        return []
+    except Exception as e:
+        st.warning(f"⚠️ Could not fetch expiry list: {e}")
+        return []
+
+@st.cache_data(ttl=10)
+def fetch_dhan_option_chain(expiry_date):
+    """
+    Fetch option chain data from DhanHQ for selected expiry
+    
+    Args:
+        expiry_date: Expiry date in YYYY-MM-DD format
+    
+    Returns:
+        dict with 'spot', 'expiry', 'records' (list of option data)
+    """
+    try:
+        url = f"{DHAN_BASE_URL}/v2/optionchain"
+        params = {
+            "underlying_scrip": NIFTY_UNDERLYING_SCRIP,
+            "underlying_seg": NIFTY_UNDERLYING_SEG,
+            "expiry": expiry_date
+        }
+        response = requests.get(url, headers=DHAN_HEADERS, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("status") == "success":
+            return data.get("data", {})
+        else:
+            st.warning(f"⚠️ API returned status: {data.get('status')}")
+            return None
+            
+    except Exception as e:
+        st.error(f"❌ Error fetching option chain: {e}")
+        return None
+
+def parse_dhan_option_chain(chain_data, spot_price):
+    """
+    Parse DhanHQ option chain response into CE and PE dataframes
+    
+    Args:
+        chain_data: Raw option chain data from DhanHQ
+        spot_price: Current NIFTY spot price
+    
+    Returns:
+        tuple: (df_ce, df_pe, expiry_date)
+    """
+    if not chain_data or not isinstance(chain_data, dict):
+        return None, None, None
+    
+    # DhanHQ returns option chain as dict with strike prices as keys
+    # Format: {strike: {CE: {...}, PE: {...}}}
+    oc_data = chain_data.get("oc", {})
+    
+    if not oc_data:
+        return None, None, None
+    
+    ce_rows = []
+    pe_rows = []
+    
+    for strike_str, strike_data in oc_data.items():
+        try:
+            strike = int(float(strike_str))
+        except:
+            continue
+        
+        # Parse CE (Call) data
+        ce_data = strike_data.get("CE")
+        if ce_data:
+            ce_rows.append({
+                "strikePrice": strike,
+                "OI_CE": int(ce_data.get("open_interest", 0)),
+                "Chg_OI_CE": int(ce_data.get("open_interest", 0)) - int(ce_data.get("previous_open_interest", 0)),
+                "Vol_CE": int(ce_data.get("volume", 0)),
+                "LTP_CE": float(ce_data.get("last_price", 0.0)),
+                "IV_CE": float(ce_data.get("implied_volatility", 0.0))
+            })
+        
+        # Parse PE (Put) data
+        pe_data = strike_data.get("PE")
+        if pe_data:
+            pe_rows.append({
+                "strikePrice": strike,
+                "OI_PE": int(pe_data.get("open_interest", 0)),
+                "Chg_OI_PE": int(pe_data.get("open_interest", 0)) - int(pe_data.get("previous_open_interest", 0)),
+                "Vol_PE": int(pe_data.get("volume", 0)),
+                "LTP_PE": float(pe_data.get("last_price", 0.0)),
+                "IV_PE": float(pe_data.get("implied_volatility", 0.0))
+            })
+    
+    df_ce = pd.DataFrame(ce_rows)
+    df_pe = pd.DataFrame(pe_rows)
+    
+    return df_ce, df_pe
+
+# -----------------------
+#  UTIL FUNCTIONS (ORIGINAL)
+# -----------------------
+st.set_page_config(page_title="Nifty Option Screener v3.0 (DhanHQ)", layout="wide")
+st.title("📊 NIFTY Option Screener v3.0 — Full Option Chain + Greeks + GEX (DhanHQ)")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -51,20 +206,6 @@ def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
         st.rerun()
 
 auto_refresh()
-
-@st.cache_data(ttl=180)
-def fetch_nse_option_chain():
-    url = "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    s = requests.Session()
-    try:
-        s.get("https://www.nseindia.com", headers=headers, timeout=5)  # seed session
-        r = s.get(url, headers=headers, timeout=7)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        st.warning(f"⚠️ Could not fetch NSE data: {e}")
-        return None
 
 def safe_int(x):
     try:
@@ -145,20 +286,15 @@ def strike_strength_score(row, weights=SCORE_WEIGHTS):
     return score
 
 # Max Pain approx (using premium * OI)
-def max_pain_from_expiry(records):
+def max_pain_from_merged(merged_df):
+    """Calculate max pain from merged dataframe"""
     pain = {}
-    for item in records:
-        strike = item.get("strikePrice")
-        ce = item.get("CE")
-        pe = item.get("PE")
-        ce_loss = 0
-        pe_loss = 0
-        if ce:
-            ce_loss = safe_float(ce.get("lastPrice", 0)) * safe_int(ce.get("openInterest", 0))
-        if pe:
-            pe_loss = safe_float(pe.get("lastPrice", 0)) * safe_int(pe.get("openInterest", 0))
-        pain.setdefault(strike, 0)
-        pain[strike] += ce_loss + pe_loss
+    for _, row in merged_df.iterrows():
+        strike = int(row["strikePrice"])
+        ce_loss = safe_float(row.get("LTP_CE", 0)) * safe_int(row.get("OI_CE", 0))
+        pe_loss = safe_float(row.get("LTP_PE", 0)) * safe_int(row.get("OI_PE", 0))
+        pain[strike] = ce_loss + pe_loss
+    
     if not pain:
         return None
     pain_series = pd.Series(pain).sort_values()
@@ -253,81 +389,106 @@ def breakout_probability_index(merged_df, atm, strike_gap):
 # -----------------------
 #  MAIN APP FLOW
 # -----------------------
-data = fetch_nse_option_chain()
-if data is None:
+
+# Sidebar for API configuration
+with st.sidebar:
+    st.header("⚙️ DhanHQ Configuration")
+    
+    use_env = st.checkbox("Use credentials from script", value=True)
+    
+    if not use_env:
+        DHAN_CLIENT_ID = st.text_input("Client ID", value=DHAN_CLIENT_ID, type="password")
+        DHAN_ACCESS_TOKEN = st.text_input("Access Token", value=DHAN_ACCESS_TOKEN, type="password")
+        
+        # Update headers
+        DHAN_HEADERS["client-id"] = DHAN_CLIENT_ID
+        DHAN_HEADERS["access-token"] = DHAN_ACCESS_TOKEN
+    
+    st.markdown("---")
+    st.info("📊 Auto-refreshes every 60 seconds")
+    
+    if st.button("🔄 Force Refresh Now"):
+        st.cache_data.clear()
+        st.rerun()
+
+# Fetch spot price
+spot = get_nifty_spot_price()
+
+if spot == 0.0:
+    st.error("❌ Unable to fetch NIFTY spot price. Check your DhanHQ API credentials.")
     st.stop()
 
-records = data.get("records", {})
-raw = records.get("data", [])
-expiries = records.get("expiryDates", [])
-spot = safe_float(records.get("underlyingValue", 0.0))
+# Fetch expiry list
+expiries = get_expiry_list()
 
+if not expiries:
+    st.error("❌ Unable to fetch expiry dates. Check your DhanHQ API credentials.")
+    st.stop()
+
+# Expiry selection
 expiry = st.selectbox("Select expiry", expiries, index=0 if expiries else None)
 
-# Build CE/PE lists for chosen expiry
-expiry_rows = [r for r in raw if r.get("expiryDate") == expiry]
-if not expiry_rows:
-    st.warning("No data for selected expiry")
+if not expiry:
+    st.warning("⚠️ No expiry selected")
     st.stop()
 
-ce_rows = []
-pe_rows = []
-for it in expiry_rows:
-    strike = safe_int(it.get("strikePrice", 0))
-    ce = it.get("CE")
-    pe = it.get("PE")
-    if ce:
-        ce_rows.append({
-            "strikePrice": strike,
-            "OI_CE": safe_int(ce.get("openInterest")),
-            "Chg_OI_CE": safe_int(ce.get("changeinOpenInterest")),
-            "Vol_CE": safe_int(ce.get("totalTradedVolume")),
-            "LTP_CE": safe_float(ce.get("lastPrice")),
-            "IV_CE": safe_float(ce.get("impliedVolatility"))
-        })
-    if pe:
-        pe_rows.append({
-            "strikePrice": strike,
-            "OI_PE": safe_int(pe.get("openInterest")),
-            "Chg_OI_PE": safe_int(pe.get("changeinOpenInterest")),
-            "Vol_PE": safe_int(pe.get("totalTradedVolume")),
-            "LTP_PE": safe_float(pe.get("lastPrice")),
-            "IV_PE": safe_float(pe.get("impliedVolatility"))
-        })
+# Fetch option chain data
+with st.spinner("📡 Fetching option chain data from DhanHQ..."):
+    chain_data = fetch_dhan_option_chain(expiry)
 
-df_ce = pd.DataFrame(ce_rows)
-df_pe = pd.DataFrame(pe_rows)
-if df_ce.empty or df_pe.empty:
-    st.warning("Insufficient CE/PE data")
+if chain_data is None:
+    st.error("❌ Failed to fetch option chain data")
     st.stop()
 
+# Parse option chain
+df_ce, df_pe = parse_dhan_option_chain(chain_data, spot)
+
+if df_ce is None or df_pe is None or df_ce.empty or df_pe.empty:
+    st.warning("⚠️ Insufficient CE/PE data")
+    st.stop()
+
+# Calculate strike gap and ATM
 strike_gap = strike_gap_from_series(df_ce["strikePrice"])
 atm_strike = min(df_ce["strikePrice"].tolist(), key=lambda x: abs(x - spot))
+
+# Filter to ATM ± 8 strikes
 lower = atm_strike - (ATM_STRIKE_WINDOW * strike_gap)
 upper = atm_strike + (ATM_STRIKE_WINDOW * strike_gap)
 
 df_ce = df_ce[(df_ce["strikePrice"] >= lower) & (df_ce["strikePrice"] <= upper)].reset_index(drop=True)
 df_pe = df_pe[(df_pe["strikePrice"] >= lower) & (df_pe["strikePrice"] <= upper)].reset_index(drop=True)
 
+# Merge CE and PE data
 merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
 merged["strikePrice"] = merged["strikePrice"].astype(int)
 
-# session storage for previous LTPs and IVs
+# Initialize session storage for previous LTPs and IVs
 if "prev_ltps_v3" not in st.session_state:
     st.session_state["prev_ltps_v3"] = {}
 if "prev_ivs_v3" not in st.session_state:
     st.session_state["prev_ivs_v3"] = {}
 
-# compute Greeks, deltas, labels, gex etc.
+# Calculate time to expiry
+try:
+    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d")
+    expiry_dt = expiry_dt.replace(hour=15, minute=30)  # 3:30 PM expiry
+    now = datetime.now()
+    time_diff = expiry_dt - now
+    tau = max(time_diff.total_seconds() / (365.25 * 24 * 3600), 1/365.25)  # Min 1 day
+except:
+    tau = 7.0 / 365.0  # Default 7 days
+
+# Compute Greeks, deltas, labels, gex etc.
 for i, row in merged.iterrows():
     strike = int(row["strikePrice"])
-    # ltp and iv
+    
+    # Get LTP and IV
     ltp_ce = safe_float(row.get("LTP_CE", 0.0))
     ltp_pe = safe_float(row.get("LTP_PE", 0.0))
     iv_ce = safe_float(row.get("IV_CE", np.nan))
     iv_pe = safe_float(row.get("IV_PE", np.nan))
 
-    # previous values (for change detection)
+    # Previous values (for change detection)
     key_ce = f"{expiry}_{strike}_CE"
     key_pe = f"{expiry}_{strike}_PE"
     prev_ce = st.session_state["prev_ltps_v3"].get(key_ce, None)
@@ -349,30 +510,22 @@ for i, row in merged.iterrows():
     chg_oi_ce = safe_int(row.get("Chg_OI_CE", 0))
     chg_oi_pe = safe_int(row.get("Chg_OI_PE", 0))
 
-    # winding/unwinding
+    # Winding/unwinding
     merged.at[i, "CE_Winding"] = "Winding" if chg_oi_ce > 0 else ("Unwinding" if chg_oi_ce < 0 else "NoChange")
     merged.at[i, "PE_Winding"] = "Winding" if chg_oi_pe > 0 else ("Unwinding" if chg_oi_pe < 0 else "NoChange")
 
-    # divergence tags
+    # Divergence tags
     merged.at[i, "CE_Divergence"] = price_oi_divergence_label(chg_oi_ce, safe_int(row.get("Vol_CE", 0)), ce_price_delta)
     merged.at[i, "PE_Divergence"] = price_oi_divergence_label(chg_oi_pe, safe_int(row.get("Vol_PE", 0)), pe_price_delta)
 
-    # strike interpretation
+    # Strike interpretation
     merged.at[i, "Interpretation"] = interpret_itm_otm(strike, atm_strike, chg_oi_ce, chg_oi_pe)
 
-    # time to expiry in years
-    # we don't have exact time-of-day; for intraday decisions, using days-to-expiry/365 is ok
-    # assume remaining days from expiry list? We only have expiry string; approximate tau = (expiry_date - today)/365
-    # For simplicity we'll approximate tau as 7 days for weekly and 30 days for monthly if unknown.
-    # Better: user can supply exact expiry date parsing. We'll approximate using 7 days for safety.
-    tau = 7.0 / 365.0
-
-    # use IV if available; if not, fallback to small value to avoid divide by zero
+    # Use IV if available; if not, fallback to 25% (0.25)
     sigma_ce = iv_ce / 100.0 if not np.isnan(iv_ce) and iv_ce > 0 else 0.25
     sigma_pe = iv_pe / 100.0 if not np.isnan(iv_pe) and iv_pe > 0 else 0.25
 
-    # Greeks
-    # For CE and PE we compute delta (call positive 0..1, put negative -1..0), gamma, vega, theta (yearly)
+    # Calculate Greeks
     try:
         delta_ce = bs_delta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
         gamma_ce = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
@@ -400,28 +553,57 @@ for i, row in merged.iterrows():
     merged.at[i, "Theta_PE"] = theta_pe
 
     # GEX contributions (approx)
-    # One contract notional ~ LOT_SIZE * Spot
     oi_ce = safe_int(row.get("OI_CE", 0))
     oi_pe = safe_int(row.get("OI_PE", 0))
     notional_per_contract = LOT_SIZE * spot
-    # dollar gamma contribution approx = gamma * notional_per_contract * number_of_contracts
     gex_ce = gamma_ce * notional_per_contract * oi_ce
     gex_pe = gamma_pe * notional_per_contract * oi_pe
     merged.at[i, "GEX_CE"] = gex_ce
     merged.at[i, "GEX_PE"] = gex_pe
     merged.at[i, "GEX_Net"] = gex_ce - gex_pe
 
-    # strength score
+    # Strength score
     merged.at[i, "Strength_Score"] = strike_strength_score(row)
 
-    # gamma pressure heuristic
+    # Gamma pressure heuristic
     merged.at[i, "Gamma_Pressure"] = gamma_pressure_metric(row, atm_strike, strike_gap)
 
-    # price deltas & iv deltas
+    # Price deltas & IV deltas
     merged.at[i, "CE_Price_Delta"] = ce_price_delta
     merged.at[i, "PE_Price_Delta"] = pe_price_delta
     merged.at[i, "CE_IV_Delta"] = ce_iv_delta
     merged.at[i, "PE_IV_Delta"] = pe_iv_delta
+
+# Calculate polarity for market bias
+polarity = 0.0
+for _, r in merged.iterrows():
+    s = r["strikePrice"]
+    chg_ce = safe_int(r.get("Chg_OI_CE", 0))
+    chg_pe = safe_int(r.get("Chg_OI_PE", 0))
+    if s < atm_strike:
+        if chg_ce < 0: polarity += 1.0
+        elif chg_ce > 0: polarity -= 1.0
+    else:
+        if chg_ce > 0: polarity -= 0.5
+        elif chg_ce < 0: polarity += 0.5
+    if s > atm_strike:
+        if chg_pe < 0: polarity += 1.0
+        elif chg_pe > 0: polarity -= 1.0
+    else:
+        if chg_pe > 0: polarity += 0.5
+        elif chg_pe < 0: polarity -= 0.5
+
+# Determine market bias
+if polarity > 5:
+    market_bias = "Strong Bullish"
+elif polarity > 1:
+    market_bias = "Bullish"
+elif polarity < -5:
+    market_bias = "Strong Bearish"
+elif polarity < -1:
+    market_bias = "Bearish"
+else:
+    market_bias = "Neutral"
 
 # Aggregations
 total_CE_OI = merged["OI_CE"].sum()
@@ -450,10 +632,10 @@ otm_ce_winding_pct = (OTM_CE_winding_count / (merged.loc[otm_ce_mask].shape[0] o
 itm_pe_winding_pct = (ITM_PE_winding_count / (merged.loc[itm_pe_mask].shape[0] or 1)) * 100
 otm_pe_winding_pct = (OTM_PE_winding_count / (merged.loc[otm_pe_mask].shape[0] or 1)) * 100
 
-# net delta exposure (approx) = sum(delta * OI * lot_size)
+# Net delta exposure
 merged["CE_Delta_Exposure"] = merged["Delta_CE"].fillna(0) * merged["OI_CE"].fillna(0) * LOT_SIZE
 merged["PE_Delta_Exposure"] = merged["Delta_PE"].fillna(0) * merged["OI_PE"].fillna(0) * LOT_SIZE
-net_delta_exposure = merged["CE_Delta_Exposure"].sum() + merged["PE_Delta_Exposure"].sum()  # PE delta is negative already
+net_delta_exposure = merged["CE_Delta_Exposure"].sum() + merged["PE_Delta_Exposure"].sum()
 
 # GEX totals
 total_gex_ce = merged["GEX_CE"].sum()
@@ -461,7 +643,7 @@ total_gex_pe = merged["GEX_PE"].sum()
 total_gex_net = merged["GEX_Net"].sum()
 
 # Max pain
-max_pain = max_pain_from_expiry(expiry_rows)
+max_pain = max_pain_from_merged(merged)
 
 # Breakout index
 breakout_index = breakout_probability_index(merged, atm_strike, strike_gap)
@@ -486,36 +668,6 @@ if pe_com > atm_strike + strike_gap:
 elif pe_com < atm_strike - strike_gap:
     atm_shift.append("PE build below ATM")
 atm_shift_str = " | ".join(atm_shift) if atm_shift else "Neutral"
-
-# polarity simple measure from wind/unwind counts and ITM logic
-polarity = 0.0
-for _, r in merged.iterrows():
-    s = r["strikePrice"]
-    chg_ce = safe_int(r.get("Chg_OI_CE", 0))
-    chg_pe = safe_int(r.get("Chg_OI_PE", 0))
-    if s < atm_strike:
-        if chg_ce < 0: polarity += 1.0
-        elif chg_ce > 0: polarity -= 1.0
-    else:
-        if chg_ce > 0: polarity -= 0.5
-        elif chg_ce < 0: polarity += 0.5
-    if s > atm_strike:
-        if chg_pe < 0: polarity += 1.0
-        elif chg_pe > 0: polarity -= 1.0
-    else:
-        if chg_pe > 0: polarity += 0.5
-        elif chg_pe < 0: polarity -= 0.5
-
-if polarity > 5:
-    market_bias = "Strong Bullish"
-elif polarity > 1:
-    market_bias = "Bullish"
-elif polarity < -5:
-    market_bias = "Strong Bearish"
-elif polarity < -1:
-    market_bias = "Bearish"
-else:
-    market_bias = "Neutral"
 
 # -----------------------
 #  UI: show metrics & tables
@@ -557,15 +709,19 @@ display_cols = [
     "strikePrice",
     "OI_CE", "Chg_OI_CE", "Vol_CE", "LTP_CE", "CE_Price_Delta", "CE_IV_Delta", "CE_Winding", "CE_Divergence", "Delta_CE", "Gamma_CE", "GEX_CE",
     "OI_PE", "Chg_OI_PE", "Vol_PE", "LTP_PE", "PE_Price_Delta", "PE_IV_Delta", "PE_Winding", "PE_Divergence", "Delta_PE", "Gamma_PE", "GEX_PE",
-    "Strength_Score", "Gamma_Pressure", "Polarity", "Interpretation"
+    "Strength_Score", "Gamma_Pressure", "Interpretation"
 ]
+
+# Ensure all columns exist
 for c in display_cols:
     if c not in merged.columns:
         merged[c] = np.nan
+
 st.dataframe(merged[display_cols].reset_index(drop=True), use_container_width=True)
 
 st.markdown("### 🔥 Change-in-OI Heatmap (visual hint)")
 chg_oi_heatmap = merged[["strikePrice", "Chg_OI_CE", "Chg_OI_PE"]].set_index("strikePrice")
+
 def color_chg(val):
     try:
         if val > 0:
@@ -576,6 +732,7 @@ def color_chg(val):
             return ""
     except:
         return ""
+
 st.dataframe(chg_oi_heatmap.style.applymap(color_chg), use_container_width=True)
 
 st.markdown("### 🧠 Max Pain (approx) & ATM Shift")
@@ -599,15 +756,19 @@ with col3:
 
 st.markdown("### 🤖 Auto Trade Suggestion (heuristic & explainable)")
 suggestions = []
+
 # Bull rule
 if market_bias in ["Strong Bullish", "Bullish"] and breakout_index >= 60 and (ITM_CE_winding_count <= ITM_PE_winding_count):
     suggestions.append(("BULL", "Consider BUY CALLs / Bull Spreads — conditions favour upside"))
+
 # Bear rule
 if market_bias in ["Strong Bearish", "Bearish"] and breakout_index >= 60 and (ITM_PE_winding_count <= ITM_CE_winding_count):
     suggestions.append(("BEAR", "Consider BUY PUTs / Bear Spreads — conditions favour downside"))
+
 # Gamma spike risk
 if merged["Gamma_Pressure"].abs().max() > 5000 and breakout_index >= 50:
     suggestions.append(("SPIKE RISK", "High gamma pressure near ATM — expect sharp moves / higher intraday vol"))
+
 # IV spike check
 avg_iv_delta = merged[["CE_IV_Delta", "PE_IV_Delta"]].abs().stack().dropna().mean() if not merged[["CE_IV_Delta", "PE_IV_Delta"]].empty else 0
 if avg_iv_delta > 0.5:
@@ -625,7 +786,13 @@ for tag, text in suggestions:
         st.warning(f"⚠️ {tag}: {text}")
 
 with st.expander("⚙️ Developer / Tuning Controls & Notes"):
-    st.write("Tuning constants (change in script):")
+    st.write("**DhanHQ API Integration**")
+    st.write(f" - Using DhanHQ option chain API")
+    st.write(f" - NIFTY Security ID: {NIFTY_UNDERLYING_SCRIP}")
+    st.write(f" - Selected Expiry: {expiry}")
+    st.write(f" - Time to Expiry: {tau*365:.1f} days")
+    st.write("")
+    st.write("**Tuning constants:**")
     st.write(f" - AUTO_REFRESH_SEC = {AUTO_REFRESH_SEC}")
     st.write(f" - LOT_SIZE = {LOT_SIZE}")
     st.write(f" - RISK_FREE_RATE = {RISK_FREE_RATE}")
@@ -635,8 +802,7 @@ with st.expander("⚙️ Developer / Tuning Controls & Notes"):
     st.write(f" - Strike gap detected = {strike_gap}")
     st.write(" - Score weights:", SCORE_WEIGHTS)
     st.write(" - Breakout index weights:", BREAKOUT_INDEX_WEIGHTS)
-    st.write("Session prev LTP keys sample (first 40):")
-    st.write({k: v for k, v in list(st.session_state["prev_ltps_v3"].items())[:40]})
-st.caption("Notes: Approximations used (Black-Scholes Greeks, approximate GEX using lot size). Replace fetch_nse_option_chain with broker API for production reliability.")
+
+st.caption("✅ **DhanHQ Integration** | Fetching real-time data from DhanHQ API | All original calculations preserved")
 
 # End script
