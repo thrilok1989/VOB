@@ -813,12 +813,3 @@ st.caption("✅ **DhanHQ Integration** | Real-time data from DhanHQ API | All ca
 ## **📋 Setup Instructions:**
 
 ### **1. Get Fresh Credentials (IMPORTANT!)**
-```
-1. Go to https://web.dhan.co
-2. Login with your Dhan account
-3. Click your name (top-right) → Profile
-4. Click "Access DhanHQ APIs"
-5. Click "Generate Access Token" button
-6. Copy:
-   - Client ID (numeric, e.g., 1100003626)
-   - Access Token (very long, starts with eyJ)
