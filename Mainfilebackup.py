@@ -30,13 +30,14 @@ import json
 # -----------------------
 #  DHAN API CONFIGURATION
 # -----------------------
-DHAN_CLIENT_ID = "YOUR_CLIENT_ID_HERE"  # Replace with your Client ID
-DHAN_ACCESS_TOKEN = "YOUR_ACCESS_TOKEN_HERE"  # Replace with your Access Token
+DHAN_CLIENT_ID = "YOUR_CLIENT_ID_HERE"  # Replace with your Client ID (numeric)
+DHAN_ACCESS_TOKEN = "YOUR_ACCESS_TOKEN_HERE"  # Replace with your Access Token (starts with eyJ)
 
-# DhanHQ API endpoints
+# Strip whitespace
+DHAN_CLIENT_ID = str(DHAN_CLIENT_ID).strip()
+DHAN_ACCESS_TOKEN = str(DHAN_ACCESS_TOKEN).strip()
+
 DHAN_BASE_URL = "https://api.dhan.co"
-
-# Security IDs for NIFTY
 NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
 
@@ -147,7 +148,7 @@ def fetch_dhan_option_chain(expiry_date):
         if data.get("status") == "success":
             return data.get("data", {})
         else:
-            st.error(f"⚠️ API Error: {data}")
+            st.error(f"⚠️ Option Chain API Error: {data}")
             return None
             
     except Exception as e:
@@ -205,22 +206,21 @@ def check_token_validity():
     try:
         url = f"{DHAN_BASE_URL}/v2/profile"
         headers = {
-            "access-token": DHAN_ACCESS_TOKEN,
-            "client-id": DHAN_CLIENT_ID
+            "access-token": DHAN_ACCESS_TOKEN
         }
         response = requests.get(url, headers=headers, timeout=5)
         
         if response.status_code == 200:
             data = response.json()
-            return True, data.get('tokenValidity', 'Unknown')
+            return True, data.get('tokenValidity', 'Valid')
         else:
-            return False, "Token expired"
+            return False, "Token invalid/expired"
             
     except Exception as e:
         return False, str(e)
 
 # -----------------------
-#  UTIL FUNCTIONS
+#  STREAMLIT CONFIG & UTILS
 # -----------------------
 st.set_page_config(page_title="Nifty Option Screener v3.0 (DhanHQ)", layout="wide")
 st.title("📊 NIFTY Option Screener v3.0 — Full Option Chain + Greeks + GEX (DhanHQ)")
@@ -414,34 +414,42 @@ def center_of_mass_oi(merged_df, col):
 with st.sidebar:
     st.header("⚙️ DhanHQ Configuration")
     
+    if DHAN_CLIENT_ID == "YOUR_CLIENT_ID_HERE" or DHAN_ACCESS_TOKEN == "YOUR_ACCESS_TOKEN_HERE":
+        st.error("⚠️ **CREDENTIALS NOT SET!**")
+        st.warning("""
+Please update the script with your credentials:
+
+1. Go to web.dhan.co
+2. Login → Profile → Access DhanHQ APIs  
+3. Generate Access Token
+4. Copy Client ID and Token
+5. Update script lines 28-29
+        """)
+        st.stop()
+    
     token_valid, token_info = check_token_validity()
+    
     if token_valid:
         st.success(f"✅ Token Valid: {token_info}")
     else:
         st.error(f"❌ Token Issue: {token_info}")
-        st.info("Generate new token from web.dhan.co → Profile → Access DhanHQ APIs")
+        st.warning("""
+**Token expired or invalid!**
+
+Generate new token:
+1. Go to web.dhan.co
+2. Profile → Access DhanHQ APIs
+3. Click "Generate Access Token"
+4. Copy entire token (starts with eyJ)
+5. Update in script
+        """)
     
     st.markdown("---")
     st.info("📊 Auto-refreshes every 60 seconds")
     
-    if st.button("🔄 Force Refresh Now"):
+    if st.button("🔄 Force Refresh"):
         st.cache_data.clear()
         st.rerun()
-    
-    st.markdown("---")
-    st.subheader("🔐 Test Connection")
-    if st.button("Test API Credentials"):
-        with st.spinner("Testing..."):
-            spot_test = get_nifty_spot_price()
-            if spot_test > 0:
-                st.success(f"✅ NIFTY Spot: {spot_test:.2f}")
-            else:
-                st.error("❌ Failed to fetch spot")
-                st.code(f"""
-Check credentials:
-Client ID: {DHAN_CLIENT_ID}
-Token: {DHAN_ACCESS_TOKEN[:20]}...
-                """)
 
 # -----------------------
 #  MAIN APP
@@ -450,19 +458,20 @@ with st.spinner("📡 Fetching NIFTY spot price..."):
     spot = get_nifty_spot_price()
 
 if spot == 0.0:
-    st.error("❌ Unable to fetch NIFTY spot price. Check your DhanHQ API credentials.")
-    st.info("""**Steps to fix:**
-1. Go to [web.dhan.co](https://web.dhan.co)
-2. Login → Profile → Access DhanHQ APIs
-3. Generate Access Token (valid 24 hours)
-4. Update script with your Client ID and Access Token
+    st.error("❌ Unable to fetch NIFTY spot price")
+    st.info("""
+**Troubleshooting:**
+1. Check your Client ID is numeric (e.g., 1100003626)
+2. Check your token starts with 'eyJ'
+3. Generate fresh token (valid 24 hours)
+4. Ensure no extra spaces in credentials
     """)
     st.stop()
 
 expiries = get_expiry_list()
 
 if not expiries:
-    st.error("❌ Unable to fetch expiry dates.")
+    st.error("❌ Unable to fetch expiry dates")
     st.stop()
 
 expiry = st.selectbox("Select expiry", expiries, index=0)
@@ -797,3 +806,19 @@ with st.expander("⚙️ Developer / Tuning Controls & Notes"):
     st.write(" - Breakout index weights:", BREAKOUT_INDEX_WEIGHTS)
 
 st.caption("✅ **DhanHQ Integration** | Real-time data from DhanHQ API | All calculations preserved")
+```
+
+---
+
+## **📋 Setup Instructions:**
+
+### **1. Get Fresh Credentials (IMPORTANT!)**
+```
+1. Go to https://web.dhan.co
+2. Login with your Dhan account
+3. Click your name (top-right) → Profile
+4. Click "Access DhanHQ APIs"
+5. Click "Generate Access Token" button
+6. Copy:
+   - Client ID (numeric, e.g., 1100003626)
+   - Access Token (very long, starts with eyJ)
