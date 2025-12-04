@@ -806,10 +806,3 @@ with st.expander("⚙️ Developer / Tuning Controls & Notes"):
     st.write(" - Breakout index weights:", BREAKOUT_INDEX_WEIGHTS)
 
 st.caption("✅ **DhanHQ Integration** | Real-time data from DhanHQ API | All calculations preserved")
-```
-
----
-
-## **📋 Setup Instructions:**
-
-### **1. Get Fresh Credentials (IMPORTANT!)**
