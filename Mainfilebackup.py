@@ -1,9 +1,15 @@
-# nifty_option_screener_v4_seller_perspective_complete.py
+# nifty_option_screener_v5_seller_perspective_complete.py
 """
-Nifty Option Screener v4.0 — 100% SELLER'S PERSPECTIVE
+Nifty Option Screener v5.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR
 EVERYTHING interpreted from Option Seller/Market Maker viewpoint
 CALL building = BEARISH (sellers selling calls, expecting price to stay below)
 PUT building = BULLISH (sellers selling puts, expecting price to stay above)
+
+NEW FEATURES ADDED:
+1. Momentum Burst Detection
+2. Orderbook Pressure Analysis
+3. Gamma Cluster Concentration
+4. OI Velocity/Acceleration
 """
 
 import streamlit as st
@@ -45,6 +51,14 @@ SCORE_WEIGHTS = {"chg_oi": 2.0, "volume": 0.5, "oi": 0.2, "iv": 0.3}
 BREAKOUT_INDEX_WEIGHTS = {"atm_oi_shift": 0.4, "winding_balance": 0.3, "vol_oi_div": 0.2, "gamma_pressure": 0.1}
 SAVE_INTERVAL_SEC = 300
 
+# NEW: Moment detector weights
+MOMENT_WEIGHTS = {
+    "momentum_burst": 0.40,        # Vol * IV * |ΔOI|
+    "orderbook_pressure": 0.20,    # buy/sell depth imbalance
+    "gamma_cluster": 0.25,         # ATM ±2 gamma concentration
+    "oi_acceleration": 0.15        # OI speed-up (break/hold)
+}
+
 TIME_WINDOWS = {
     "morning": {"start": (9, 15), "end": (10, 30), "label": "Morning (09:15-10:30 IST)"},
     "mid": {"start": (10, 30), "end": (12, 30), "label": "Mid (10:30-12:30 IST)"},
@@ -70,14 +84,14 @@ try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 except Exception as e:
     st.error(f"❌ Supabase failed: {e}")
-    st.stop()
+    supabase = None
 
 DHAN_BASE_URL = "https://api.dhan.co"
 NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
 
 # -----------------------
-#  CUSTOM CSS - SELLER THEME
+#  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES
 # -----------------------
 st.markdown("""
 <style>
@@ -91,6 +105,11 @@ st.markdown("""
     .seller-bullish-bg { background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%); }
     .seller-bearish-bg { background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%); }
     .seller-neutral-bg { background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%); }
+    
+    /* MOMENT DETECTOR COLORS */
+    .moment-high { color: #ff00ff !important; font-weight: 800 !important; }
+    .moment-medium { color: #ff9900 !important; font-weight: 700 !important; }
+    .moment-low { color: #66b3ff !important; font-weight: 600 !important; }
     
     h1, h2, h3 { color: #ff66cc !important; } /* Seller theme pink */
     
@@ -208,12 +227,24 @@ st.markdown("""
     .entry-signal-box .signal-explanation { font-size: 1.1rem; color: #ffdd44; margin: 10px 0; }
     .entry-signal-box .entry-price { font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin: 10px 0; }
     
+    /* MOMENT DETECTOR BOXES */
+    .moment-box {
+        background: linear-gradient(135deg, #1a1f3e 0%, #2a2f4e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #00ffff;
+        margin: 10px 0;
+        text-align: center;
+    }
+    .moment-box h4 { margin: 0; color: #00ffff; font-size: 1.1rem; }
+    .moment-box .moment-value { font-size: 1.8rem; font-weight: 900; margin: 10px 0; }
+    
     [data-testid="stMetricLabel"] { color: #cccccc !important; font-weight: 600; }
     [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Nifty Screener v4 - Seller's Perspective", layout="wide")
+st.set_page_config(page_title="Nifty Screener v5 - Seller's Perspective + Moment Detector", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -227,17 +258,17 @@ auto_refresh()
 # -----------------------
 #  UTILITY FUNCTIONS
 # -----------------------
-def safe_int(x):
+def safe_int(x, default=0):
     try:
         return int(x)
     except:
-        return 0
+        return default
 
-def safe_float(x):
+def safe_float(x, default=np.nan):
     try:
         return float(x)
     except:
-        return np.nan
+        return default
 
 def strike_gap_from_series(series):
     diffs = series.sort_values().diff().dropna()
@@ -286,18 +317,213 @@ def bs_theta(S,K,r,sigma,tau,option_type="call"):
         return term1 + term2
 
 # -----------------------
-# 🔥 ENTRY SIGNAL CALCULATION
+# 🔥 NEW: ORDERBOOK PRESSURE FUNCTIONS
 # -----------------------
-def calculate_entry_signal(spot, merged_df, atm_strike, seller_bias_result, seller_max_pain, seller_supports_df, seller_resists_df, nearest_sup, nearest_res, seller_breakout_index):
+@st.cache_data(ttl=5)
+def get_nifty_orderbook_depth():
     """
-    Calculate optimal entry signal based on seller's perspective
-    Returns: Entry signal with price, confidence, and reasoning
+    Best-effort depth fetch from Dhan API
+    """
+    candidate_endpoints = [
+        f"{DHAN_BASE_URL}/v2/marketfeed/quotes",
+        f"{DHAN_BASE_URL}/v2/marketfeed/depth"
+    ]
+    
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "access-token": DHAN_ACCESS_TOKEN,
+        "client-id": DHAN_CLIENT_ID
+    }
+    
+    for url in candidate_endpoints:
+        try:
+            payload = {"IDX_I": [13]}
+            r = requests.post(url, json=payload, headers=headers, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            if data.get("status") != "success":
+                continue
+            
+            d = data.get("data", {})
+            if isinstance(d, dict):
+                d1 = d.get("IDX_I", {}).get("13", {})
+                depth = d1.get("depth") or d.get("depth") or d
+                buy = depth.get("buy") if isinstance(depth, dict) else None
+                sell = depth.get("sell") if isinstance(depth, dict) else None
+                
+                if buy is not None and sell is not None:
+                    return {"buy": buy, "sell": sell, "source": url}
+        except Exception:
+            continue
+    
+    return None
+
+def orderbook_pressure_score(depth: dict, levels: int = 5) -> dict:
+    """
+    Returns orderbook pressure (-1 to +1)
+    """
+    if not depth or "buy" not in depth or "sell" not in depth:
+        return {"available": False, "pressure": 0.0, "buy_qty": 0.0, "sell_qty": 0.0}
+    
+    def sum_qty(side):
+        total = 0.0
+        for i, lvl in enumerate(side):
+            if i >= levels:
+                break
+            if isinstance(lvl, (list, tuple)) and len(lvl) >= 2:
+                total += safe_float(lvl[1], 0.0)
+            elif isinstance(lvl, dict):
+                total += safe_float(lvl.get("qty") or lvl.get("quantity"), 0.0)
+        return total
+    
+    buy = sum_qty(depth["buy"])
+    sell = sum_qty(depth["sell"])
+    denom = (buy + sell) if (buy + sell) > 0 else 1.0
+    pressure = (buy - sell) / denom
+    return {"available": True, "pressure": pressure, "buy_qty": buy, "sell_qty": sell}
+
+# -----------------------
+# 🔥 NEW: MOMENT DETECTOR FUNCTIONS
+# -----------------------
+def _init_history():
+    """Initialize session state for moment history tracking"""
+    if "moment_history" not in st.session_state:
+        st.session_state["moment_history"] = []
+    if "prev_ltps" not in st.session_state:
+        st.session_state["prev_ltps"] = {}
+    if "prev_ivs" not in st.session_state:
+        st.session_state["prev_ivs"] = {}
+
+def _snapshot_from_state(ts, spot, atm_strike, merged: pd.DataFrame):
+    """
+    Create snapshot for OI velocity/acceleration and momentum burst
+    """
+    total_vol = float(merged["Vol_CE"].sum() + merged["Vol_PE"].sum())
+    total_iv = float(merged[["IV_CE", "IV_PE"]].mean().mean()) if not merged.empty else 0.0
+    total_abs_doi = float(merged["Chg_OI_CE"].abs().sum() + merged["Chg_OI_PE"].abs().sum())
+    
+    per = {}
+    for _, r in merged[["strikePrice", "OI_CE", "OI_PE"]].iterrows():
+        per[int(r["strikePrice"])] = {"oi_ce": int(r["OI_CE"]), "oi_pe": int(r["OI_PE"])}
+    
+    return {
+        "ts": ts,
+        "spot": float(spot),
+        "atm": int(atm_strike),
+        "totals": {"vol": total_vol, "iv": total_iv, "abs_doi": total_abs_doi},
+        "per_strike": per
+    }
+
+def _norm01(x, lo, hi):
+    """Normalize value to 0-1 range"""
+    if hi <= lo:
+        return 0.0
+    return float(np.clip((x - lo) / (hi - lo), 0.0, 1.0))
+
+def compute_momentum_burst(history):
+    """
+    Feature #1: Momentum Burst = (ΔVol * ΔIV * Δ|OI|) normalized to 0..100
+    """
+    if len(history) < 2:
+        return {"available": False, "score": 0, "note": "Need at least 2 refresh points."}
+    
+    s_prev, s_now = history[-2], history[-1]
+    dt = max((s_now["ts"] - s_prev["ts"]).total_seconds(), 1.0)
+    
+    dvol = (s_now["totals"]["vol"] - s_prev["totals"]["vol"]) / dt
+    div = (s_now["totals"]["iv"] - s_prev["totals"]["iv"]) / dt
+    ddoi = (s_now["totals"]["abs_doi"] - s_prev["totals"]["abs_doi"]) / dt
+    
+    burst_raw = abs(dvol) * abs(div) * abs(ddoi)
+    score = int(100 * _norm01(burst_raw, 0.0, max(1.0, burst_raw * 2.5)))
+    
+    return {"available": True, "score": score, 
+            "note": "Momentum burst (energy) is rising" if score > 60 else "No strong energy burst detected"}
+
+def compute_gamma_cluster(merged: pd.DataFrame, atm_strike: int, window: int = 2):
+    """
+    Feature #3: ATM Gamma Cluster = sum(|gamma|) around ATM (±1 ±2)
+    """
+    if merged.empty:
+        return {"available": False, "score": 0, "cluster": 0.0}
+    
+    want = [atm_strike + i for i in range(-window, window + 1)]
+    subset = merged[merged["strikePrice"].isin(want)]
+    if subset.empty:
+        return {"available": False, "score": 0, "cluster": 0.0}
+    
+    cluster = float((subset["Gamma_CE"].abs().fillna(0) + subset["Gamma_PE"].abs().fillna(0)).sum())
+    score = int(100 * _norm01(cluster, 0.0, max(1.0, cluster * 2.0)))
+    return {"available": True, "score": score, "cluster": cluster}
+
+def compute_oi_velocity_acceleration(history, atm_strike, window_strikes=3):
+    """
+    Feature #4: OI Velocity + Acceleration
+    """
+    if len(history) < 3:
+        return {"available": False, "score": 0, "note": "Need 3+ refresh points for OI acceleration."}
+    
+    s0, s1, s2 = history[-3], history[-2], history[-1]
+    dt1 = max((s1["ts"] - s0["ts"]).total_seconds(), 1.0)
+    dt2 = max((s2["ts"] - s1["ts"]).total_seconds(), 1.0)
+    
+    def cluster_strikes(atm):
+        return [atm + i for i in range(-window_strikes, window_strikes + 1) if (atm + i) in s2["per_strike"]]
+    
+    strikes = cluster_strikes(atm_strike)
+    if not strikes:
+        return {"available": False, "score": 0, "note": "No ATM cluster strikes found."}
+    
+    vel = []
+    acc = []
+    for k in strikes:
+        o0 = s0["per_strike"].get(k, {"oi_ce": 0, "oi_pe": 0})
+        o1 = s1["per_strike"].get(k, {"oi_ce": 0, "oi_pe": 0})
+        o2 = s2["per_strike"].get(k, {"oi_ce": 0, "oi_pe": 0})
+        
+        t0 = o0["oi_ce"] + o0["oi_pe"]
+        t1 = o1["oi_ce"] + o1["oi_pe"]
+        t2 = o2["oi_ce"] + o2["oi_pe"]
+        
+        v1 = (t1 - t0) / dt1
+        v2 = (t2 - t1) / dt2
+        a = (v2 - v1) / dt2
+        
+        vel.append(abs(v2))
+        acc.append(abs(a))
+    
+    vel_score = _norm01(np.median(vel), 0, max(1.0, np.percentile(vel, 90)))
+    acc_score = _norm01(np.median(acc), 0, max(1.0, np.percentile(acc, 90)))
+    
+    score = int(100 * (0.6 * vel_score + 0.4 * acc_score))
+    return {"available": True, "score": score, 
+            "note": "OI speed-up detected in ATM cluster" if score > 60 else "OI changes are slow/steady"}
+
+# -----------------------
+# 🔥 ENTRY SIGNAL CALCULATION (EXTENDED WITH MOMENT DETECTOR)
+# -----------------------
+def calculate_entry_signal_extended(
+    spot, 
+    merged_df, 
+    atm_strike, 
+    seller_bias_result, 
+    seller_max_pain, 
+    seller_supports_df, 
+    seller_resists_df, 
+    nearest_sup, 
+    nearest_res, 
+    seller_breakout_index,
+    moment_metrics  # NEW: Add moment metrics
+):
+    """
+    Calculate optimal entry signal with Moment Detector integration
     """
     
     # Initialize signal components
     signal_score = 0
     signal_reasons = []
-    optimal_entry_price = spot  # Default to current spot
+    optimal_entry_price = spot
     position_type = "NEUTRAL"
     confidence = 0
     
@@ -327,56 +553,47 @@ def calculate_entry_signal(spot, merged_df, atm_strike, seller_bias_result, sell
         distance_to_max_pain = abs(spot - seller_max_pain)
         distance_pct = (distance_to_max_pain / spot) * 100
         
-        if distance_pct < 0.5:  # Very close to max pain
+        if distance_pct < 0.5:
             signal_score += 15
             signal_reasons.append(f"Spot VERY close to Max Pain (₹{seller_max_pain:,}, {distance_pct:.2f}%)")
             optimal_entry_price = seller_max_pain
-        elif distance_pct < 1.0:  # Close to max pain
+        elif distance_pct < 1.0:
             signal_score += 10
             signal_reasons.append(f"Spot close to Max Pain (₹{seller_max_pain:,}, {distance_pct:.2f}%)")
             if position_type == "LONG" and spot < seller_max_pain:
                 optimal_entry_price = min(spot + (seller_max_pain - spot) * 0.5, seller_max_pain)
             elif position_type == "SHORT" and spot > seller_max_pain:
                 optimal_entry_price = max(spot - (spot - seller_max_pain) * 0.5, seller_max_pain)
-        else:
-            signal_score += 5
-            signal_reasons.append(f"Spot far from Max Pain (₹{seller_max_pain:,}, {distance_pct:.2f}%)")
     
     # ============================================
     # 3. SUPPORT/RESISTANCE ALIGNMENT (20% weight)
     # ============================================
     if nearest_sup and nearest_res:
-        # Calculate position in range
         range_size = nearest_res["strike"] - nearest_sup["strike"]
         if range_size > 0:
             position_in_range = ((spot - nearest_sup["strike"]) / range_size) * 100
             
-            # Determine optimal entry based on bias
             if position_type == "LONG":
-                # For LONG: Buy near support
                 if position_in_range < 40:
                     signal_score += 20
                     signal_reasons.append(f"Ideal LONG entry: Near support (₹{nearest_sup['strike']:,})")
-                    optimal_entry_price = nearest_sup["strike"] + (range_size * 0.1)  # Slightly above support
+                    optimal_entry_price = nearest_sup["strike"] + (range_size * 0.1)
                 elif position_in_range < 60:
                     signal_score += 10
                     signal_reasons.append("OK LONG entry: Middle of range")
                 else:
                     signal_score += 5
-                    signal_reasons.append(f"Poor LONG entry: Near resistance (₹{nearest_res['strike']:,})")
                     
             elif position_type == "SHORT":
-                # For SHORT: Sell near resistance
                 if position_in_range > 60:
                     signal_score += 20
                     signal_reasons.append(f"Ideal SHORT entry: Near resistance (₹{nearest_res['strike']:,})")
-                    optimal_entry_price = nearest_res["strike"] - (range_size * 0.1)  # Slightly below resistance
+                    optimal_entry_price = nearest_res["strike"] - (range_size * 0.1)
                 elif position_in_range > 40:
                     signal_score += 10
                     signal_reasons.append("OK SHORT entry: Middle of range")
                 else:
                     signal_score += 5
-                    signal_reasons.append(f"Poor SHORT entry: Near support (₹{nearest_sup['strike']:,})")
     
     # ============================================
     # 4. BREAKOUT INDEX (15% weight)
@@ -387,9 +604,6 @@ def calculate_entry_signal(spot, merged_df, atm_strike, seller_bias_result, sell
     elif seller_breakout_index > 60:
         signal_score += 10
         signal_reasons.append(f"Moderate Breakout Index ({seller_breakout_index}%): Some momentum expected")
-    else:
-        signal_score += 5
-        signal_reasons.append(f"Low Breakout Index ({seller_breakout_index}%): Weak momentum")
     
     # ============================================
     # 5. PCR ANALYSIS (10% weight)
@@ -404,28 +618,55 @@ def calculate_entry_signal(spot, merged_df, atm_strike, seller_bias_result, sell
         elif position_type == "SHORT" and total_pcr < 0.7:
             signal_score += 10
             signal_reasons.append(f"Strong PCR ({total_pcr:.2f}): Heavy CALL selling confirms bearish bias")
-        else:
-            signal_score += 5
-            signal_reasons.append(f"Moderate PCR ({total_pcr:.2f}): Some confirmation")
     
     # ============================================
     # 6. GEX ANALYSIS (Adjustment factor)
     # ============================================
     total_gex_net = merged_df["GEX_Net"].sum()
-    if total_gex_net > 1000000:  # Positive GEX
+    if total_gex_net > 1000000:
         if position_type == "LONG":
             signal_score += 5
             signal_reasons.append("Positive GEX: Supports LONG position (stabilizing)")
-        else:
-            signal_score -= 5
-            signal_reasons.append("Positive GEX: Works against SHORT position")
-    elif total_gex_net < -1000000:  # Negative GEX
+    elif total_gex_net < -1000000:
         if position_type == "SHORT":
             signal_score += 5
             signal_reasons.append("Negative GEX: Supports SHORT position (destabilizing)")
-        else:
-            signal_score -= 5
-            signal_reasons.append("Negative GEX: Works against LONG position")
+    
+    # ============================================
+    # 7. MOMENT DETECTOR FEATURES (NEW - 30% total weight)
+    # ============================================
+    
+    # 7.1 Momentum Burst (12% weight)
+    mb = moment_metrics.get("momentum_burst", {})
+    if mb.get("available", False):
+        mb_score = mb.get("score", 0)
+        signal_score += int(12 * (mb_score / 100.0))
+        signal_reasons.append(f"Momentum burst: {mb_score}/100 - {mb.get('note', '')}")
+    
+    # 7.2 Orderbook Pressure (8% weight)
+    ob = moment_metrics.get("orderbook", {})
+    if ob.get("available", False):
+        pressure = ob.get("pressure", 0.0)
+        if position_type == "LONG" and pressure > 0.15:
+            signal_score += 8
+            signal_reasons.append(f"Orderbook buy pressure: {pressure:+.2f} (supports LONG)")
+        elif position_type == "SHORT" and pressure < -0.15:
+            signal_score += 8
+            signal_reasons.append(f"Orderbook sell pressure: {pressure:+.2f} (supports SHORT)")
+    
+    # 7.3 Gamma Cluster (6% weight)
+    gc = moment_metrics.get("gamma_cluster", {})
+    if gc.get("available", False):
+        gc_score = gc.get("score", 0)
+        signal_score += int(6 * (gc_score / 100.0))
+        signal_reasons.append(f"Gamma cluster: {gc_score}/100 (ATM concentration)")
+    
+    # 7.4 OI Acceleration (4% weight)
+    oi_accel = moment_metrics.get("oi_accel", {})
+    if oi_accel.get("available", False):
+        oi_score = oi_accel.get("score", 0)
+        signal_score += int(4 * (oi_score / 100.0))
+        signal_reasons.append(f"OI acceleration: {oi_score}/100 ({oi_accel.get('note', '')})")
     
     # ============================================
     # FINAL SIGNAL CALCULATION
@@ -474,16 +715,14 @@ def calculate_entry_signal(spot, merged_df, atm_strike, seller_bias_result, sell
         "target": target,
         "max_pain": seller_max_pain,
         "nearest_support": nearest_sup["strike"] if nearest_sup else None,
-        "nearest_resistance": nearest_res["strike"] if nearest_res else None
+        "nearest_resistance": nearest_res["strike"] if nearest_res else None,
+        "moment_metrics": moment_metrics  # NEW: Include moment metrics in signal
     }
 
 # -----------------------
-# 🔥 SELLER'S PERSPECTIVE FUNCTIONS
+# 🔥 SELLER'S PERSPECTIVE FUNCTIONS (ORIGINAL)
 # -----------------------
 def seller_strength_score(row, weights=SCORE_WEIGHTS):
-    """
-    SELLER's strength score: Higher when sellers are confident
-    """
     chg_oi = abs(safe_float(row.get("Chg_OI_CE",0))) + abs(safe_float(row.get("Chg_OI_PE",0)))
     vol = safe_float(row.get("Vol_CE",0)) + safe_float(row.get("Vol_PE",0))
     oi = safe_float(row.get("OI_CE",0)) + safe_float(row.get("OI_PE",0))
@@ -491,21 +730,15 @@ def seller_strength_score(row, weights=SCORE_WEIGHTS):
     iv_pe = safe_float(row.get("IV_PE", np.nan))
     iv = np.nanmean([v for v in (iv_ce, iv_pe) if not np.isnan(v)]) if (not np.isnan(iv_ce) or not np.isnan(iv_pe)) else 0
     
-    # SELLER LOGIC: Higher IV = More premium for sellers = Higher confidence
-    # High OI = More positions to manage = Higher risk/reward
     score = weights["chg_oi"]*chg_oi + weights["volume"]*vol + weights["oi"]*oi + weights["iv"]*iv
     return score
 
 def seller_price_oi_divergence(chg_oi, vol, ltp_change, option_type="CE"):
-    """
-    SELLER'S interpretation of price-OI divergence
-    """
     vol_up = vol > 0
     oi_up = chg_oi > 0
     price_up = (ltp_change is not None and ltp_change > 0)
     
     if option_type == "CE":
-        # CALL SELLER perspective
         if oi_up and vol_up and price_up:
             return "Sellers WRITING calls as price rises (Bearish conviction)"
         if oi_up and vol_up and not price_up:
@@ -515,7 +748,6 @@ def seller_price_oi_divergence(chg_oi, vol, ltp_change, option_type="CE"):
         if not oi_up and vol_up and not price_up:
             return "Sellers BUYING back calls on weakness (Reducing bearish exposure)"
     else:
-        # PUT SELLER perspective
         if oi_up and vol_up and price_up:
             return "Sellers WRITING puts on strength (Bullish conviction)"
         if oi_up and vol_up and not price_up:
@@ -533,14 +765,10 @@ def seller_price_oi_divergence(chg_oi, vol, ltp_change, option_type="CE"):
     return "Sellers inactive"
 
 def seller_itm_otm_interpretation(strike, atm, chg_oi_ce, chg_oi_pe):
-    """
-    SELLER'S interpretation of ITM/OTM activity
-    """
     ce_interpretation = ""
     pe_interpretation = ""
     
-    # CALL OPTIONS (SELLERS SELLING = BEARISH)
-    if strike < atm:  # ITM CALLS
+    if strike < atm:
         if chg_oi_ce > 0:
             ce_interpretation = "SELLERS WRITING ITM CALLS = VERY BEARISH 🚨"
         elif chg_oi_ce < 0:
@@ -548,7 +776,7 @@ def seller_itm_otm_interpretation(strike, atm, chg_oi_ce, chg_oi_pe):
         else:
             ce_interpretation = "No ITM CALL activity"
     
-    elif strike > atm:  # OTM CALLS
+    elif strike > atm:
         if chg_oi_ce > 0:
             ce_interpretation = "SELLERS WRITING OTM CALLS = MILD BEARISH 📉"
         elif chg_oi_ce < 0:
@@ -556,11 +784,10 @@ def seller_itm_otm_interpretation(strike, atm, chg_oi_ce, chg_oi_pe):
         else:
             ce_interpretation = "No OTM CALL activity"
     
-    else:  # ATM
+    else:
         ce_interpretation = "ATM CALL zone"
     
-    # PUT OPTIONS (SELLERS SELLING = BULLISH)
-    if strike > atm:  # ITM PUTS
+    if strike > atm:
         if chg_oi_pe > 0:
             pe_interpretation = "SELLERS WRITING ITM PUTS = VERY BULLISH 🚀"
         elif chg_oi_pe < 0:
@@ -568,7 +795,7 @@ def seller_itm_otm_interpretation(strike, atm, chg_oi_ce, chg_oi_pe):
         else:
             pe_interpretation = "No ITM PUT activity"
     
-    elif strike < atm:  # OTM PUTS
+    elif strike < atm:
         if chg_oi_pe > 0:
             pe_interpretation = "SELLERS WRITING OTM PUTS = MILD BULLISH 📈"
         elif chg_oi_pe < 0:
@@ -576,84 +803,52 @@ def seller_itm_otm_interpretation(strike, atm, chg_oi_ce, chg_oi_pe):
         else:
             pe_interpretation = "No OTM PUT activity"
     
-    else:  # ATM
+    else:
         pe_interpretation = "ATM PUT zone"
     
     return f"CALL Sellers: {ce_interpretation} | PUT Sellers: {pe_interpretation}"
 
 def seller_gamma_pressure(row, atm, strike_gap):
-    """
-    SELLER'S gamma pressure: Negative = Sellers under pressure
-    """
     strike = row["strikePrice"]
     dist = abs(strike - atm) / max(strike_gap, 1)
     dist = max(dist, 1e-6)
     
-    # SELLER LOGIC: Positive gamma = Sellers comfortable, Negative = Sellers under pressure
     chg_oi_sum = safe_float(row.get("Chg_OI_CE",0)) - safe_float(row.get("Chg_OI_PE",0))
-    
-    # Convert to seller perspective
-    # CALL building (positive chg_oi_ce) = BEARISH pressure on sellers
-    # PUT building (positive chg_oi_pe) = BULLISH comfort for sellers
-    seller_pressure = -chg_oi_sum / dist  # Negative = sellers under pressure
+    seller_pressure = -chg_oi_sum / dist
     
     return seller_pressure
 
 def seller_breakout_probability_index(merged_df, atm, strike_gap):
-    """
-    SELLER'S breakout probability: When sellers lose control
-    """
     near_mask = merged_df["strikePrice"].between(atm-strike_gap, atm+strike_gap)
     
-    # SELLER ATM activity
     atm_ce_build = merged_df.loc[near_mask, "Chg_OI_CE"].sum()
     atm_pe_build = merged_df.loc[near_mask, "Chg_OI_PE"].sum()
-    
-    # SELLER LOGIC: 
-    # CALL building at ATM = Sellers bearish = Downside pressure
-    # PUT building at ATM = Sellers bullish = Upside pressure
-    seller_atm_bias = atm_pe_build - atm_ce_build  # Positive = bullish sellers
+    seller_atm_bias = atm_pe_build - atm_ce_build
     atm_score = min(abs(seller_atm_bias)/50000.0, 1.0)
     
-    # SELLER winding/unwinding balance using seller action columns
     ce_writing_count = (merged_df["CE_Seller_Action"] == "WRITING").sum()
     pe_writing_count = (merged_df["PE_Seller_Action"] == "WRITING").sum()
     ce_buying_back_count = (merged_df["CE_Seller_Action"] == "BUYING BACK").sum()
     pe_buying_back_count = (merged_df["PE_Seller_Action"] == "BUYING BACK").sum()
     
-    # SELLER LOGIC: More writing = Higher conviction
     total_actions = ce_writing_count + pe_writing_count + ce_buying_back_count + pe_buying_back_count
     if total_actions > 0:
         seller_conviction = (ce_writing_count + pe_writing_count) / total_actions
     else:
         seller_conviction = 0.5
     
-    # SELLER volume-OI activity
     vol_oi_scores = (merged_df[["Vol_CE","Vol_PE"]].sum(axis=1) * merged_df[["Chg_OI_CE","Chg_OI_PE"]].abs().sum(axis=1)).fillna(0)
     vol_oi_score = min(vol_oi_scores.sum()/100000.0, 1.0)
     
-    # SELLER gamma pressure
     gamma = merged_df.apply(lambda r: seller_gamma_pressure(r, atm, strike_gap), axis=1).sum()
     gamma_score = min(abs(gamma)/10000.0, 1.0)
     
-    # Combine with SELLER weights
     w = BREAKOUT_INDEX_WEIGHTS
     combined = (w["atm_oi_shift"]*atm_score) + (w["winding_balance"]*seller_conviction) + (w["vol_oi_div"]*vol_oi_score) + (w["gamma_pressure"]*gamma_score)
     
     return int(np.clip(combined*100,0,100))
 
-def center_of_mass_oi(df, oi_col):
-    """Calculate center of mass for OI distribution"""
-    if df.empty or oi_col not in df.columns:
-        return 0
-    total_oi = df[oi_col].sum()
-    if total_oi == 0:
-        return 0
-    weighted_sum = (df["strikePrice"] * df[oi_col]).sum()
-    return weighted_sum / total_oi
-
 def calculate_seller_max_pain(df):
-    """Calculate max pain strike from SELLER's perspective"""
     pain_dict = {}
     for _, row in df.iterrows():
         strike = row["strikePrice"]
@@ -662,8 +857,6 @@ def calculate_seller_max_pain(df):
         ce_ltp = safe_float(row.get("LTP_CE", 0))
         pe_ltp = safe_float(row.get("LTP_PE", 0))
         
-        # SELLER'S pain: Loss on written options
-        # Sellers lose money when options are in-the-money
         ce_pain = ce_oi * max(0, ce_ltp) if strike < df["strikePrice"].mean() else 0
         pe_pain = pe_oi * max(0, pe_ltp) if strike > df["strikePrice"].mean() else 0
         
@@ -674,93 +867,68 @@ def calculate_seller_max_pain(df):
         return min(pain_dict, key=pain_dict.get)
     return None
 
-# -----------------------
-# 🔥 SELLER-CENTRIC MARKET BIAS CALCULATION
-# -----------------------
 def calculate_seller_market_bias(merged_df, spot, atm_strike):
-    """
-    Market bias from 100% SELLER's perspective
-    """
     polarity = 0.0
     
     for _, r in merged_df.iterrows():
         strike = r["strikePrice"]
-        chg_ce = safe_int(r.get("Chg_OI_CE", 0))  # ΔOI CE
-        chg_pe = safe_int(r.get("Chg_OI_PE", 0))  # ΔOI PE
+        chg_ce = safe_int(r.get("Chg_OI_CE", 0))
+        chg_pe = safe_int(r.get("Chg_OI_PE", 0))
         
-        # ============================================
-        # PURE SELLER LOGIC
-        # ============================================
+        if strike < atm_strike:
+            if chg_ce > 0:
+                polarity -= 2.0
+            elif chg_ce < 0:
+                polarity += 1.5
         
-        # CALL OPTIONS: SELLERS WRITING = BEARISH
-        if strike < atm_strike:  # ITM CALLS
-            if chg_ce > 0:  # ITM CALL building = SELLERS WRITING
-                polarity -= 2.0  # VERY BEARISH
-            elif chg_ce < 0:  # ITM CALL unwinding = SELLERS BUYING BACK
-                polarity += 1.5  # BULLISH
+        elif strike > atm_strike:
+            if chg_ce > 0:
+                polarity -= 0.7
+            elif chg_ce < 0:
+                polarity += 0.5
         
-        elif strike > atm_strike:  # OTM CALLS
-            if chg_ce > 0:  # OTM CALL building = SELLERS WRITING
-                polarity -= 0.7  # MILD BEARISH
-            elif chg_ce < 0:  # OTM CALL unwinding = SELLERS BUYING BACK
-                polarity += 0.5  # MILD BULLISH
+        if strike > atm_strike:
+            if chg_pe > 0:
+                polarity += 2.0
+            elif chg_pe < 0:
+                polarity -= 1.5
         
-        # PUT OPTIONS: SELLERS WRITING = BULLISH
-        if strike > atm_strike:  # ITM PUTS
-            if chg_pe > 0:  # ITM PUT building = SELLERS WRITING
-                polarity += 2.0  # VERY BULLISH
-            elif chg_pe < 0:  # ITM PUT unwinding = SELLERS BUYING BACK
-                polarity -= 1.5  # BEARISH
-        
-        elif strike < atm_strike:  # OTM PUTS
-            if chg_pe > 0:  # OTM PUT building = SELLERS WRITING
-                polarity += 0.7  # MILD BULLISH
-            elif chg_pe < 0:  # OTM PUT unwinding = SELLERS BUYING BACK
-                polarity -= 0.5  # MILD BEARISH
+        elif strike < atm_strike:
+            if chg_pe > 0:
+                polarity += 0.7
+            elif chg_pe < 0:
+                polarity -= 0.5
     
-    # ============================================
-    # SELLER CONFIDENCE METRICS
-    # ============================================
-    
-    # 1. PCR from SELLER perspective
     total_ce_oi = merged_df["OI_CE"].sum()
     total_pe_oi = merged_df["OI_PE"].sum()
     if total_ce_oi > 0:
         pcr = total_pe_oi / total_ce_oi
-        if pcr > 2.0:  # High PCR = More puts written = BULLISH SELLERS
+        if pcr > 2.0:
             polarity += 1.0
-        elif pcr < 0.5:  # Low PCR = More calls written = BEARISH SELLERS
+        elif pcr < 0.5:
             polarity -= 1.0
     
-    # 2. IV Premium (SELLER pricing power)
     avg_iv_ce = merged_df["IV_CE"].mean()
     avg_iv_pe = merged_df["IV_PE"].mean()
-    if avg_iv_ce > avg_iv_pe + 5:  # Higher CALL IV
-        # Sellers charging more for calls = Bearish confidence
+    if avg_iv_ce > avg_iv_pe + 5:
         polarity -= 0.3
-    elif avg_iv_pe > avg_iv_ce + 5:  # Higher PUT IV
-        # Sellers charging more for puts = Bullish confidence
+    elif avg_iv_pe > avg_iv_ce + 5:
         polarity += 0.3
     
-    # 3. GEX (SELLER gamma risk)
     total_gex_ce = merged_df["GEX_CE"].sum()
     total_gex_pe = merged_df["GEX_PE"].sum()
     net_gex = total_gex_ce + total_gex_pe
-    if net_gex < -1000000:  # Negative GEX = Sellers under pressure
+    if net_gex < -1000000:
         polarity -= 0.4
-    elif net_gex > 1000000:  # Positive GEX = Sellers comfortable
+    elif net_gex > 1000000:
         polarity += 0.4
     
-    # 4. Max Pain alignment
     max_pain = calculate_seller_max_pain(merged_df)
     if max_pain:
         distance_to_spot = abs(spot - max_pain) / spot * 100
-        if distance_to_spot < 1.0:  # Close to max pain
-            polarity += 0.5  # Sellers in control
+        if distance_to_spot < 1.0:
+            polarity += 0.5
     
-    # ============================================
-    # FINAL SELLER BIAS
-    # ============================================
     if polarity > 3.0:
         return {
             "bias": "STRONG BULLISH SELLERS 🚀",
@@ -802,28 +970,16 @@ def calculate_seller_market_bias(merged_df, spot, atm_strike):
             "action": "Range-bound expected. Wait for clearer signals."
         }
 
-# -----------------------
-# 🔥 SPOT POSITION ANALYSIS - SELLER VIEW
-# -----------------------
 def analyze_spot_position_seller(spot, pcr_df, market_bias):
-    """
-    Analyze spot position from SELLER's perspective
-    """
-    # Sort by strike price
     sorted_df = pcr_df.sort_values("strikePrice").reset_index(drop=True)
-    
-    # All strikes sorted
     all_strikes = sorted_df["strikePrice"].tolist()
     
-    # Find nearest support (highest strike below spot)
     supports_below = [s for s in all_strikes if s < spot]
     nearest_support = max(supports_below) if supports_below else None
     
-    # Find nearest resistance (lowest strike above spot)
     resistances_above = [s for s in all_strikes if s > spot]
     nearest_resistance = min(resistances_above) if resistances_above else None
     
-    # Get details for each level
     def get_level_details(strike, df):
         if strike is None:
             return None
@@ -831,14 +987,12 @@ def analyze_spot_position_seller(spot, pcr_df, market_bias):
         if row.empty:
             return None
         
-        # SELLER interpretation
         pcr = row.iloc[0]["PCR"]
         oi_ce = int(row.iloc[0]["OI_CE"])
         oi_pe = int(row.iloc[0]["OI_PE"])
         chg_oi_ce = int(row.iloc[0].get("Chg_OI_CE", 0))
         chg_oi_pe = int(row.iloc[0].get("Chg_OI_PE", 0))
         
-        # SELLER strength
         if pcr > 1.5:
             seller_strength = "Strong PUT selling (Bullish sellers)"
         elif pcr > 1.0:
@@ -865,12 +1019,10 @@ def analyze_spot_position_seller(spot, pcr_df, market_bias):
     nearest_sup = get_level_details(nearest_support, sorted_df)
     nearest_res = get_level_details(nearest_resistance, sorted_df)
     
-    # SELLER range analysis
     if nearest_sup and nearest_res:
         range_size = nearest_res["strike"] - nearest_sup["strike"]
         spot_position_pct = ((spot - nearest_sup["strike"]) / range_size * 100) if range_size > 0 else 50
         
-        # SELLER range interpretation
         if spot_position_pct < 40:
             range_bias = "Near SELLER support (Bullish sellers defending)"
         elif spot_position_pct > 60:
@@ -892,9 +1044,6 @@ def analyze_spot_position_seller(spot, pcr_df, market_bias):
         "market_bias": market_bias
     }
 
-# -----------------------
-# PCR FUNCTIONS (Seller View)
-# -----------------------
 def compute_pcr_df(merged_df):
     df = merged_df.copy()
     df["OI_CE"] = pd.to_numeric(df.get("OI_CE", 0), errors="coerce").fillna(0).astype(int)
@@ -914,20 +1063,13 @@ def compute_pcr_df(merged_df):
     return df
 
 def rank_support_resistance_seller(pcr_df):
-    """
-    Rank supports/resistances from SELLER's perspective
-    """
     eps = 1e-6
     t = pcr_df.copy()
     
-    # SELLER LOGIC: High PCR = Strong PUT selling = Strong support
-    # Low PCR = Strong CALL selling = Strong resistance
     t["PCR_clipped"] = t["PCR"].replace([np.inf, -np.inf], np.nan).fillna(0)
     
-    # Support score: High PE OI + High PCR
     t["seller_support_score"] = t["OI_PE"] + (t["PCR_clipped"] * 100000.0)
     
-    # Resistance score: High CE OI + Low PCR (inverse)
     t["seller_resistance_factor"] = t["PCR_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
     t["seller_resistance_score"] = t["OI_CE"] + (t["seller_resistance_factor"] * 100000.0)
     
@@ -1040,9 +1182,9 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
-#  MAIN APP - SELLER'S PERSPECTIVE
+#  MAIN APP - SELLER'S PERSPECTIVE + MOMENT DETECTOR
 # -----------------------
-st.title("🎯 NIFTY Option Screener v4.0 — SELLER'S PERSPECTIVE")
+st.title("🎯 NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -1066,6 +1208,15 @@ with st.sidebar:
     <p><em>Market makers & institutions are primarily SELLERS, not buyers.</em></p>
     </div>
     """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    st.markdown("### 🚀 MOMENT DETECTOR FEATURES")
+    st.markdown("""
+    1. **Momentum Burst**: Volume × IV × ΔOI changes
+    2. **Orderbook Pressure**: Buy/Sell depth imbalance
+    3. **Gamma Cluster**: ATM gamma concentration
+    4. **OI Acceleration**: Speed of OI changes
+    """)
     
     st.markdown("---")
     st.markdown(f"**Current IST:** {get_ist_time_str()}")
@@ -1136,6 +1287,9 @@ if "prev_ltps_seller" not in st.session_state:
 if "prev_ivs_seller" not in st.session_state:
     st.session_state["prev_ivs_seller"] = {}
 
+# Initialize moment history
+_init_history()
+
 # Compute per-strike metrics with SELLER interpretation
 for i, row in merged.iterrows():
     strike = int(row["strikePrice"])
@@ -1168,7 +1322,7 @@ for i, row in merged.iterrows():
     merged.at[i,"CE_Seller_Action"] = "WRITING" if chg_oi_ce>0 else ("BUYING BACK" if chg_oi_ce<0 else "HOLDING")
     merged.at[i,"PE_Seller_Action"] = "WRITING" if chg_oi_pe>0 else ("BUYING BACK" if chg_oi_pe<0 else "HOLDING")
 
-    # SELLER divergence interpretation - FIXED FUNCTION NAME
+    # SELLER divergence interpretation
     merged.at[i,"CE_Seller_Divergence"] = seller_price_oi_divergence(chg_oi_ce, safe_int(row.get("Vol_CE",0)), ce_price_delta, "CE")
     merged.at[i,"PE_Seller_Divergence"] = seller_price_oi_divergence(chg_oi_pe, safe_int(row.get("Vol_PE",0)), pe_price_delta, "PE")
 
@@ -1212,7 +1366,7 @@ for i, row in merged.iterrows():
     gex_pe = gamma_pe * notional * oi_pe
     merged.at[i,"GEX_CE"] = gex_ce
     merged.at[i,"GEX_PE"] = gex_pe
-    merged.at[i,"GEX_Net"] = gex_ce + gex_pe  # Both add to seller risk
+    merged.at[i,"GEX_Net"] = gex_ce + gex_pe
 
     # SELLER strength score
     merged.at[i,"Seller_Strength_Score"] = seller_strength_score(row)
@@ -1261,10 +1415,26 @@ spot_analysis = analyze_spot_position_seller(spot, ranked_current, seller_bias_r
 nearest_sup = spot_analysis["nearest_support"]
 nearest_res = spot_analysis["nearest_resistance"]
 
-# ============================================
-# 🎯 CALCULATE ENTRY SIGNAL
-# ============================================
-entry_signal = calculate_entry_signal(
+# ---- NEW: Capture snapshot for moment detector ----
+st.session_state["moment_history"].append(
+    _snapshot_from_state(get_ist_now(), spot, atm_strike, merged)
+)
+# Keep last 10 points
+st.session_state["moment_history"] = st.session_state["moment_history"][-10:]
+
+# ---- NEW: Compute 4 moment metrics ----
+orderbook = get_nifty_orderbook_depth()
+orderbook_metrics = orderbook_pressure_score(orderbook) if orderbook else {"available": False, "pressure": 0.0}
+
+moment_metrics = {
+    "momentum_burst": compute_momentum_burst(st.session_state["moment_history"]),
+    "orderbook": orderbook_metrics,
+    "gamma_cluster": compute_gamma_cluster(merged, atm_strike, window=2),
+    "oi_accel": compute_oi_velocity_acceleration(st.session_state["moment_history"], atm_strike, window_strikes=2)
+}
+
+# Calculate entry signal with moment detector integration
+entry_signal = calculate_entry_signal_extended(
     spot=spot,
     merged_df=merged,
     atm_strike=atm_strike,
@@ -1274,14 +1444,80 @@ entry_signal = calculate_entry_signal(
     seller_resists_df=seller_resists_df,
     nearest_sup=nearest_sup,
     nearest_res=nearest_res,
-    seller_breakout_index=seller_breakout_index
+    seller_breakout_index=seller_breakout_index,
+    moment_metrics=moment_metrics
 )
+
+# ============================================
+# 🚀 MOMENT DETECTOR DISPLAY (NEW SECTION)
+# ============================================
+
+st.markdown("---")
+st.markdown("## 🚀 MOMENT DETECTOR (Is this a real move?)")
+
+moment_col1, moment_col2, moment_col3, moment_col4 = st.columns(4)
+
+with moment_col1:
+    mb = moment_metrics["momentum_burst"]
+    if mb["available"]:
+        color = "#ff00ff" if mb["score"] > 70 else ("#ff9900" if mb["score"] > 40 else "#66b3ff")
+        st.markdown(f"""
+        <div class="moment-box">
+            <h4>💥 MOMENTUM BURST</h4>
+            <div class="moment-value" style='color:{color}'>{mb["score"]}/100</div>
+            <div class="sub-info">{mb["note"]}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+with moment_col2:
+    ob = moment_metrics["orderbook"]
+    if ob["available"]:
+        pressure = ob["pressure"]
+        color = "#00ff88" if pressure > 0.15 else ("#ff4444" if pressure < -0.15 else "#66b3ff")
+        st.markdown(f"""
+        <div class="moment-box">
+            <h4>📊 ORDERBOOK PRESSURE</h4>
+            <div class="moment-value" style='color:{color}'>{pressure:+.2f}</div>
+            <div class="sub-info">Buy/Sell imbalance</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="moment-box">
+            <h4>📊 ORDERBOOK PRESSURE</h4>
+            <div class="moment-value" style='color:#cccccc'>N/A</div>
+            <div class="sub-info">Depth data unavailable</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+with moment_col3:
+    gc = moment_metrics["gamma_cluster"]
+    if gc["available"]:
+        color = "#ff00ff" if gc["score"] > 70 else ("#ff9900" if gc["score"] > 40 else "#66b3ff")
+        st.markdown(f"""
+        <div class="moment-box">
+            <h4>🌀 GAMMA CLUSTER</h4>
+            <div class="moment-value" style='color:{color}'>{gc["score"]}/100</div>
+            <div class="sub-info">ATM ±2 concentration</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+with moment_col4:
+    oi = moment_metrics["oi_accel"]
+    if oi["available"]:
+        color = "#ff00ff" if oi["score"] > 70 else ("#ff9900" if oi["score"] > 40 else "#66b3ff")
+        st.markdown(f"""
+        <div class="moment-box">
+            <h4>⚡ OI ACCELERATION</h4>
+            <div class="moment-value" style='color:{color}'>{oi["score"]}/100</div>
+            <div class="sub-info">{oi["note"]}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ============================================
 # 🎯 SUPER PROMINENT ENTRY SIGNAL AT THE TOP
 # ============================================
 
-# Create a full-width container for the signal
 signal_container = st.container()
 
 with signal_container:
@@ -1289,7 +1525,7 @@ with signal_container:
     st.markdown("""
     <div style='text-align: center; margin: 10px 0 20px 0;'>
         <h1 style='color: #ff66cc; font-size: 2.8rem; margin-bottom: 5px;'>🎯 LIVE ENTRY SIGNAL</h1>
-        <p style='color: #cccccc; font-size: 1.1rem;'>Based on 100% Seller's Perspective Analysis</p>
+        <p style='color: #cccccc; font-size: 1.1rem;'>Seller's Perspective + Moment Detector Fusion</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1300,7 +1536,8 @@ with signal_container:
         signal_border = "#00ff88" if entry_signal["position_type"] == "LONG" else "#ff4444"
         signal_emoji = "🚀" if entry_signal["position_type"] == "LONG" else "🐻"
         
-        st.markdown(f"""
+        # Build the HTML string
+        signal_html = f"""
         <div style='
             background: linear-gradient(135deg, {signal_bg} 0%, #2a3e2a 100%);
             padding: 30px;
@@ -1351,8 +1588,20 @@ with signal_container:
                     </div>
                 </div>
             </div>
+            
+            <div style='margin-top: 25px; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 10px;'>
+                <div style='font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px;'>🎯 MOMENT CONFIRMATION</div>
+                <div style='display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc;'>
+                    <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
+                    <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
+                    <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
+                    <div>OI Accel: {moment_metrics['oi_accel'].get('score', 0)}/100</div>
+                </div>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+        """
+        
+        st.markdown(signal_html, unsafe_allow_html=True)
         
         # Action buttons
         st.markdown("<br>", unsafe_allow_html=True)
@@ -1372,9 +1621,20 @@ with signal_container:
             if st.button("🔄 REFRESH", use_container_width=True, key="refresh"):
                 st.rerun()
         
+        # Signal Reasons
+        with st.expander("📋 View Detailed Signal Reasoning", expanded=False):
+            for reason in entry_signal["reasons"]:
+                st.markdown(f"• {reason}")
+            
+            # Moment Detector Details
+            st.markdown("### 🚀 Moment Detector Details:")
+            for metric_name, metric_data in moment_metrics.items():
+                if metric_data.get("available", False):
+                    st.markdown(f"**{metric_name.replace('_', ' ').title()}:** {metric_data.get('note', 'N/A')}")
+        
     else:
         # NO SIGNAL
-        st.markdown(f"""
+        no_signal_html = f"""
         <div style='
             background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
             padding: 30px;
@@ -1409,8 +1669,20 @@ with signal_container:
             <div style='color: #aaaaaa; font-size: 1.1rem; margin-top: 20px;'>
                 Signal Confidence: {entry_signal["confidence"]:.0f}% | Market Bias: {seller_bias_result["bias"]}
             </div>
+            
+            <div style='margin-top: 25px; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 10px;'>
+                <div style='font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px;'>🎯 MOMENT STATUS</div>
+                <div style='display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc;'>
+                    <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
+                    <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
+                    <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
+                    <div>OI Accel: {moment_metrics['oi_accel'].get('score', 0)}/100</div>
+                </div>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+        """
+        
+        st.markdown(no_signal_html, unsafe_allow_html=True)
         
         # Expandable details for no signal
         with st.expander("🔍 Why No Signal? (Click for Details)", expanded=False):
@@ -1428,9 +1700,9 @@ with signal_container:
                 requirements = [
                     "✅ Clear directional bias (BULLISH/BEARISH)",
                     "✅ Confidence > 40%",
-                    "✅ Breakout Index > 60%",
-                    "✅ Strong seller conviction",
-                    "✅ Support/Resistance alignment"
+                    "✅ Strong moment detector scores",
+                    "✅ Support/Resistance alignment",
+                    "✅ Momentum burst > 50"
                 ]
                 for req in requirements:
                     st.markdown(f"- {req}")
@@ -1445,7 +1717,7 @@ with signal_container:
     st.markdown("---")
 
 # ============================================
-# 🎯 SELLER'S BIAS (moved below signal)
+# 🎯 SELLER'S BIAS
 # ============================================
 
 st.markdown(f"""
@@ -1616,7 +1888,6 @@ with col_s:
         chg_oi_pe = int(row.get("Chg_OI_PE", 0))
         chg_oi_ce = int(row.get("Chg_OI_CE", 0))
         
-        # SELLER interpretation
         if pcr > 1.5:
             seller_msg = "Heavy PUT writing - Strong bullish defense"
             color = "#00ff88"
@@ -1657,7 +1928,6 @@ with col_r:
         chg_oi_ce = int(row.get("Chg_OI_CE", 0))
         chg_oi_pe = int(row.get("Chg_OI_PE", 0))
         
-        # SELLER interpretation
         if pcr < 0.5:
             seller_msg = "Heavy CALL writing - Strong bearish defense"
             color = "#ff4444"
@@ -1689,10 +1959,10 @@ with col_r:
 st.markdown("---")
 
 # ============================================
-# 📊 DETAILED DATA - SELLER VIEW
+# 📊 DETAILED DATA - SELLER VIEW + MOMENT
 # ============================================
 
-tab1, tab2, tab3 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR", "🚀 Moment Analysis"])
 
 with tab1:
     st.markdown("### 📊 SELLER ACTIVITY BY STRIKE")
@@ -1811,11 +2081,87 @@ with tab3:
         else:
             st.error("**VERY LOW PCR (<0.5):** Heavy CALL selling relative to PUT selling. Sellers are BEARISH.")
 
+with tab4:
+    st.markdown("### 🚀 MOMENT DETECTOR ANALYSIS")
+    
+    # Momentum Burst Details
+    st.markdown("#### 💥 MOMENTUM BURST ANALYSIS")
+    mb = moment_metrics["momentum_burst"]
+    if mb["available"]:
+        col_mb1, col_mb2 = st.columns(2)
+        with col_mb1:
+            st.metric("Score", f"{mb['score']}/100")
+            if mb["score"] > 70:
+                st.success("**STRONG MOMENTUM:** High energy for directional move")
+            elif mb["score"] > 40:
+                st.info("**MODERATE MOMENTUM:** Some energy building")
+            else:
+                st.warning("**LOW MOMENTUM:** Market is calm")
+        with col_mb2:
+            st.info(f"**Note:** {mb['note']}")
+    else:
+        st.warning("Momentum burst data unavailable. Need more refresh points.")
+    
+    st.markdown("---")
+    
+    # Orderbook Pressure Details
+    st.markdown("#### 📊 ORDERBOOK PRESSURE ANALYSIS")
+    ob = moment_metrics["orderbook"]
+    if ob["available"]:
+        col_ob1, col_ob2 = st.columns(2)
+        with col_ob1:
+            st.metric("Pressure", f"{ob['pressure']:+.2f}")
+            st.metric("Buy Qty", f"{ob['buy_qty']:.0f}")
+            st.metric("Sell Qty", f"{ob['sell_qty']:.0f}")
+        with col_ob2:
+            if ob["pressure"] > 0.15:
+                st.success("**STRONG BUY PRESSURE:** More buy orders than sell orders")
+            elif ob["pressure"] < -0.15:
+                st.error("**STRONG SELL PRESSURE:** More sell orders than buy orders")
+            else:
+                st.info("**BALANCED ORDERBOOK:** Buy and sell orders are balanced")
+    else:
+        st.warning("Orderbook depth data unavailable from Dhan API.")
+    
+    st.markdown("---")
+    
+    # Gamma Cluster Details
+    st.markdown("#### 🌀 GAMMA CLUSTER ANALYSIS")
+    gc = moment_metrics["gamma_cluster"]
+    if gc["available"]:
+        col_gc1, col_gc2 = st.columns(2)
+        with col_gc1:
+            st.metric("Cluster Score", f"{gc['score']}/100")
+            st.metric("Raw Cluster Value", f"{gc['cluster']:.2f}")
+        with col_gc2:
+            if gc["score"] > 70:
+                st.success("**HIGH GAMMA CLUSTER:** Strong concentration around ATM - expect sharp moves")
+            elif gc["score"] > 40:
+                st.info("**MODERATE GAMMA CLUSTER:** Some gamma concentration")
+            else:
+                st.warning("**LOW GAMMA CLUSTER:** Gamma spread out - smoother moves expected")
+    
+    st.markdown("---")
+    
+    # OI Acceleration Details
+    st.markdown("#### ⚡ OI ACCELERATION ANALYSIS")
+    oi_accel = moment_metrics["oi_accel"]
+    if oi_accel["available"]:
+        col_oi1, col_oi2 = st.columns(2)
+        with col_oi1:
+            st.metric("Acceleration Score", f"{oi_accel['score']}/100")
+        with col_oi2:
+            st.info(f"**Note:** {oi_accel['note']}")
+            if oi_accel["score"] > 60:
+                st.success("**ACCELERATING OI:** Open interest changing rapidly - momentum building")
+            else:
+                st.info("**STEADY OI:** Open interest changes are gradual")
+
 # ============================================
-# 🎯 TRADING INSIGHTS - SELLER PERSPECTIVE
+# 🎯 TRADING INSIGHTS - SELLER PERSPECTIVE + MOMENT
 # ============================================
 st.markdown("---")
-st.markdown("## 💡 SELLER'S TRADING INSIGHTS")
+st.markdown("## 💡 TRADING INSIGHTS (Seller + Moment Fusion)")
 
 insight_col1, insight_col2 = st.columns(2)
 
@@ -1844,6 +2190,14 @@ with insight_col1:
         st.success(f"**Overall PCR ({total_pcr:.2f}):** Strong PUT selling dominance. Bullish seller conviction.")
     elif total_pcr < 0.7:
         st.error(f"**Overall PCR ({total_pcr:.2f}):** Strong CALL selling dominance. Bearish seller conviction.")
+    
+    # Moment Detector insights
+    st.markdown("#### 🚀 MOMENT DETECTOR INSIGHTS")
+    if moment_metrics["momentum_burst"]["score"] > 60:
+        st.success("**High Momentum Burst:** Market energy is building for a move")
+    if moment_metrics["orderbook"]["available"] and abs(moment_metrics["orderbook"]["pressure"]) > 0.15:
+        direction = "buy" if moment_metrics["orderbook"]["pressure"] > 0 else "sell"
+        st.info(f"**Strong {direction.upper()} pressure** in orderbook")
 
 with insight_col2:
     st.markdown("### 🛡️ RISK MANAGEMENT")
@@ -1867,14 +2221,29 @@ with insight_col2:
         
         st.info(f"**Stop Loss:** {stop_loss}")
         st.info(f"**Target:** {target}")
+    
+    # Moment-based risk adjustments
+    st.markdown("#### 🚀 MOMENT-BASED RISK ADJUSTMENTS")
+    if moment_metrics["momentum_burst"]["score"] > 70:
+        st.warning("**High Momentum Alert:** Consider tighter stops due to potential sharp moves")
+    if moment_metrics["gamma_cluster"]["score"] > 70:
+        st.warning("**High Gamma Cluster:** Expect whipsaws around ATM - be prepared for volatility")
 
-# Final Seller Summary
+# Final Seller Summary with Moment Integration
 st.markdown("---")
+moment_summary = ""
+if moment_metrics["momentum_burst"]["score"] > 60:
+    moment_summary += "High momentum burst detected. "
+if moment_metrics["orderbook"]["available"] and abs(moment_metrics["orderbook"]["pressure"]) > 0.15:
+    direction = "buy" if moment_metrics["orderbook"]["pressure"] > 0 else "sell"
+    moment_summary += f"Strong {direction} pressure in orderbook. "
+
 st.markdown(f"""
 <div class='seller-explanation'>
-    <h3>🎯 FINAL SELLER ASSESSMENT</h3>
+    <h3>🎯 FINAL ASSESSMENT (Seller + Moment)</h3>
     <p><strong>Market Makers are telling us:</strong> {seller_bias_result["explanation"]}</p>
     <p><strong>Their game plan:</strong> {seller_bias_result["action"]}</p>
+    <p><strong>Moment Detector:</strong> {moment_summary if moment_summary else "Moment indicators neutral"}</p>
     <p><strong>Key defense levels:</strong> ₹{nearest_sup['strike'] if nearest_sup else 'N/A':,} (Support) | ₹{nearest_res['strike'] if nearest_res else 'N/A':,} (Resistance)</p>
     <p><strong>Preferred price level:</strong> ₹{seller_max_pain if seller_max_pain else 'N/A':,} (Max Pain)</p>
 </div>
@@ -1883,4 +2252,4 @@ st.markdown(f"""
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v4.0 — 100% SELLER'S PERSPECTIVE** | Market Maker Logic Applied | Entry Signal Analysis")
+st.caption("🎯 **NIFTY Option Screener v5.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR** | 4 New Features: Momentum Burst, Orderbook Pressure, Gamma Cluster, OI Acceleration")
