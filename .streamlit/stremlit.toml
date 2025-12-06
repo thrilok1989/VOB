@@ -1,0 +1,9 @@
+# Supabase Configuration
+SUPABASE_URL = "https://your-project-id.supabase.co"
+SUPABASE_ANON_KEY = "your-supabase-anon-key-here"
+SUPABASE_TABLE = "option_snapshots"
+SUPABASE_TABLE_PCR = "strike_pcr_snapshots"
+
+# DhanHQ API Configuration
+DHAN_CLIENT_ID = "your-dhan-client-id"
+DHAN_ACCESS_TOKEN = "your-dhan-access-token"
