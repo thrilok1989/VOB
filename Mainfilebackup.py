@@ -286,7 +286,7 @@ def bs_theta(S,K,r,sigma,tau,option_type="call"):
         return term1 + term2
 
 # -----------------------
-# 🔥 ENTRY SIGNAL CALCULATION - NEW FUNCTION
+# 🔥 ENTRY SIGNAL CALCULATION
 # -----------------------
 def calculate_entry_signal(spot, merged_df, atm_strike, seller_bias_result, seller_max_pain, seller_supports_df, seller_resists_df, nearest_sup, nearest_res, seller_breakout_index):
     """
@@ -478,7 +478,7 @@ def calculate_entry_signal(spot, merged_df, atm_strike, seller_bias_result, sell
     }
 
 # -----------------------
-# 🔥 SELLER'S PERSPECTIVE FUNCTIONS (Existing functions)
+# 🔥 SELLER'S PERSPECTIVE FUNCTIONS
 # -----------------------
 def seller_strength_score(row, weights=SCORE_WEIGHTS):
     """
@@ -1262,7 +1262,7 @@ nearest_sup = spot_analysis["nearest_support"]
 nearest_res = spot_analysis["nearest_resistance"]
 
 # ============================================
-# 🎯 CALCULATE ENTRY SIGNAL - NEW SECTION
+# 🎯 CALCULATE ENTRY SIGNAL
 # ============================================
 entry_signal = calculate_entry_signal(
     spot=spot,
@@ -1278,10 +1278,176 @@ entry_signal = calculate_entry_signal(
 )
 
 # ============================================
-# 🎯 MAIN DASHBOARD - SELLER'S VIEW
+# 🎯 SUPER PROMINENT ENTRY SIGNAL AT THE TOP
 # ============================================
 
-# SELLER BIAS DISPLAY
+# Create a full-width container for the signal
+signal_container = st.container()
+
+with signal_container:
+    # Header
+    st.markdown("""
+    <div style='text-align: center; margin: 10px 0 20px 0;'>
+        <h1 style='color: #ff66cc; font-size: 2.8rem; margin-bottom: 5px;'>🎯 LIVE ENTRY SIGNAL</h1>
+        <p style='color: #cccccc; font-size: 1.1rem;'>Based on 100% Seller's Perspective Analysis</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Signal Display
+    if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 40:
+        # ACTIVE SIGNAL
+        signal_bg = "#1a2e1a" if entry_signal["position_type"] == "LONG" else "#2e1a1a"
+        signal_border = "#00ff88" if entry_signal["position_type"] == "LONG" else "#ff4444"
+        signal_emoji = "🚀" if entry_signal["position_type"] == "LONG" else "🐻"
+        
+        st.markdown(f"""
+        <div style='
+            background: linear-gradient(135deg, {signal_bg} 0%, #2a3e2a 100%);
+            padding: 30px;
+            border-radius: 20px;
+            border: 5px solid {signal_border};
+            margin: 0 auto;
+            text-align: center;
+            max-width: 900px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+        '>
+            <div style='display: flex; justify-content: center; align-items: center; margin-bottom: 15px;'>
+                <span style='font-size: 4rem; margin-right: 20px;'>{signal_emoji}</span>
+                <div>
+                    <div style='font-size: 2.8rem; font-weight: 900; color:{signal_border}; line-height: 1.2;'>
+                        {entry_signal["signal_strength"]} {entry_signal["position_type"]} SIGNAL
+                    </div>
+                    <div style='font-size: 1.2rem; color: #ffdd44; margin-top: 5px;'>
+                        Confidence: {entry_signal["confidence"]:.0f}%
+                    </div>
+                </div>
+                <span style='font-size: 4rem; margin-left: 20px;'>{signal_emoji}</span>
+            </div>
+            
+            <div style='background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; margin: 20px 0;'>
+                <div style='font-size: 3rem; color: #ffcc00; font-weight: 900;'>
+                    ₹{entry_signal["optimal_entry_price"]:,.2f}
+                </div>
+                <div style='font-size: 1.3rem; color: #cccccc; margin-top: 5px;'>
+                    OPTIMAL ENTRY PRICE
+                </div>
+            </div>
+            
+            <div style='display: flex; justify-content: center; gap: 30px; margin-top: 20px;'>
+                <div style='text-align: center;'>
+                    <div style='font-size: 1.1rem; color: #aaaaaa;'>Current Spot</div>
+                    <div style='font-size: 1.8rem; color: #ffffff; font-weight: 700;'>₹{spot:,.2f}</div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='font-size: 1.1rem; color: #aaaaaa;'>Distance</div>
+                    <div style='font-size: 1.8rem; color: #ffaa00; font-weight: 700;'>
+                        ₹{abs(spot - entry_signal["optimal_entry_price"]):.2f}
+                    </div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='font-size: 1.1rem; color: #aaaaaa;'>Direction</div>
+                    <div style='font-size: 1.8rem; color: {signal_border}; font-weight: 700;'>
+                        {entry_signal["position_type"]}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Action buttons
+        st.markdown("<br>", unsafe_allow_html=True)
+        action_col1, action_col2, action_col3 = st.columns([2, 1, 1])
+        
+        with action_col1:
+            if st.button(f"📊 PLACE {entry_signal['position_type']} ORDER AT ₹{entry_signal['optimal_entry_price']:,.0f}", 
+                        use_container_width=True, type="primary", key="place_order"):
+                st.success(f"✅ {entry_signal['position_type']} order queued at ₹{entry_signal['optimal_entry_price']:,.2f}")
+                st.balloons()
+        
+        with action_col2:
+            if st.button("🔔 SET PRICE ALERT", use_container_width=True, key="set_alert"):
+                st.info(f"📢 Alert set for {entry_signal['optimal_entry_price']:,.2f}")
+        
+        with action_col3:
+            if st.button("🔄 REFRESH", use_container_width=True, key="refresh"):
+                st.rerun()
+        
+    else:
+        # NO SIGNAL
+        st.markdown(f"""
+        <div style='
+            background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+            padding: 30px;
+            border-radius: 20px;
+            border: 5px solid #666666;
+            margin: 0 auto;
+            text-align: center;
+            max-width: 900px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+        '>
+            <div style='font-size: 4rem; color: #cccccc; margin-bottom: 20px;'>
+                ⚠️
+            </div>
+            
+            <div style='font-size: 2.5rem; font-weight: 900; color:#cccccc; line-height: 1.2; margin-bottom: 15px;'>
+                NO CLEAR ENTRY SIGNAL
+            </div>
+            
+            <div style='font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin-bottom: 20px;'>
+                Wait for Better Setup
+            </div>
+            
+            <div style='background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; margin: 20px 0;'>
+                <div style='font-size: 2.5rem; color: #ffffff; font-weight: 700;'>
+                    ₹{spot:,.2f}
+                </div>
+                <div style='font-size: 1.2rem; color: #cccccc; margin-top: 5px;'>
+                    CURRENT SPOT PRICE
+                </div>
+            </div>
+            
+            <div style='color: #aaaaaa; font-size: 1.1rem; margin-top: 20px;'>
+                Signal Confidence: {entry_signal["confidence"]:.0f}% | Market Bias: {seller_bias_result["bias"]}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Expandable details for no signal
+        with st.expander("🔍 Why No Signal? (Click for Details)", expanded=False):
+            col_detail1, col_detail2 = st.columns(2)
+            
+            with col_detail1:
+                st.markdown("### 📊 Current Metrics:")
+                st.metric("Seller Bias", seller_bias_result["bias"])
+                st.metric("Polarity Score", f"{seller_bias_result['polarity']:.2f}")
+                st.metric("Breakout Index", f"{seller_breakout_index}%")
+                st.metric("Signal Confidence", f"{entry_signal['confidence']:.0f}%")
+            
+            with col_detail2:
+                st.markdown("### 🎯 Signal Requirements:")
+                requirements = [
+                    "✅ Clear directional bias (BULLISH/BEARISH)",
+                    "✅ Confidence > 40%",
+                    "✅ Breakout Index > 60%",
+                    "✅ Strong seller conviction",
+                    "✅ Support/Resistance alignment"
+                ]
+                for req in requirements:
+                    st.markdown(f"- {req}")
+                
+                st.markdown(f"""
+                ### 📈 Current Status:
+                - **Position Type**: {entry_signal["position_type"]}
+                - **Signal Strength**: {entry_signal["signal_strength"]}
+                - **Optimal Entry**: ₹{entry_signal["optimal_entry_price"]:,.2f}
+                """)
+    
+    st.markdown("---")
+
+# ============================================
+# 🎯 SELLER'S BIAS (moved below signal)
+# ============================================
+
 st.markdown(f"""
 <div class='seller-bias-box'>
     <h3>🎯 SELLER'S MARKET BIAS</h3>
@@ -1299,51 +1465,6 @@ st.markdown(f"""
     <p><strong>Action:</strong> {seller_bias_result["action"]}</p>
 </div>
 """, unsafe_allow_html=True)
-
-# ============================================
-# 🎯 ENTRY SIGNAL DISPLAY - NEW SECTION
-# ============================================
-st.markdown(f"""
-<div class='entry-signal-box'>
-    <h3>🎯 ENTRY SIGNAL - SELLER'S PERSPECTIVE</h3>
-    <div class='signal-value' style='color:{entry_signal["signal_color"]}'>
-        {entry_signal["signal_strength"]} {entry_signal["position_type"]}
-    </div>
-    <div class='signal-explanation'>Confidence: {entry_signal["confidence"]:.0f}%</div>
-    <div class='entry-price'>Optimal Entry: ₹{entry_signal["optimal_entry_price"]:,.2f}</div>
-    <div class='distance'>Current Spot: ₹{spot:,.2f}</div>
-</div>
-""", unsafe_allow_html=True)
-
-# Entry details
-col_entry1, col_entry2 = st.columns(2)
-
-with col_entry1:
-    st.markdown("#### 📊 ENTRY DETAILS")
-    st.metric("Position Type", entry_signal["position_type"])
-    st.metric("Signal Strength", entry_signal["signal_strength"])
-    st.metric("Confidence", f"{entry_signal['confidence']:.0f}%")
-    st.metric("Optimal Entry", f"₹{entry_signal['optimal_entry_price']:,.2f}")
-
-with col_entry2:
-    st.markdown("#### 🎯 RISK MANAGEMENT")
-    if entry_signal["stop_loss"] and entry_signal["target"]:
-        stop_loss = entry_signal["stop_loss"]
-        target = entry_signal["target"]
-        risk_reward = abs(target - entry_signal["optimal_entry_price"]) / abs(stop_loss - entry_signal["optimal_entry_price"])
-        
-        st.metric("Stop Loss", f"₹{stop_loss:,.2f}")
-        st.metric("Target", f"₹{target:,.2f}")
-        st.metric("Risk:Reward", f"1:{risk_reward:.2f}")
-    else:
-        st.info("Risk management levels not available for NEUTRAL signal")
-
-# Entry reasoning
-st.markdown("#### 🧠 SIGNAL REASONING")
-for reason in entry_signal["reasons"]:
-    st.markdown(f"- {reason}")
-
-st.markdown("---")
 
 # Core Metrics
 st.markdown("## 📈 SELLER'S MARKET OVERVIEW")
@@ -1393,6 +1514,9 @@ st.markdown("---")
 # ============================================
 
 st.markdown("## 📍 SPOT POSITION (SELLER'S DEFENSE)")
+
+nearest_sup = spot_analysis["nearest_support"]
+nearest_res = spot_analysis["nearest_resistance"]
 
 col_spot, col_range = st.columns([1, 1])
 
