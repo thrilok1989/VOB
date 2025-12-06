@@ -6,7 +6,6 @@ Enhanced with PCR features, trend analysis, support/resistance ranking
 Author: Your Name
 Date: 2024
 GitHub: https://github.com/yourusername/nifty-option-screener
-Supabase Setup Required: See comments below for database schema
 
 Features:
  - ATM ± 8 strikes
@@ -55,8 +54,6 @@ TIME_WINDOWS = {
 # -----------------------
 #  SECRETS / CLIENTS
 # -----------------------
-# These secrets must be set in Streamlit Cloud or locally in .streamlit/secrets.toml
-# See the README section for Supabase setup instructions
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
@@ -75,8 +72,6 @@ except Exception as e:
     SUPABASE_TABLE_PCR = "strike_pcr_snapshots" (optional)
     DHAN_CLIENT_ID = "your-dhan-client-id"
     DHAN_ACCESS_TOKEN = "your-dhan-access-token"
-    
-    See Supabase Setup section in comments for database schema.
     """)
     st.stop()
 
@@ -559,11 +554,12 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
-#  Supabase snapshot helpers
+#  Supabase snapshot helpers - UPDATED for time_window column
 # -----------------------
 def supabase_snapshot_exists(date_str, window):
     try:
-        resp = supabase.table(SUPABASE_TABLE).select("id").eq("date", date_str).eq("window", window).limit(1).execute()
+        # Changed to use time_window instead of window (reserved keyword)
+        resp = supabase.table(SUPABASE_TABLE).select("id").eq("date", date_str).eq("time_window", window).limit(1).execute()
         if resp.status_code == 200:
             data = resp.data
             return len(data) > 0
@@ -573,7 +569,7 @@ def supabase_snapshot_exists(date_str, window):
         return False
 
 def save_snapshot_to_supabase(df, window, underlying):
-    """Insert rows (one per strike) into supabase table with date & window."""
+    """Insert rows (one per strike) into supabase table with date & time_window."""
     if df is None or df.empty:
         return False, "no data"
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -582,7 +578,7 @@ def save_snapshot_to_supabase(df, window, underlying):
     for _, r in df.iterrows():
         payload.append({
             "date": date_str,
-            "window": window,
+            "time_window": window,  # Changed from "window" to "time_window"
             "underlying": float(underlying),
             "strike": int(r.get("strikePrice",0)),
             "oi_ce": int(safe_int(r.get("OI_CE",0))),
@@ -609,21 +605,24 @@ def save_snapshot_to_supabase(df, window, underlying):
         return False, str(e)
 
 def fetch_snapshot_from_supabase(date_str, window):
-    """Return a pandas DataFrame for requested date/window or None"""
+    """Return a pandas DataFrame for requested date/time_window or None"""
     try:
-        resp = supabase.table(SUPABASE_TABLE).select("*").eq("date", date_str).eq("window", window).execute()
+        # Changed to use time_window instead of window
+        resp = supabase.table(SUPABASE_TABLE).select("*").eq("date", date_str).eq("time_window", window).execute()
         if resp.status_code == 200:
             rows = resp.data
             if not rows:
                 return pd.DataFrame()
             df = pd.DataFrame(rows)
-            # normalize column names
-            expected = ["strike","oi_ce","chg_oi_ce","vol_ce","ltp_ce","iv_ce","oi_pe","chg_oi_pe","vol_pe","ltp_pe","iv_pe","underlying"]
+            # normalize column names - include time_window
+            expected = ["strike","oi_ce","chg_oi_ce","vol_ce","ltp_ce","iv_ce","oi_pe","chg_oi_pe","vol_pe","ltp_pe","iv_pe","underlying","time_window"]
             for col in expected:
                 if col not in df.columns:
                     df[col] = np.nan
+            # Rename time_window back to window for app compatibility
             df = df.rename(columns={
                 "strike":"strikePrice",
+                "time_window":"window",  # Rename back to window for app
                 "oi_ce":"OI_CE","chg_oi_ce":"Chg_OI_CE","vol_ce":"Vol_CE","ltp_ce":"LTP_CE","iv_ce":"IV_CE",
                 "oi_pe":"OI_PE","chg_oi_pe":"Chg_OI_PE","vol_pe":"Vol_PE","ltp_pe":"LTP_PE","iv_pe":"IV_PE"
             })
@@ -707,7 +706,7 @@ def get_sql_for_tables():
 CREATE TABLE IF NOT EXISTS option_snapshots (
     id BIGSERIAL PRIMARY KEY,
     date DATE NOT NULL,
-    window VARCHAR(20) NOT NULL,
+    time_window VARCHAR(20) NOT NULL,
     underlying DECIMAL(10,2) NOT NULL,
     strike INTEGER NOT NULL,
     oi_ce BIGINT DEFAULT 0,
@@ -720,12 +719,11 @@ CREATE TABLE IF NOT EXISTS option_snapshots (
     vol_pe BIGINT DEFAULT 0,
     ltp_pe DECIMAL(10,2) DEFAULT 0.0,
     iv_pe DECIMAL(10,4) DEFAULT 0.0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(date, window, strike)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Index for faster queries
-CREATE INDEX IF NOT EXISTS idx_option_snapshots_date_window ON option_snapshots(date, window);
+CREATE INDEX IF NOT EXISTS idx_option_snapshots_date_window ON option_snapshots(date, time_window);
 CREATE INDEX IF NOT EXISTS idx_option_snapshots_date ON option_snapshots(date);
 CREATE INDEX IF NOT EXISTS idx_option_snapshots_strike ON option_snapshots(strike);
 
@@ -751,64 +749,25 @@ CREATE TABLE IF NOT EXISTS strike_pcr_snapshots (
 -- Indexes for PCR table
 CREATE INDEX IF NOT EXISTS idx_pcr_snapshot_tag ON strike_pcr_snapshots(snapshot_tag);
 CREATE INDEX IF NOT EXISTS idx_pcr_date ON strike_pcr_snapshots(date);
-CREATE INDEX IF NOT EXISTS idx_pcr_expiry ON strike_pcr_snapshots(expiry);
 CREATE INDEX IF NOT EXISTS idx_pcr_created_at ON strike_pcr_snapshots(created_at DESC);
-
--- Optional: Create a view for daily summaries
-CREATE OR REPLACE VIEW daily_snapshot_summary AS
-SELECT 
-    date,
-    window,
-    COUNT(*) as strike_count,
-    SUM(oi_ce) as total_oi_ce,
-    SUM(oi_pe) as total_oi_pe,
-    SUM(chg_oi_ce) as total_chg_oi_ce,
-    SUM(chg_oi_pe) as total_chg_oi_pe,
-    AVG(iv_ce) as avg_iv_ce,
-    AVG(iv_pe) as avg_iv_pe,
-    MAX(created_at) as last_updated
-FROM option_snapshots
-GROUP BY date, window
-ORDER BY date DESC, window;
-
--- ============================================
--- ENABLE ROW LEVEL SECURITY (Optional but recommended)
--- ============================================
 
 -- Enable RLS on both tables
 ALTER TABLE option_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE strike_pcr_snapshots ENABLE ROW LEVEL SECURITY;
 
--- Create policies for public read access (adjust as needed)
+-- Create policies for public read access
 CREATE POLICY "Allow public read access" ON option_snapshots
     FOR SELECT USING (true);
 
 CREATE POLICY "Allow public read access" ON strike_pcr_snapshots
     FOR SELECT USING (true);
 
--- Create policies for insert access (adjust based on your auth setup)
+-- Create policies for insert access
 CREATE POLICY "Allow insert access" ON option_snapshots
     FOR INSERT WITH CHECK (true);
 
 CREATE POLICY "Allow insert access" ON strike_pcr_snapshots
     FOR INSERT WITH CHECK (true);
-
--- ============================================
--- STORAGE USAGE VIEW (Optional)
--- ============================================
-
-CREATE OR REPLACE VIEW database_usage_stats AS
-SELECT 
-    'option_snapshots' as table_name,
-    COUNT(*) as row_count,
-    pg_size_pretty(pg_total_relation_size('option_snapshots')) as total_size
-FROM option_snapshots
-UNION ALL
-SELECT 
-    'strike_pcr_snapshots' as table_name,
-    COUNT(*) as row_count,
-    pg_size_pretty(pg_total_relation_size('strike_pcr_snapshots')) as total_size
-FROM strike_pcr_snapshots;
 """
 
 # -----------------------
@@ -1429,12 +1388,12 @@ st.markdown("""
 <p><strong>Database:</strong> Supabase PostgreSQL</p>
 <p><strong>Features:</strong> Real-time option chain analysis, PCR trends, Support/Resistance detection, Fake breakout alerts</p>
 <p><strong>Author:</strong> Your Name</p>
-<p><strong>GitHub:</strong> https://github.com/yourusername/nifty-option-screener</p>
 <p><strong>Disclaimer:</strong> This tool is for educational purposes only. Trading involves risk.</p>
 </div>
 """, unsafe_allow_html=True)
 
-st.caption("""
-**App Status:** Auto-refresh every 60 seconds | PCR auto-save: {} seconds
-**Database:** Supabase tables: {} and {}
-""".format(save_interval, SUPABASE_TABLE, SUPABASE_TABLE_PCR))
+st.caption(f"""
+**App Status:** Auto-refresh every {AUTO_REFRESH_SEC} seconds | PCR auto-save: {save_interval} seconds
+**Database:** Supabase tables: {SUPABASE_TABLE} and {SUPABASE_TABLE_PCR}
+**Last Updated:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+""")
