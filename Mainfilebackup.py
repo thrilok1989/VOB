@@ -1,15 +1,19 @@
-# nifty_option_screener_v3_dhan_supabase.py
+# nifty_option_screener_v4_dhan_supabase.py
 """
-Nifty Option Screener v3.0 — DhanHQ + Supabase snapshot engine
+Nifty Option Screener v4.0 — DhanHQ + Supabase snapshot engine
+Enhanced with PCR features, trend analysis, support/resistance ranking
 Features:
  - ATM ± 8 strikes
  - Winding / Unwinding (CE/PE)
  - IV change analysis + Greeks (Black-Scholes approx)
  - GEX / Delta exposure
  - Max Pain, Breakout Index, ATM-shift
+ - PCR per strike + Trend analysis
+ - Support/Resistance ranking + Fake breakout detection
+ - Stop-loss hint generation
  - Persistent snapshots stored to Supabase for windows:
     morning (09:15-10:30), mid (10:30-12:30), afternoon (14:00-15:30), evening (15:00-15:30)
- - Snapshot compare UI
+ - Snapshot compare UI with trend labels
 """
 import streamlit as st
 import pandas as pd
@@ -30,6 +34,8 @@ RISK_FREE_RATE = 0.06
 ATM_STRIKE_WINDOW = 8
 SCORE_WEIGHTS = {"chg_oi": 2.0, "volume": 0.5, "oi": 0.2, "iv": 0.3}
 BREAKOUT_INDEX_WEIGHTS = {"atm_oi_shift": 0.4, "winding_balance": 0.3, "vol_oi_div": 0.2, "gamma_pressure": 0.1}
+SAVE_INTERVAL_SEC = 300  # auto-save interval for PCR snapshots
+DEFAULT_CE_OI_FLOOR = 1  # avoid division by zero for PCR calc
 
 # Time windows (your requested Afternoon 14:00-15:30)
 TIME_WINDOWS = {
@@ -47,6 +53,7 @@ try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
     SUPABASE_TABLE = st.secrets.get("SUPABASE_TABLE", "option_snapshots")
+    SUPABASE_TABLE_PCR = st.secrets.get("SUPABASE_TABLE_PCR", "strike_pcr_snapshots")
     DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
     DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
 except Exception as e:
@@ -68,7 +75,7 @@ NIFTY_UNDERLYING_SEG = "IDX_I"
 # -----------------------
 #  Helpers: auto-refresh
 # -----------------------
-st.set_page_config(page_title="Nifty Option Screener v3 (Dhan + Supabase)", layout="wide")
+st.set_page_config(page_title="Nifty Option Screener v4 (Dhan + Supabase)", layout="wide")
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
         st.session_state["last_refresh"] = time.time()
@@ -224,6 +231,218 @@ def breakout_probability_index(merged_df, atm, strike_gap):
     w = BREAKOUT_INDEX_WEIGHTS
     combined = (w["atm_oi_shift"]*atm_score) + (w["winding_balance"]*winding_balance) + (w["vol_oi_div"]*vol_oi_score) + (w["gamma_pressure"]*gamma_score)
     return int(np.clip(combined*100,0,100))
+
+def center_of_mass_oi(df, oi_col):
+    """Calculate center of mass for OI distribution"""
+    if df.empty or oi_col not in df.columns:
+        return 0
+    total_oi = df[oi_col].sum()
+    if total_oi == 0:
+        return 0
+    weighted_sum = (df["strikePrice"] * df[oi_col]).sum()
+    return weighted_sum / total_oi
+
+# -----------------------
+# PCR Functions (NEW from second script)
+# -----------------------
+def compute_pcr_df(merged_df):
+    """Compute PCR per strike safely and return DataFrame with PCR"""
+    df = merged_df.copy()
+    df["OI_CE"] = pd.to_numeric(df.get("OI_CE", 0), errors="coerce").fillna(0).astype(int)
+    df["OI_PE"] = pd.to_numeric(df.get("OI_PE", 0), errors="coerce").fillna(0).astype(int)
+    
+    def pcr_calc(row):
+        ce = int(row["OI_CE"]) if row["OI_CE"] is not None else 0
+        pe = int(row["OI_PE"]) if row["OI_PE"] is not None else 0
+        if ce <= 0:
+            if pe > 0:
+                return float("inf")
+            else:
+                return np.nan
+        return pe / ce
+    
+    df["PCR"] = df.apply(pcr_calc, axis=1)
+    return df
+
+def create_snapshot_tag():
+    """Create unique batch id for PCR snapshots"""
+    return datetime.utcnow().isoformat(timespec="seconds")
+
+def save_pcr_snapshot_to_supabase(df_for_save, expiry, spot):
+    """Save batch PCR snapshot to Supabase table. Returns (ok, snapshot_tag, message)."""
+    if df_for_save is None or df_for_save.empty:
+        return False, None, "no data"
+    snapshot_tag = create_snapshot_tag()
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    time_str = datetime.now().strftime("%H:%M:%S")
+    payload = []
+    for _, r in df_for_save.iterrows():
+        payload.append({
+            "snapshot_tag": snapshot_tag,
+            "date": date_str,
+            "time": time_str,
+            "expiry": expiry,
+            "spot": float(spot or 0.0),
+            "strike": int(r["strikePrice"]),
+            "oi_ce": int(r.get("OI_CE",0)),
+            "oi_pe": int(r.get("OI_PE",0)),
+            "chg_oi_ce": int(r.get("Chg_OI_CE",0)) if "Chg_OI_CE" in r else 0,
+            "chg_oi_pe": int(r.get("Chg_OI_PE",0)) if "Chg_OI_PE" in r else 0,
+            "pcr": float(np.nan if pd.isna(r.get("PCR")) or np.isinf(r.get("PCR")) else r.get("PCR")),
+            "ltp_ce": float(r.get("LTP_CE", 0.0)) if "LTP_CE" in r else 0.0,
+            "ltp_pe": float(r.get("LTP_PE", 0.0)) if "LTP_PE" in r else 0.0
+        })
+    try:
+        batch_size = 200
+        for i in range(0, len(payload), batch_size):
+            chunk = payload[i:i+batch_size]
+            res = supabase.table(SUPABASE_TABLE_PCR).insert(chunk).execute()
+            if res.status_code not in (200,201,204):
+                return False, None, f"Supabase insert failed status {res.status_code}"
+        return True, snapshot_tag, "saved"
+    except Exception as e:
+        return False, None, str(e)
+
+def get_last_two_snapshot_tags(expiry=None, date_filter=None):
+    """Return last two distinct snapshot_tag values (most recent first)."""
+    try:
+        resp = supabase.table(SUPABASE_TABLE_PCR).select("snapshot_tag, created_at").order("created_at", desc=True).limit(2000).execute()
+        if resp.status_code not in (200,201):
+            return []
+        rows = resp.data or []
+        tags = []
+        for r in rows:
+            tag = r.get("snapshot_tag")
+            if tag and tag not in tags:
+                tags.append(tag)
+            if len(tags) >= 2:
+                break
+        return tags
+    except Exception as e:
+        st.warning(f"Could not get snapshot tags: {e}")
+        return []
+
+def fetch_pcr_snapshot_by_tag(tag):
+    """Return DataFrame for a given snapshot_tag"""
+    try:
+        resp = supabase.table(SUPABASE_TABLE_PCR).select("*").eq("snapshot_tag", tag).order("strike", {"ascending": True}).execute()
+        if resp.status_code not in (200,201):
+            return pd.DataFrame()
+        rows = resp.data or []
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows)
+        mapping = {
+            "strike":"strikePrice", "oi_ce":"OI_CE", "oi_pe":"OI_PE",
+            "chg_oi_ce":"Chg_OI_CE","chg_oi_pe":"Chg_OI_PE",
+            "pcr":"PCR","ltp_ce":"LTP_CE","ltp_pe":"LTP_PE"
+        }
+        for col in mapping.keys():
+            if col not in df.columns:
+                df[col] = 0
+        df = df.rename(columns=mapping)
+        for c in ["strikePrice","OI_CE","OI_PE","Chg_OI_CE","Chg_OI_PE","PCR","LTP_CE","LTP_PE"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+        return df.sort_values("strikePrice").reset_index(drop=True)
+    except Exception as e:
+        st.warning(f"Fetch PCR snapshot by tag failed: {e}")
+        return pd.DataFrame()
+
+def evaluate_trend(current_df, prev_df):
+    """
+    Evaluate trend with labels: 'Support Building', 'Support Breaking', 
+    'Resistance Building', 'Resistance Breaking', 'Neutral'
+    """
+    if current_df is None or current_df.empty:
+        return pd.DataFrame()
+    current = current_df.set_index("strikePrice")
+    prev = prev_df.set_index("strikePrice") if (prev_df is not None and not prev_df.empty) else pd.DataFrame()
+    all_strikes = sorted(list(set(current.index).union(set(prev.index))))
+    cur = current.reindex(all_strikes).fillna(0)
+    prv = prev.reindex(all_strikes).fillna(0) if not prev.empty else pd.DataFrame(index=all_strikes).fillna(0)
+    
+    deltas = pd.DataFrame(index=all_strikes)
+    deltas["OI_CE_now"] = cur["OI_CE"]
+    deltas["OI_PE_now"] = cur["OI_PE"]
+    deltas["PCR_now"] = cur["PCR"]
+    deltas["OI_CE_prev"] = prv["OI_CE"] if "OI_CE" in prv.columns else 0
+    deltas["OI_PE_prev"] = prv["OI_PE"] if "OI_PE" in prv.columns else 0
+    deltas["PCR_prev"] = prv["PCR"] if "PCR" in prv.columns else 0
+    deltas["ΔOI_CE"] = deltas["OI_CE_now"] - deltas["OI_CE_prev"]
+    deltas["ΔOI_PE"] = deltas["OI_PE_now"] - deltas["OI_PE_prev"]
+    deltas["ΔPCR"] = deltas["PCR_now"] - deltas["PCR_prev"]
+    
+    def label(row):
+        oi_pe_up = row["ΔOI_PE"] > 0
+        oi_pe_down = row["ΔOI_PE"] < 0
+        oi_ce_up = row["ΔOI_CE"] > 0
+        oi_ce_down = row["ΔOI_CE"] < 0
+        pcr_up = row["ΔPCR"] > 0.05
+        pcr_down = row["ΔPCR"] < -0.05
+        
+        if oi_pe_up and pcr_up:
+            return "Support Building"
+        if oi_pe_down and pcr_down:
+            return "Support Breaking"
+        if oi_ce_up and pcr_down:
+            return "Resistance Building"
+        if oi_ce_down and pcr_up:
+            return "Resistance Breaking"
+        if abs(row["ΔPCR"]) > 0.2:
+            return "PCR Rapid Change"
+        return "Neutral"
+    
+    deltas["Trend"] = deltas.apply(label, axis=1)
+    deltas = deltas.reset_index().rename(columns={"index":"strikePrice"})
+    return deltas
+
+def rank_support_resistance(trend_df):
+    """
+    Rank supports and resistances using PCR + OI scores
+    Returns: ranked_df, top_supports, top_resists
+    """
+    eps = 1e-6
+    t = trend_df.copy()
+    t["PCR_now_clipped"] = t["PCR_now"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    t["support_score"] = t["OI_PE_now"] + (t["PCR_now_clipped"] * 100000.0)
+    t["resistance_factor"] = t["PCR_now_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
+    t["resistance_score"] = t["OI_CE_now"] + (t["resistance_factor"] * 100000.0)
+    
+    top_supports = t.sort_values("support_score", ascending=False).head(3)["strikePrice"].astype(int).tolist()
+    top_resists = t.sort_values("resistance_score", ascending=False).head(3)["strikePrice"].astype(int).tolist()
+    return t, top_supports, top_resists
+
+def detect_fake_breakout(spot, strong_support, strong_resist, trend_df):
+    """Detect potential fake breakouts"""
+    fake = None
+    fake_hint = ""
+    
+    if strong_resist is not None and spot > strong_resist:
+        row = trend_df[trend_df["strikePrice"]==strong_resist]
+        if not row.empty and row.iloc[0]["ΔOI_CE"] > 0:
+            fake = "Bull Trap"
+            fake_hint = f"Price above resistance {strong_resist} but CE OI building → possible fake upside."
+    
+    if strong_support is not None and spot < strong_support:
+        row = trend_df[trend_df["strikePrice"]==strong_support]
+        if not row.empty and row.iloc[0]["ΔOI_PE"] > 0:
+            fake = "Bear Trap"
+            fake_hint = f"Price below support {strong_support} but PE OI building → possible fake downside."
+    
+    return fake, fake_hint
+
+def generate_stop_loss_hint(spot, top_supports, top_resists, fake_type):
+    """Generate stop-loss hint based on support/resistance levels"""
+    if fake_type == "Bull Trap":
+        return f"Keep SL near strong support {top_supports[0] if top_supports else 'N/A'} — trap likely reverse down."
+    if fake_type == "Bear Trap":
+        return f"Keep SL near strong resistance {top_resists[0] if top_resists else 'N/A'} — trap likely reverse up."
+    if top_resists and spot > top_resists[0]:
+        return f"Real upside: place SL near 2nd strongest support {top_supports[1] if len(top_supports)>1 else 'N/A'}"
+    if top_supports and spot < top_supports[0]:
+        return f"Real downside: place SL near 2nd strongest resistance {top_resists[1] if len(top_resists)>1 else 'N/A'}"
+    return f"No clear breakout — SL inside range between {top_supports[1] if len(top_supports)>1 else 'N/A'} and {top_resists[1] if len(top_resists)>1 else 'N/A'}"
 
 # -----------------------
 #  Dhan API helpers
@@ -439,12 +658,13 @@ def bias_score_from_summary(summary):
 # -----------------------
 #  MAIN APP FLOW
 # -----------------------
-st.title("📊 NIFTY Option Screener v3.0 — DhanHQ + Supabase Snapshots")
+st.title("📊 NIFTY Option Screener v4.0 — DhanHQ + Supabase Snapshots")
 
-# Sidebar: token check
+# Sidebar: token check and config
 with st.sidebar:
-    st.header("Credentials")
+    st.header("Credentials & Config")
     st.write("Supabase table:", SUPABASE_TABLE)
+    st.write("PCR table:", SUPABASE_TABLE_PCR)
     if st.button("Check Supabase Connection"):
         try:
             res = supabase.table(SUPABASE_TABLE).select("id").limit(1).execute()
@@ -454,6 +674,13 @@ with st.sidebar:
     if st.button("Clear caches"):
         st.cache_data.clear()
         st.experimental_rerun()
+    
+    # PCR Auto-save config
+    st.subheader("PCR Settings")
+    save_interval = st.number_input("PCR Auto-save interval (seconds)", 
+                                    value=SAVE_INTERVAL_SEC, 
+                                    min_value=60, 
+                                    step=60)
 
 # Fetch spot and expiry list
 with st.spinner("Fetching NIFTY spot..."):
@@ -668,6 +895,7 @@ else: market_bias="Neutral"
 # -----------------------
 #  UI: display core tables and metrics
 # -----------------------
+st.markdown("## 📈 Core Market Metrics")
 col1,col2,col3,col4 = st.columns(4)
 with col1:
     st.metric("Spot", f"{spot:.2f}")
@@ -720,10 +948,167 @@ with col2:
     st.info(f"ATM Shift: {atm_shift_str}")
 
 # -----------------------
-#  SNAPSHOT: Supabase storage (auto + manual) + compare UI
+# PCR Analysis Section (NEW)
 # -----------------------
 st.markdown("---")
-st.header("📦 Snapshots (Supabase) — Morning / Mid / Afternoon / Evening")
+st.header("📊 PCR Analysis & Trend Detection")
+
+# Compute PCR
+pcr_df = compute_pcr_df(merged)
+pcr_display_cols = ["strikePrice", "OI_CE", "OI_PE", "PCR", "Chg_OI_CE", "Chg_OI_PE", "LTP_CE", "LTP_PE"]
+st.markdown("### Current Strike PCR")
+st.dataframe(pcr_df[pcr_display_cols].sort_values("strikePrice").reset_index(drop=True), use_container_width=True)
+
+# PCR Snapshot Management
+st.markdown("### PCR Snapshots (Batch-based)")
+
+# Manual save button
+colA, colB = st.columns([1,1])
+with colA:
+    if st.button("💾 Save PCR Snapshot (Manual)"):
+        ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
+        if ok:
+            st.success(f"Saved PCR snapshot tag: {tag}")
+            st.session_state["last_pcr_saved_tag"] = tag
+        else:
+            st.error(f"Save failed: {msg}")
+
+# Auto-save logic
+last_auto_saved = st.session_state.get("last_pcr_auto_saved", 0)
+now_ts = time.time()
+if now_ts - last_auto_saved > save_interval:
+    ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
+    if ok:
+        st.success(f"Auto-saved PCR snapshot: {tag}")
+        st.session_state["last_pcr_saved_tag"] = tag
+        st.session_state["last_pcr_auto_saved"] = now_ts
+    else:
+        st.warning(f"Auto-save failed: {msg}")
+        st.session_state["last_pcr_auto_saved"] = now_ts
+
+# Trend Analysis
+tags = get_last_two_snapshot_tags()
+current_tag = tags[0] if tags else None
+previous_tag = tags[1] if len(tags) > 1 else None
+
+if current_tag:
+    cur_df = fetch_pcr_snapshot_by_tag(current_tag)
+else:
+    cur_df = pd.DataFrame()
+
+prev_df = fetch_pcr_snapshot_by_tag(previous_tag) if previous_tag else pd.DataFrame()
+
+if not cur_df.empty:
+    trend_df = evaluate_trend(cur_df, prev_df)
+    
+    if not trend_df.empty:
+        # Rename columns for display
+        trend_display = trend_df.copy()
+        trend_display = trend_display.rename(columns={
+            "OI_CE_now": "OI_CE", "OI_PE_now": "OI_PE", "PCR_now": "PCR"
+        })
+        
+        st.markdown("### 📈 Trend Analysis (PCR + OI Deltas)")
+        show_cols = ["strikePrice", "OI_CE", "OI_PE", "ΔOI_CE", "ΔOI_PE", "PCR", "PCR_prev", "ΔPCR", "Trend"]
+        for c in show_cols:
+            if c not in trend_display.columns:
+                trend_display[c] = np.nan
+        
+        st.dataframe(trend_display[show_cols].sort_values("strikePrice").reset_index(drop=True), use_container_width=True)
+        
+        # Rank Supports/Resistances
+        ranked_df, top_supports, top_resists = rank_support_resistance(trend_display)
+        
+        st.markdown("### 🎯 Top Support/Resistance Levels")
+        col_s, col_r = st.columns(2)
+        with col_s:
+            st.subheader("Supports")
+            for i, sup in enumerate(top_supports[:3], 1):
+                st.metric(f"Support #{i}", f"{sup}")
+        with col_r:
+            st.subheader("Resistances")
+            for i, res in enumerate(top_resists[:3], 1):
+                st.metric(f"Resistance #{i}", f"{res}")
+        
+        # Fake Breakout Detection
+        fake_type, fake_hint = detect_fake_breakout(spot, 
+                                                    top_supports[0] if top_supports else None, 
+                                                    top_resists[0] if top_resists else None, 
+                                                    trend_display)
+        
+        if fake_type:
+            st.warning(f"⚠️ **Fake Breakout Alert: {fake_type}**")
+            st.info(f"{fake_hint}")
+        else:
+            st.success("✅ No immediate fake breakout detected")
+        
+        # Stop-loss Hint
+        stop_loss_hint = generate_stop_loss_hint(spot, top_supports, top_resists, fake_type)
+        st.markdown("### 🛡️ Stop-loss Hint")
+        st.info(stop_loss_hint)
+    else:
+        st.info("No trend data available. Save more PCR snapshots to enable trend analysis.")
+else:
+    st.info("No PCR snapshots found. Use the 'Save PCR Snapshot' button to start tracking trends.")
+
+# -----------------------
+# PCR Snapshot Comparison
+# -----------------------
+st.markdown("---")
+st.header("🔍 Compare PCR Snapshots")
+
+# Get available tags
+try:
+    resp = supabase.table(SUPABASE_TABLE_PCR).select("snapshot_tag, created_at").order("created_at", desc=True).limit(2000).execute()
+    tags_list = []
+    if resp.status_code in (200,201):
+        for r in (resp.data or []):
+            tag = r.get("snapshot_tag")
+            if tag and tag not in tags_list:
+                tags_list.append(tag)
+    tags_list = tags_list[:50]
+except Exception:
+    tags_list = []
+
+if tags_list:
+    col_left, col_right = st.columns(2)
+    with col_left:
+        left_tag = st.selectbox("Left snapshot tag", options=tags_list, index=0 if tags_list else None)
+    with col_right:
+        right_tag = st.selectbox("Right snapshot tag", options=tags_list, index=1 if len(tags_list)>1 else 0)
+    
+    if st.button("Compare PCR Snapshots"):
+        if not left_tag or not right_tag or left_tag == right_tag:
+            st.warning("Choose two different snapshot tags.")
+        else:
+            left_df = fetch_pcr_snapshot_by_tag(left_tag)
+            right_df = fetch_pcr_snapshot_by_tag(right_tag)
+            comp_df = evaluate_trend(right_df, left_df)
+            
+            if not comp_df.empty:
+                st.markdown(f"### Comparison: {left_tag} → {right_tag}")
+                comp_display = comp_df[["strikePrice", "OI_CE_now", "OI_PE_now", "ΔOI_CE", "ΔOI_PE", "PCR_now", "PCR_prev", "ΔPCR", "Trend"]]
+                st.dataframe(comp_display, use_container_width=True)
+                
+                # Summary
+                total_ce_delta = comp_df["ΔOI_CE"].sum()
+                total_pe_delta = comp_df["ΔOI_PE"].sum()
+                avg_pcr_delta = comp_df["ΔPCR"].mean()
+                
+                st.markdown("**Summary:**")
+                st.write(f"- Total CE OI Δ: {int(total_ce_delta):,}")
+                st.write(f"- Total PE OI Δ: {int(total_pe_delta):,}")
+                st.write(f"- Average PCR Δ: {avg_pcr_delta:.3f}")
+            else:
+                st.warning("Comparison returned no data.")
+else:
+    st.info("No PCR snapshots available for comparison.")
+
+# -----------------------
+# Original Snapshot Section (Time Windows)
+# -----------------------
+st.markdown("---")
+st.header("📦 Original Snapshots (Time Windows) — Morning / Mid / Afternoon / Evening")
 
 def now_in_window(w_key):
     now = datetime.now()
@@ -749,33 +1134,26 @@ for w in TIME_WINDOWS.keys():
 # Manual capture buttons
 c1,c2,c3,c4 = st.columns(4)
 with c1:
-    if st.button("📥 Save Morning Snapshot (manual)"):
+    if st.button("📥 Save Morning Snapshot"):
         ok,msg = save_snapshot_to_supabase(merged, "morning", spot)
         st.success("Saved." if ok else f"Failed: {msg}")
 with c2:
-    if st.button("📥 Save Mid Snapshot (manual)"):
+    if st.button("📥 Save Mid Snapshot"):
         ok,msg = save_snapshot_to_supabase(merged, "mid", spot)
         st.success("Saved." if ok else f"Failed: {msg}")
 with c3:
-    if st.button("📥 Save Afternoon Snapshot (manual)"):
+    if st.button("📥 Save Afternoon Snapshot"):
         ok,msg = save_snapshot_to_supabase(merged, "afternoon", spot)
         st.success("Saved." if ok else f"Failed: {msg}")
 with c4:
-    if st.button("📥 Save Evening Snapshot (manual)"):
+    if st.button("📥 Save Evening Snapshot"):
         ok,msg = save_snapshot_to_supabase(merged, "evening", spot)
         st.success("Saved." if ok else f"Failed: {msg}")
 
-# Snapshot compare UI
-st.markdown("### 🔎 Compare saved snapshots")
-# fetch list of dates & windows from Supabase (simple approach: fetch distinct date/window)
-try:
-    resp = supabase.rpc("rpc_get_snapshot_dates", {}).execute() if False else None
-except Exception:
-    resp = None
-
-# fallback: simple list by querying recent days for each window
+# Original snapshot compare UI
+st.markdown("### 🔎 Compare saved time-window snapshots")
 saved_files = []
-for d_offset in range(0,7):  # last 7 days
+for d_offset in range(0,7):
     dt = (datetime.now() - timedelta(days=d_offset)).strftime("%Y-%m-%d")
     for w in TIME_WINDOWS.keys():
         df_tmp = fetch_snapshot_from_supabase(dt, w)
@@ -783,37 +1161,36 @@ for d_offset in range(0,7):  # last 7 days
             saved_files.append(f"{dt}__{w}")
 
 if not saved_files:
-    st.info("No saved snapshots found (today or recent days). Use manual capture or keep app running during windows for auto-capture.")
+    st.info("No saved time-window snapshots found.")
 
-colL, colR = st.columns(2)
-with colL:
-    left_choice = st.selectbox("Left snapshot (date__window)", options=saved_files, index=0 if saved_files else None)
-with colR:
-    right_choice = st.selectbox("Right snapshot (date__window)", options=saved_files, index=1 if len(saved_files)>1 else 0)
+if saved_files:
+    colL, colR = st.columns(2)
+    with colL:
+        left_choice = st.selectbox("Left snapshot (date__window)", options=saved_files, index=0 if saved_files else None)
+    with colR:
+        right_choice = st.selectbox("Right snapshot (date__window)", options=saved_files, index=1 if len(saved_files)>1 else 0)
 
-def load_choice(choice_str):
-    if not choice_str:
-        return None
-    date_str, w = choice_str.split("__")
-    return fetch_snapshot_from_supabase(date_str, w)
+    def load_time_window_choice(choice_str):
+        if not choice_str:
+            return None
+        date_str, w = choice_str.split("__")
+        return fetch_snapshot_from_supabase(date_str, w)
 
-if left_choice and right_choice:
-    left_df = load_choice(left_choice)
-    right_df = load_choice(right_choice)
-    diff_df = compare_snapshots_df(left_df, right_df)
-    st.subheader(f"Snapshot Diff: {left_choice} → {right_choice}")
-    if diff_df is not None:
-        st.dataframe(diff_df.drop(columns=["abs_change"]).head(100), use_container_width=True)
-        s_left = snapshot_summary(left_df)
-        s_right = snapshot_summary(right_df)
-        b_left = bias_score_from_summary(s_left)
-        b_right = bias_score_from_summary(s_right)
-        st.markdown("**Summary:**")
-        st.write(f"- Left ({left_choice}): CE_ΔOI={s_left['CE_ΔOI']}, PE_ΔOI={s_left['PE_ΔOI']}, CE_Vol={s_left['CE_Vol']}, PE_Vol={s_left['PE_Vol']}, AvgIV_CE={s_left['Avg_IV_CE']:.2f}")
-        st.write(f"- Right ({right_choice}): CE_ΔOI={s_right['CE_ΔOI']}, PE_ΔOI={s_right['PE_ΔOI']}, CE_Vol={s_right['CE_Vol']}, PE_Vol={s_right['PE_Vol']}, AvgIV_CE={s_right['Avg_IV_CE']:.2f}")
-        st.write(f"- Bias Score Left -> {b_left:.3f} | Right -> {b_right:.3f} | ΔBias = {(b_right - b_left):.3f}")
-    else:
-        st.warning("No valid diff available.")
+    if left_choice and right_choice:
+        left_df = load_time_window_choice(left_choice)
+        right_df = load_time_window_choice(right_choice)
+        diff_df = compare_snapshots_df(left_df, right_df)
+        st.subheader(f"Snapshot Diff: {left_choice} → {right_choice}")
+        if diff_df is not None:
+            st.dataframe(diff_df.drop(columns=["abs_change"]).head(100), use_container_width=True)
+            s_left = snapshot_summary(left_df)
+            s_right = snapshot_summary(right_df)
+            b_left = bias_score_from_summary(s_left)
+            b_right = bias_score_from_summary(s_right)
+            st.markdown("**Summary:**")
+            st.write(f"- Left ({left_choice}): CE_ΔOI={s_left['CE_ΔOI']}, PE_ΔOI={s_left['PE_ΔOI']}, CE_Vol={s_left['CE_Vol']}, PE_Vol={s_left['PE_Vol']}, AvgIV_CE={s_left['Avg_IV_CE']:.2f}")
+            st.write(f"- Right ({right_choice}): CE_ΔOI={s_right['CE_ΔOI']}, PE_ΔOI={s_right['PE_ΔOI']}, CE_Vol={s_right['CE_Vol']}, PE_Vol={s_right['PE_Vol']}, AvgIV_CE={s_right['Avg_IV_CE']:.2f}")
+            st.write(f"- Bias Score Left -> {b_left:.3f} | Right -> {b_right:.3f} | ΔBias = {(b_right - b_left):.3f}")
 
 # Quick comparison button: Morning->Afternoon
 if st.button("Quick: Morning → Afternoon (today)"):
@@ -827,4 +1204,10 @@ if st.button("Quick: Morning → Afternoon (today)"):
         st.write("Bias Δ:", bias_score_from_summary(snapshot_summary(right)) - bias_score_from_summary(snapshot_summary(left)))
 
 st.markdown("---")
-st.caption("Notes: Supabase table must exist. Use secrets to store keys. For heavier loads, consider adding RLS policies and server-side inserts.")
+st.caption("""
+**Notes:** 
+- Supabase tables must exist. Use secrets to store keys. 
+- Two snapshot systems: Time-window based (morning/afternoon/etc) and PCR batch-based
+- PCR analysis includes trend detection, support/resistance ranking, fake breakout alerts
+- Auto-save runs while app is open (both time-window and PCR)
+""")
