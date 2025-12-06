@@ -1,7 +1,13 @@
-# nifty_option_screener_v4_dhan_supabase.py
+# nifty_option_screener_v4_complete.py
 """
-Nifty Option Screener v4.0 — DhanHQ + Supabase snapshot engine
+Nifty Option Screener v4.0 — DhanHQ + Supabase
 Enhanced with PCR features, trend analysis, support/resistance ranking
+
+Author: Your Name
+Date: 2024
+GitHub: https://github.com/yourusername/nifty-option-screener
+Supabase Setup Required: See comments below for database schema
+
 Features:
  - ATM ± 8 strikes
  - Winding / Unwinding (CE/PE)
@@ -15,6 +21,7 @@ Features:
     morning (09:15-10:30), mid (10:30-12:30), afternoon (14:00-15:30), evening (15:00-15:30)
  - Snapshot compare UI with trend labels
 """
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -48,7 +55,8 @@ TIME_WINDOWS = {
 # -----------------------
 #  SECRETS / CLIENTS
 # -----------------------
-# Expect user to set these in Streamlit secrets as described in the README at top
+# These secrets must be set in Streamlit Cloud or locally in .streamlit/secrets.toml
+# See the README section for Supabase setup instructions
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
@@ -57,7 +65,19 @@ try:
     DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
     DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
 except Exception as e:
-    st.error("❌ Missing credentials in Streamlit secrets. See script header for required secrets.")
+    st.error("""
+    ❌ Missing credentials in Streamlit secrets. 
+    
+    Required secrets in .streamlit/secrets.toml:
+    SUPABASE_URL = "your-supabase-url"
+    SUPABASE_ANON_KEY = "your-supabase-anon-key"
+    SUPABASE_TABLE = "option_snapshots" (optional)
+    SUPABASE_TABLE_PCR = "strike_pcr_snapshots" (optional)
+    DHAN_CLIENT_ID = "your-dhan-client-id"
+    DHAN_ACCESS_TOKEN = "your-dhan-access-token"
+    
+    See Supabase Setup section in comments for database schema.
+    """)
     st.stop()
 
 # Supabase client
@@ -243,7 +263,7 @@ def center_of_mass_oi(df, oi_col):
     return weighted_sum / total_oi
 
 # -----------------------
-# PCR Functions (NEW from second script)
+# PCR Functions
 # -----------------------
 def compute_pcr_df(merged_df):
     """Compute PCR per strike safely and return DataFrame with PCR"""
@@ -656,45 +676,230 @@ def bias_score_from_summary(summary):
     return score
 
 # -----------------------
+#  Supabase Database Setup Functions
+# -----------------------
+def create_tables_if_not_exist():
+    """Check if tables exist, provide SQL for manual creation if needed"""
+    try:
+        # Try to fetch from both tables
+        res1 = supabase.table(SUPABASE_TABLE).select("id").limit(1).execute()
+        res2 = supabase.table(SUPABASE_TABLE_PCR).select("id").limit(1).execute()
+        
+        if res1.status_code == 200 and res2.status_code == 200:
+            st.sidebar.success("✅ Both Supabase tables exist")
+            return True
+        else:
+            st.sidebar.warning("Some tables missing. Use SQL below to create them.")
+            return False
+    except Exception as e:
+        st.sidebar.warning(f"Table check failed: {e}")
+        return False
+
+def get_sql_for_tables():
+    """Return SQL commands to create the required tables"""
+    return """
+-- ============================================
+-- SUPABASE TABLES SETUP FOR NIFTY OPTION SCREENER
+-- Run these SQL commands in Supabase SQL Editor
+-- ============================================
+
+-- Table 1: option_snapshots (for time-window snapshots)
+CREATE TABLE IF NOT EXISTS option_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    date DATE NOT NULL,
+    window VARCHAR(20) NOT NULL,
+    underlying DECIMAL(10,2) NOT NULL,
+    strike INTEGER NOT NULL,
+    oi_ce BIGINT DEFAULT 0,
+    chg_oi_ce BIGINT DEFAULT 0,
+    vol_ce BIGINT DEFAULT 0,
+    ltp_ce DECIMAL(10,2) DEFAULT 0.0,
+    iv_ce DECIMAL(10,4) DEFAULT 0.0,
+    oi_pe BIGINT DEFAULT 0,
+    chg_oi_pe BIGINT DEFAULT 0,
+    vol_pe BIGINT DEFAULT 0,
+    ltp_pe DECIMAL(10,2) DEFAULT 0.0,
+    iv_pe DECIMAL(10,4) DEFAULT 0.0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(date, window, strike)
+);
+
+-- Index for faster queries
+CREATE INDEX IF NOT EXISTS idx_option_snapshots_date_window ON option_snapshots(date, window);
+CREATE INDEX IF NOT EXISTS idx_option_snapshots_date ON option_snapshots(date);
+CREATE INDEX IF NOT EXISTS idx_option_snapshots_strike ON option_snapshots(strike);
+
+-- Table 2: strike_pcr_snapshots (for PCR batch snapshots)
+CREATE TABLE IF NOT EXISTS strike_pcr_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    snapshot_tag VARCHAR(50) NOT NULL,
+    date DATE NOT NULL,
+    time VARCHAR(20) NOT NULL,
+    expiry VARCHAR(20) NOT NULL,
+    spot DECIMAL(10,2) NOT NULL,
+    strike INTEGER NOT NULL,
+    oi_ce BIGINT DEFAULT 0,
+    oi_pe BIGINT DEFAULT 0,
+    chg_oi_ce BIGINT DEFAULT 0,
+    chg_oi_pe BIGINT DEFAULT 0,
+    pcr DECIMAL(10,4),
+    ltp_ce DECIMAL(10,2) DEFAULT 0.0,
+    ltp_pe DECIMAL(10,2) DEFAULT 0.0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Indexes for PCR table
+CREATE INDEX IF NOT EXISTS idx_pcr_snapshot_tag ON strike_pcr_snapshots(snapshot_tag);
+CREATE INDEX IF NOT EXISTS idx_pcr_date ON strike_pcr_snapshots(date);
+CREATE INDEX IF NOT EXISTS idx_pcr_expiry ON strike_pcr_snapshots(expiry);
+CREATE INDEX IF NOT EXISTS idx_pcr_created_at ON strike_pcr_snapshots(created_at DESC);
+
+-- Optional: Create a view for daily summaries
+CREATE OR REPLACE VIEW daily_snapshot_summary AS
+SELECT 
+    date,
+    window,
+    COUNT(*) as strike_count,
+    SUM(oi_ce) as total_oi_ce,
+    SUM(oi_pe) as total_oi_pe,
+    SUM(chg_oi_ce) as total_chg_oi_ce,
+    SUM(chg_oi_pe) as total_chg_oi_pe,
+    AVG(iv_ce) as avg_iv_ce,
+    AVG(iv_pe) as avg_iv_pe,
+    MAX(created_at) as last_updated
+FROM option_snapshots
+GROUP BY date, window
+ORDER BY date DESC, window;
+
+-- ============================================
+-- ENABLE ROW LEVEL SECURITY (Optional but recommended)
+-- ============================================
+
+-- Enable RLS on both tables
+ALTER TABLE option_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE strike_pcr_snapshots ENABLE ROW LEVEL SECURITY;
+
+-- Create policies for public read access (adjust as needed)
+CREATE POLICY "Allow public read access" ON option_snapshots
+    FOR SELECT USING (true);
+
+CREATE POLICY "Allow public read access" ON strike_pcr_snapshots
+    FOR SELECT USING (true);
+
+-- Create policies for insert access (adjust based on your auth setup)
+CREATE POLICY "Allow insert access" ON option_snapshots
+    FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Allow insert access" ON strike_pcr_snapshots
+    FOR INSERT WITH CHECK (true);
+
+-- ============================================
+-- STORAGE USAGE VIEW (Optional)
+-- ============================================
+
+CREATE OR REPLACE VIEW database_usage_stats AS
+SELECT 
+    'option_snapshots' as table_name,
+    COUNT(*) as row_count,
+    pg_size_pretty(pg_total_relation_size('option_snapshots')) as total_size
+FROM option_snapshots
+UNION ALL
+SELECT 
+    'strike_pcr_snapshots' as table_name,
+    COUNT(*) as row_count,
+    pg_size_pretty(pg_total_relation_size('strike_pcr_snapshots')) as total_size
+FROM strike_pcr_snapshots;
+"""
+
+# -----------------------
 #  MAIN APP FLOW
 # -----------------------
-st.title("📊 NIFTY Option Screener v4.0 — DhanHQ + Supabase Snapshots")
+st.title("📊 NIFTY Option Screener v4.0 — DhanHQ + Supabase")
 
-# Sidebar: token check and config
+# Sidebar: Setup instructions and config
 with st.sidebar:
-    st.header("Credentials & Config")
-    st.write("Supabase table:", SUPABASE_TABLE)
-    st.write("PCR table:", SUPABASE_TABLE_PCR)
-    if st.button("Check Supabase Connection"):
-        try:
-            res = supabase.table(SUPABASE_TABLE).select("id").limit(1).execute()
-            st.success("Supabase connection OK")
-        except Exception as e:
-            st.error(f"Supabase check failed: {e}")
-    if st.button("Clear caches"):
-        st.cache_data.clear()
-        st.experimental_rerun()
+    st.header("⚙️ Setup & Configuration")
     
-    # PCR Auto-save config
+    # Database setup section
+    st.subheader("Supabase Database Setup")
+    if st.button("Check Database Connection"):
+        if create_tables_if_not_exist():
+            st.success("✅ Database connection successful!")
+        else:
+            st.warning("⚠️ Some tables may be missing")
+    
+    if st.button("Show SQL for Table Creation"):
+        sql_commands = get_sql_for_tables()
+        st.code(sql_commands, language="sql")
+        st.download_button(
+            label="Download SQL Script",
+            data=sql_commands,
+            file_name="supabase_setup.sql",
+            mime="text/sql"
+        )
+    
+    st.markdown("---")
     st.subheader("PCR Settings")
     save_interval = st.number_input("PCR Auto-save interval (seconds)", 
                                     value=SAVE_INTERVAL_SEC, 
                                     min_value=60, 
                                     step=60)
+    
+    st.markdown("---")
+    st.subheader("App Controls")
+    if st.button("Clear Caches"):
+        st.cache_data.clear()
+        st.experimental_rerun()
+    
+    if st.button("Reset Session State"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.experimental_rerun()
+    
+    # Display current stats if available
+    try:
+        res = supabase.table(SUPABASE_TABLE).select("count", count="exact").execute()
+        count1 = res.count if hasattr(res, 'count') else 0
+        res2 = supabase.table(SUPABASE_TABLE_PCR).select("count", count="exact").execute()
+        count2 = res2.count if hasattr(res2, 'count') else 0
+        st.markdown(f"**Database Stats:**")
+        st.markdown(f"- Time snapshots: {count1:,} rows")
+        st.markdown(f"- PCR snapshots: {count2:,} rows")
+    except:
+        pass
+
+# Main app content
+st.markdown("""
+<div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-bottom: 20px;'>
+<h3 style='color: #1f77b4;'>📋 About This App</h3>
+<p>This Nifty Option Screener v4.0 combines real-time option chain data from DhanHQ with persistent storage in Supabase. 
+It provides advanced analytics including PCR analysis, trend detection, support/resistance levels, and fake breakout alerts.</p>
+<p><strong>Features:</strong> ATM analysis, Greeks calculation, GEX tracking, Max Pain, PCR trends, and more.</p>
+</div>
+""", unsafe_allow_html=True)
 
 # Fetch spot and expiry list
-with st.spinner("Fetching NIFTY spot..."):
-    spot = get_nifty_spot_price()
-if spot == 0.0:
-    st.error("Unable to fetch NIFTY spot. Check Dhan credentials.")
-    st.stop()
+col1, col2 = st.columns([1, 2])
+with col1:
+    with st.spinner("Fetching NIFTY spot..."):
+        spot = get_nifty_spot_price()
+    if spot == 0.0:
+        st.error("Unable to fetch NIFTY spot. Check Dhan credentials.")
+        st.stop()
+    
+    expiries = get_expiry_list()
+    if not expiries:
+        st.error("Unable to fetch expiry list")
+        st.stop()
+    
+    expiry = st.selectbox("Select expiry", expiries, index=0)
 
-expiries = get_expiry_list()
-if not expiries:
-    st.error("Unable to fetch expiry list")
-    st.stop()
-
-expiry = st.selectbox("Select expiry", expiries, index=0)
+with col2:
+    if spot > 0:
+        st.metric("NIFTY Spot", f"{spot:.2f}", delta=None)
+        st.metric("Expiry", expiry)
+    else:
+        st.warning("Waiting for market data...")
 
 # Fetch option chain
 with st.spinner("Fetching option chain..."):
@@ -727,7 +932,7 @@ if "prev_ltps_v3" not in st.session_state:
 if "prev_ivs_v3" not in st.session_state:
     st.session_state["prev_ivs_v3"] = {}
 
-# compute tau using expiry date if available (expiry format YYYY-MM-DD assumed)
+# compute tau using expiry date if available
 try:
     expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
     now = datetime.now()
@@ -893,7 +1098,7 @@ elif polarity < -1: market_bias="Bearish"
 else: market_bias="Neutral"
 
 # -----------------------
-#  UI: display core tables and metrics
+#  UI: Core Market Metrics
 # -----------------------
 st.markdown("## 📈 Core Market Metrics")
 col1,col2,col3,col4 = st.columns(4)
@@ -919,36 +1124,44 @@ pressure_table = pd.DataFrame([
 ])
 st.dataframe(pressure_table, use_container_width=True)
 
-st.markdown("### 🧾 Strike Table (ATM ± 8)")
-display_cols = ["strikePrice","OI_CE","Chg_OI_CE","Vol_CE","LTP_CE","CE_Price_Delta","CE_IV_Delta","CE_Winding","CE_Divergence","Delta_CE","Gamma_CE","GEX_CE",
-                "OI_PE","Chg_OI_PE","Vol_PE","LTP_PE","PE_Price_Delta","PE_IV_Delta","PE_Winding","PE_Divergence","Delta_PE","Gamma_PE","GEX_PE",
-                "Strength_Score","Gamma_Pressure","Interpretation"]
-for c in display_cols:
-    if c not in merged.columns:
-        merged[c] = np.nan
-display_df = merged[display_cols].copy()
-st.dataframe(display_df, use_container_width=True)
+# Tab layout for detailed views
+tab1, tab2, tab3 = st.tabs(["📊 Strike Details", "🔥 OI Heatmap", "🧠 Max Pain & PCR"])
 
-st.markdown("### 🔥 Heatmap ΔOI")
-chg_oi_heatmap = merged[["strikePrice","Chg_OI_CE","Chg_OI_PE"]].set_index("strikePrice")
-def color_chg(val):
-    try:
-        if val>0: return "background-color:#d4f4dd"
-        if val<0: return "background-color:#f8d7da"
-        return ""
-    except:
-        return ""
-st.dataframe(chg_oi_heatmap.style.applymap(color_chg), use_container_width=True)
+with tab1:
+    st.markdown("### 🧾 Strike Table (ATM ± 8)")
+    display_cols = ["strikePrice","OI_CE","Chg_OI_CE","Vol_CE","LTP_CE","CE_Price_Delta","CE_IV_Delta","CE_Winding","CE_Divergence","Delta_CE","Gamma_CE","GEX_CE",
+                    "OI_PE","Chg_OI_PE","Vol_PE","LTP_PE","PE_Price_Delta","PE_IV_Delta","PE_Winding","PE_Divergence","Delta_PE","Gamma_PE","GEX_PE",
+                    "Strength_Score","Gamma_Pressure","Interpretation"]
+    for c in display_cols:
+        if c not in merged.columns:
+            merged[c] = np.nan
+    display_df = merged[display_cols].copy()
+    st.dataframe(display_df, use_container_width=True)
 
-st.markdown("### 🧠 Max Pain & ATM Shift")
-col1,col2 = st.columns([1,2])
-with col1:
-    st.metric("Approx Max Pain", f"{max_pain if max_pain else 'N/A'}")
-with col2:
-    st.info(f"ATM Shift: {atm_shift_str}")
+with tab2:
+    st.markdown("### 🔥 Heatmap ΔOI")
+    chg_oi_heatmap = merged[["strikePrice","Chg_OI_CE","Chg_OI_PE"]].set_index("strikePrice")
+    def color_chg(val):
+        try:
+            if val>0: return "background-color:#d4f4dd"
+            if val<0: return "background-color:#f8d7da"
+            return ""
+        except:
+            return ""
+    st.dataframe(chg_oi_heatmap.style.applymap(color_chg), use_container_width=True)
+
+with tab3:
+    st.markdown("### 🧠 Max Pain & ATM Shift")
+    col1,col2 = st.columns([1,2])
+    with col1:
+        st.metric("Approx Max Pain", f"{max_pain if max_pain else 'N/A'}")
+        st.metric("Breakout Index", f"{breakout_index}%")
+    with col2:
+        st.info(f"ATM Shift: {atm_shift_str}")
+        st.info(f"PCR Trend Analysis available below")
 
 # -----------------------
-# PCR Analysis Section (NEW)
+# PCR Analysis Section
 # -----------------------
 st.markdown("---")
 st.header("📊 PCR Analysis & Trend Detection")
@@ -1108,7 +1321,7 @@ else:
 # Original Snapshot Section (Time Windows)
 # -----------------------
 st.markdown("---")
-st.header("📦 Original Snapshots (Time Windows) — Morning / Mid / Afternoon / Evening")
+st.header("📦 Time Window Snapshots")
 
 def now_in_window(w_key):
     now = datetime.now()
@@ -1132,26 +1345,27 @@ for w in TIME_WINDOWS.keys():
         st.warning(f"Auto-save check error for {w}: {e}")
 
 # Manual capture buttons
+st.markdown("### Manual Snapshot Capture")
 c1,c2,c3,c4 = st.columns(4)
 with c1:
-    if st.button("📥 Save Morning Snapshot"):
+    if st.button("📥 Morning Snapshot"):
         ok,msg = save_snapshot_to_supabase(merged, "morning", spot)
         st.success("Saved." if ok else f"Failed: {msg}")
 with c2:
-    if st.button("📥 Save Mid Snapshot"):
+    if st.button("📥 Mid Snapshot"):
         ok,msg = save_snapshot_to_supabase(merged, "mid", spot)
         st.success("Saved." if ok else f"Failed: {msg}")
 with c3:
-    if st.button("📥 Save Afternoon Snapshot"):
+    if st.button("📥 Afternoon Snapshot"):
         ok,msg = save_snapshot_to_supabase(merged, "afternoon", spot)
         st.success("Saved." if ok else f"Failed: {msg}")
 with c4:
-    if st.button("📥 Save Evening Snapshot"):
+    if st.button("📥 Evening Snapshot"):
         ok,msg = save_snapshot_to_supabase(merged, "evening", spot)
         st.success("Saved." if ok else f"Failed: {msg}")
 
 # Original snapshot compare UI
-st.markdown("### 🔎 Compare saved time-window snapshots")
+st.markdown("### 🔎 Compare Time Window Snapshots")
 saved_files = []
 for d_offset in range(0,7):
     dt = (datetime.now() - timedelta(days=d_offset)).strftime("%Y-%m-%d")
@@ -1203,11 +1417,24 @@ if st.button("Quick: Morning → Afternoon (today)"):
         st.dataframe(d.drop(columns=["abs_change"]).head(200), use_container_width=True)
         st.write("Bias Δ:", bias_score_from_summary(snapshot_summary(right)) - bias_score_from_summary(snapshot_summary(left)))
 
+# -----------------------
+# Footer and Credits
+# -----------------------
 st.markdown("---")
+st.markdown("""
+<div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px;'>
+<h3 style='color: #1f77b4;'>📚 Credits & Information</h3>
+<p><strong>App:</strong> Nifty Option Screener v4.0</p>
+<p><strong>Data Source:</strong> DhanHQ API (https://api.dhan.co)</p>
+<p><strong>Database:</strong> Supabase PostgreSQL</p>
+<p><strong>Features:</strong> Real-time option chain analysis, PCR trends, Support/Resistance detection, Fake breakout alerts</p>
+<p><strong>Author:</strong> Your Name</p>
+<p><strong>GitHub:</strong> https://github.com/yourusername/nifty-option-screener</p>
+<p><strong>Disclaimer:</strong> This tool is for educational purposes only. Trading involves risk.</p>
+</div>
+""", unsafe_allow_html=True)
+
 st.caption("""
-**Notes:** 
-- Supabase tables must exist. Use secrets to store keys. 
-- Two snapshot systems: Time-window based (morning/afternoon/etc) and PCR batch-based
-- PCR analysis includes trend detection, support/resistance ranking, fake breakout alerts
-- Auto-save runs while app is open (both time-window and PCR)
-""")
+**App Status:** Auto-refresh every 60 seconds | PCR auto-save: {} seconds
+**Database:** Supabase tables: {} and {}
+""".format(save_interval, SUPABASE_TABLE, SUPABASE_TABLE_PCR))
