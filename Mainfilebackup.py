@@ -1,9 +1,9 @@
-# nifty_option_screener_v4_seller_logic_complete.py
+# nifty_option_screener_v4_seller_perspective_complete.py
 """
-Nifty Option Screener v4.0 — SELLER-CENTRIC LOGIC (COMPLETE)
-Market bias from Option Seller/Market Maker perspective
-CALL building = BEARISH (sellers expecting price to stay below)
-PUT building = BULLISH (sellers expecting price to stay above)
+Nifty Option Screener v4.0 — 100% SELLER'S PERSPECTIVE
+EVERYTHING interpreted from Option Seller/Market Maker viewpoint
+CALL building = BEARISH (sellers selling calls, expecting price to stay below)
+PUT building = BULLISH (sellers selling puts, expecting price to stay above)
 """
 
 import streamlit as st
@@ -77,37 +77,45 @@ NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
 
 # -----------------------
-#  CUSTOM CSS
+#  CUSTOM CSS - SELLER THEME
 # -----------------------
 st.markdown("""
 <style>
     .main { background-color: #0e1117; color: #fafafa; }
-    [data-testid="stMetricLabel"] { color: #9ba4b5 !important; font-weight: 600; }
-    [data-testid="stMetricValue"] { color: #00d4aa !important; font-size: 1.6rem !important; font-weight: 700 !important; }
-    h1, h2, h3 { color: #00d4aa !important; }
+    
+    /* SELLER THEME COLORS */
+    .seller-bullish { color: #00ff88 !important; font-weight: 700 !important; }
+    .seller-bearish { color: #ff4444 !important; font-weight: 700 !important; }
+    .seller-neutral { color: #66b3ff !important; font-weight: 700 !important; }
+    
+    .seller-bullish-bg { background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%); }
+    .seller-bearish-bg { background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%); }
+    .seller-neutral-bg { background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%); }
+    
+    h1, h2, h3 { color: #ff66cc !important; } /* Seller theme pink */
     
     .level-card {
-        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+        background: linear-gradient(135deg, #2e1a2e 0%, #3e2a3e 100%);
         padding: 15px;
         border-radius: 10px;
-        border: 2px solid #00d4aa;
+        border: 2px solid #ff66cc;
         margin: 5px 0;
     }
-    .level-card h4 { margin: 0; color: #00d4aa; font-size: 1.1rem; }
+    .level-card h4 { margin: 0; color: #ff66cc; font-size: 1.1rem; }
     .level-card p { margin: 5px 0; color: #fafafa; font-size: 1.3rem; font-weight: 700; }
-    .level-card .sub-info { font-size: 0.9rem; color: #9ba4b5; margin-top: 5px; }
+    .level-card .sub-info { font-size: 0.9rem; color: #cccccc; margin-top: 5px; }
     
     .spot-card {
-        background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%);
+        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%);
         padding: 20px;
         border-radius: 12px;
-        border: 3px solid #ff6600;
+        border: 3px solid #ff9900;
         margin: 10px 0;
         text-align: center;
     }
-    .spot-card h3 { margin: 0; color: #ff6600; font-size: 1.3rem; }
-    .spot-card .spot-price { font-size: 2.5rem; color: #ffaa00; font-weight: 700; margin: 10px 0; }
-    .spot-card .distance { font-size: 1.1rem; color: #ffcc44; margin: 5px 0; }
+    .spot-card h3 { margin: 0; color: #ff9900; font-size: 1.3rem; }
+    .spot-card .spot-price { font-size: 2.5rem; color: #ffcc00; font-weight: 700; margin: 10px 0; }
+    .spot-card .distance { font-size: 1.1rem; color: #ffdd44; margin: 5px 0; }
     
     .nearest-level {
         background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
@@ -120,37 +128,47 @@ st.markdown("""
     .nearest-level .level-value { font-size: 1.8rem; color: #00ffcc; font-weight: 700; margin: 5px 0; }
     .nearest-level .level-distance { font-size: 1rem; color: #66ffdd; margin: 5px 0; }
     
+    .seller-bias-box {
+        background: linear-gradient(135deg, #2e1a2e 0%, #1a2e2e 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid #ff66cc;
+        margin: 15px 0;
+        text-align: center;
+    }
+    .seller-bias-box h3 { margin: 0; color: #ff66cc; font-size: 1.4rem; }
+    .seller-bias-box .bias-value { font-size: 2.2rem; font-weight: 900; margin: 10px 0; }
+    
     .alert-box {
         padding: 15px;
         border-radius: 8px;
         margin: 10px 0;
         border-left: 4px solid;
     }
-    .support-building { background-color: #1a2e1a; border-left-color: #00ff88; color: #00ff88; }
-    .support-breaking { background-color: #2e1a1a; border-left-color: #ff4444; color: #ff6666; }
-    .resistance-building { background-color: #2e2a1a; border-left-color: #ffaa00; color: #ffcc44; }
-    .resistance-breaking { background-color: #1a1f2e; border-left-color: #00aaff; color: #00ccff; }
-    .bull-trap { background-color: #3e1a1a; border-left-color: #ff0000; color: #ff4444; font-weight: 700; }
-    .bear-trap { background-color: #1a3e1a; border-left-color: #ffff00; color: #ffff66; font-weight: 700; }
-    .no-trap { background-color: #1a2e2e; border-left-color: #00ffcc; color: #00ffcc; }
+    .seller-support-building { background-color: #1a2e1a; border-left-color: #00ff88; color: #00ff88; }
+    .seller-support-breaking { background-color: #2e1a1a; border-left-color: #ff4444; color: #ff6666; }
+    .seller-resistance-building { background-color: #2e2a1a; border-left-color: #ffaa00; color: #ffcc44; }
+    .seller-resistance-breaking { background-color: #1a1f2e; border-left-color: #00aaff; color: #00ccff; }
+    .seller-bull-trap { background-color: #3e1a1a; border-left-color: #ff0000; color: #ff4444; font-weight: 700; }
+    .seller-bear-trap { background-color: #1a3e1a; border-left-color: #00ff00; color: #00ff66; font-weight: 700; }
     
     .ist-time {
         background-color: #1a1f2e;
-        color: #00d4aa;
+        color: #ff66cc;
         padding: 8px 15px;
         border-radius: 20px;
-        border: 2px solid #00d4aa;
+        border: 2px solid #ff66cc;
         font-weight: 700;
         font-size: 1.1rem;
     }
     
     .stButton > button {
-        background-color: #00d4aa !important;
+        background-color: #ff66cc !important;
         color: #0e1117 !important;
         border: none !important;
         font-weight: 600 !important;
     }
-    .stButton > button:hover { background-color: #00ffcc !important; }
+    .stButton > button:hover { background-color: #ff99dd !important; }
     
     .greeks-box {
         background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
@@ -159,25 +177,6 @@ st.markdown("""
         border: 1px solid #444;
         margin: 5px 0;
     }
-    .greeks-box h5 { margin: 0; color: #66b3ff; font-size: 0.9rem; }
-    .greeks-box .greek-value { font-size: 1.2rem; color: #66b3ff; font-weight: 700; }
-    
-    .heatmap-positive { background-color: #1a2e1a; color: #00ff88; }
-    .heatmap-negative { background-color: #2e1a1a; color: #ff4444; }
-    .heatmap-neutral { background-color: #1a1f2e; color: #cccccc; }
-    
-    .bias-bullish { color: #00ff88 !important; font-weight: 700 !important; }
-    .bias-bearish { color: #ff4444 !important; font-weight: 700 !important; }
-    .bias-neutral { color: #66b3ff !important; font-weight: 700 !important; }
-    
-    .seller-logic {
-        background: linear-gradient(135deg, #2e1a2e 0%, #3e2a3e 100%);
-        padding: 15px;
-        border-radius: 10px;
-        border: 2px solid #ff66cc;
-        margin: 10px 0;
-    }
-    .seller-logic h4 { margin: 0; color: #ff66cc; }
     
     .max-pain-box {
         background: linear-gradient(135deg, #2e1a2e 0%, #1a2e2e 100%);
@@ -187,10 +186,21 @@ st.markdown("""
         margin: 10px 0;
     }
     .max-pain-box h4 { margin: 0; color: #ff9900; }
+    
+    .seller-explanation {
+        background: linear-gradient(135deg, #2e1a2e 0%, #3e2a3e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid #ff66cc;
+        margin: 10px 0;
+    }
+    
+    [data-testid="stMetricLabel"] { color: #cccccc !important; font-weight: 600; }
+    [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Nifty Screener v4 - Seller Logic", layout="wide")
+st.set_page_config(page_title="Nifty Screener v4 - Seller's Perspective", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -262,92 +272,163 @@ def bs_theta(S,K,r,sigma,tau,option_type="call"):
         term2 = r*K*np.exp(-r*tau)*norm.cdf(-d2)
         return term1 + term2
 
-def strike_strength_score(row, weights=SCORE_WEIGHTS):
-    chg_oi = safe_float(row.get("Chg_OI_CE",0)) + safe_float(row.get("Chg_OI_PE",0))
+# -----------------------
+# 🔥 SELLER'S PERSPECTIVE FUNCTIONS
+# -----------------------
+def seller_strength_score(row, weights=SCORE_WEIGHTS):
+    """
+    SELLER's strength score: Higher when sellers are confident
+    """
+    chg_oi = abs(safe_float(row.get("Chg_OI_CE",0))) + abs(safe_float(row.get("Chg_OI_PE",0)))
     vol = safe_float(row.get("Vol_CE",0)) + safe_float(row.get("Vol_PE",0))
     oi = safe_float(row.get("OI_CE",0)) + safe_float(row.get("OI_PE",0))
     iv_ce = safe_float(row.get("IV_CE", np.nan))
     iv_pe = safe_float(row.get("IV_PE", np.nan))
     iv = np.nanmean([v for v in (iv_ce, iv_pe) if not np.isnan(v)]) if (not np.isnan(iv_ce) or not np.isnan(iv_pe)) else 0
+    
+    # SELLER LOGIC: Higher IV = More premium for sellers = Higher confidence
+    # High OI = More positions to manage = Higher risk/reward
     score = weights["chg_oi"]*chg_oi + weights["volume"]*vol + weights["oi"]*oi + weights["iv"]*iv
     return score
 
-def price_oi_divergence_label(chg_oi, vol, ltp_change):
-    vol_up = vol>0
-    oi_up = chg_oi>0
-    price_up = (ltp_change is not None and ltp_change>0)
-    if oi_up and vol_up and price_up:
-        return "Fresh Build (Aggressive)"
-    if oi_up and vol_up and not price_up:
-        return "Seller Aggressive / Short Build"
-    if not oi_up and vol_up and price_up:
-        return "Long Covering (Buy squeeze)"
-    if not oi_up and vol_up and not price_up:
-        return "Put Covering / Sell w exit"
+def seller_price_oi_divergence(chg_oi, vol, ltp_change, option_type="CE"):
+    """
+    SELLER'S interpretation of price-OI divergence
+    """
+    vol_up = vol > 0
+    oi_up = chg_oi > 0
+    price_up = (ltp_change is not None and ltp_change > 0)
+    
+    if option_type == "CE":
+        # CALL SELLER perspective
+        if oi_up and vol_up and price_up:
+            return "Sellers WRITING calls as price rises (Bearish conviction)"
+        if oi_up and vol_up and not price_up:
+            return "Sellers WRITING calls on weakness (Strong bearish)"
+        if not oi_up and vol_up and price_up:
+            return "Sellers BUYING back calls as price rises (Covering bearish)"
+        if not oi_up and vol_up and not price_up:
+            return "Sellers BUYING back calls on weakness (Reducing bearish exposure)"
+    else:
+        # PUT SELLER perspective
+        if oi_up and vol_up and price_up:
+            return "Sellers WRITING puts on strength (Bullish conviction)"
+        if oi_up and vol_up and not price_up:
+            return "Sellers WRITING puts as price falls (Strong bullish)"
+        if not oi_up and vol_up and price_up:
+            return "Sellers BUYING back puts on strength (Covering bullish)"
+        if not oi_up and vol_up and not price_up:
+            return "Sellers BUYING back puts as price falls (Reducing bullish exposure)"
+    
     if oi_up and not vol_up:
-        return "Weak Build"
+        return "Sellers quietly WRITING options"
     if (not oi_up) and not vol_up:
-        return "Weak Unwind"
-    return "Neutral"
+        return "Sellers quietly UNWINDING"
+    
+    return "Sellers inactive"
 
-def interpret_itm_otm(strike, atm, chg_oi_ce, chg_oi_pe):
-    # SELLER'S PERSPECTIVE
-    if strike < atm:
+def seller_itm_otm_interpretation(strike, atm, chg_oi_ce, chg_oi_pe):
+    """
+    SELLER'S interpretation of ITM/OTM activity
+    """
+    ce_interpretation = ""
+    pe_interpretation = ""
+    
+    # CALL OPTIONS (SELLERS SELLING = BEARISH)
+    if strike < atm:  # ITM CALLS
         if chg_oi_ce > 0:
-            ce = "BEARISH (Selling ITM Calls)"
+            ce_interpretation = "SELLERS WRITING ITM CALLS = VERY BEARISH 🚨"
         elif chg_oi_ce < 0:
-            ce = "BULLISH (Buying back ITM Calls)"
+            ce_interpretation = "SELLERS BUYING BACK ITM CALLS = BULLISH 📈"
         else:
-            ce = "NoSign (ITM CE)"
-    elif strike > atm:
+            ce_interpretation = "No ITM CALL activity"
+    
+    elif strike > atm:  # OTM CALLS
         if chg_oi_ce > 0:
-            ce = "Mild BEARISH (Selling OTM Calls)"
+            ce_interpretation = "SELLERS WRITING OTM CALLS = MILD BEARISH 📉"
         elif chg_oi_ce < 0:
-            ce = "Mild BULLISH (Buying back OTM Calls)"
+            ce_interpretation = "SELLERS BUYING BACK OTM CALLS = MILD BULLISH 📊"
         else:
-            ce = "NoSign (OTM CE)"
-    else:
-        ce = "ATM CE zone"
-
-    if strike > atm:
+            ce_interpretation = "No OTM CALL activity"
+    
+    else:  # ATM
+        ce_interpretation = "ATM CALL zone"
+    
+    # PUT OPTIONS (SELLERS SELLING = BULLISH)
+    if strike > atm:  # ITM PUTS
         if chg_oi_pe > 0:
-            pe = "BULLISH (Selling ITM Puts)"
+            pe_interpretation = "SELLERS WRITING ITM PUTS = VERY BULLISH 🚀"
         elif chg_oi_pe < 0:
-            pe = "BEARISH (Buying back ITM Puts)"
+            pe_interpretation = "SELLERS BUYING BACK ITM PUTS = BEARISH 🐻"
         else:
-            pe = "NoSign (ITM PE)"
-    elif strike < atm:
+            pe_interpretation = "No ITM PUT activity"
+    
+    elif strike < atm:  # OTM PUTS
         if chg_oi_pe > 0:
-            pe = "Mild BULLISH (Selling OTM Puts)"
+            pe_interpretation = "SELLERS WRITING OTM PUTS = MILD BULLISH 📈"
         elif chg_oi_pe < 0:
-            pe = "Mild BEARISH (Buying back OTM Puts)"
+            pe_interpretation = "SELLERS BUYING BACK OTM PUTS = MILD BEARISH 📉"
         else:
-            pe = "NoSign (OTM PE)"
-    else:
-        pe = "ATM PE zone"
+            pe_interpretation = "No OTM PUT activity"
+    
+    else:  # ATM
+        pe_interpretation = "ATM PUT zone"
+    
+    return f"CALL Sellers: {ce_interpretation} | PUT Sellers: {pe_interpretation}"
 
-    return f"{ce} | {pe}"
-
-def gamma_pressure_metric(row, atm, strike_gap):
+def seller_gamma_pressure(row, atm, strike_gap):
+    """
+    SELLER'S gamma pressure: Negative = Sellers under pressure
+    """
     strike = row["strikePrice"]
     dist = abs(strike - atm) / max(strike_gap, 1)
     dist = max(dist, 1e-6)
+    
+    # SELLER LOGIC: Positive gamma = Sellers comfortable, Negative = Sellers under pressure
     chg_oi_sum = safe_float(row.get("Chg_OI_CE",0)) - safe_float(row.get("Chg_OI_PE",0))
-    return chg_oi_sum / dist
+    
+    # Convert to seller perspective
+    # CALL building (positive chg_oi_ce) = BEARISH pressure on sellers
+    # PUT building (positive chg_oi_pe) = BULLISH comfort for sellers
+    seller_pressure = -chg_oi_sum / dist  # Negative = sellers under pressure
+    
+    return seller_pressure
 
-def breakout_probability_index(merged_df, atm, strike_gap):
+def seller_breakout_probability_index(merged_df, atm, strike_gap):
+    """
+    SELLER'S breakout probability: When sellers lose control
+    """
     near_mask = merged_df["strikePrice"].between(atm-strike_gap, atm+strike_gap)
-    atm_chg_oi = merged_df.loc[near_mask, ["Chg_OI_CE","Chg_OI_PE"]].abs().sum().sum()
-    atm_score = min(atm_chg_oi/50000.0, 1.0)
+    
+    # SELLER ATM activity
+    atm_ce_build = merged_df.loc[near_mask, "Chg_OI_CE"].sum()
+    atm_pe_build = merged_df.loc[near_mask, "Chg_OI_PE"].sum()
+    
+    # SELLER LOGIC: 
+    # CALL building at ATM = Sellers bearish = Downside pressure
+    # PUT building at ATM = Sellers bullish = Upside pressure
+    seller_atm_bias = atm_pe_build - atm_ce_build  # Positive = bullish sellers
+    atm_score = min(abs(seller_atm_bias)/50000.0, 1.0)
+    
+    # SELLER winding/unwinding balance
     winding_count = (merged_df[["CE_Winding","PE_Winding"]]=="Winding").sum().sum()
     unwinding_count = (merged_df[["CE_Winding","PE_Winding"]]=="Unwinding").sum().sum()
-    winding_balance = winding_count/(winding_count+unwinding_count) if (winding_count+unwinding_count)>0 else 0.5
+    
+    # SELLER LOGIC: More winding = More selling = Higher conviction
+    seller_conviction = winding_count/(winding_count+unwinding_count) if (winding_count+unwinding_count)>0 else 0.5
+    
+    # SELLER volume-OI activity
     vol_oi_scores = (merged_df[["Vol_CE","Vol_PE"]].sum(axis=1) * merged_df[["Chg_OI_CE","Chg_OI_PE"]].abs().sum(axis=1)).fillna(0)
     vol_oi_score = min(vol_oi_scores.sum()/100000.0, 1.0)
-    gamma = merged_df.apply(lambda r: gamma_pressure_metric(r, atm, strike_gap), axis=1).abs().sum()
-    gamma_score = min(gamma/10000.0, 1.0)
+    
+    # SELLER gamma pressure
+    gamma = merged_df.apply(lambda r: seller_gamma_pressure(r, atm, strike_gap), axis=1).sum()
+    gamma_score = min(abs(gamma)/10000.0, 1.0)
+    
+    # Combine with SELLER weights
     w = BREAKOUT_INDEX_WEIGHTS
-    combined = (w["atm_oi_shift"]*atm_score) + (w["winding_balance"]*winding_balance) + (w["vol_oi_div"]*vol_oi_score) + (w["gamma_pressure"]*gamma_score)
+    combined = (w["atm_oi_shift"]*atm_score) + (w["winding_balance"]*seller_conviction) + (w["vol_oi_div"]*vol_oi_score) + (w["gamma_pressure"]*gamma_score)
+    
     return int(np.clip(combined*100,0,100))
 
 def center_of_mass_oi(df, oi_col):
@@ -360,8 +441,8 @@ def center_of_mass_oi(df, oi_col):
     weighted_sum = (df["strikePrice"] * df[oi_col]).sum()
     return weighted_sum / total_oi
 
-def calculate_max_pain(df):
-    """Calculate max pain strike (where option writers lose least)"""
+def calculate_seller_max_pain(df):
+    """Calculate max pain strike from SELLER's perspective"""
     pain_dict = {}
     for _, row in df.iterrows():
         strike = row["strikePrice"]
@@ -370,8 +451,12 @@ def calculate_max_pain(df):
         ce_ltp = safe_float(row.get("LTP_CE", 0))
         pe_ltp = safe_float(row.get("LTP_PE", 0))
         
-        # Simplified pain calculation
-        pain = (ce_oi * max(0, ce_ltp)) + (pe_oi * max(0, pe_ltp))
+        # SELLER'S pain: Loss on written options
+        # Sellers lose money when options are in-the-money
+        ce_pain = ce_oi * max(0, ce_ltp) if strike < df["strikePrice"].mean() else 0
+        pe_pain = pe_oi * max(0, pe_ltp) if strike > df["strikePrice"].mean() else 0
+        
+        pain = ce_pain + pe_pain
         pain_dict[strike] = pain
     
     if pain_dict:
@@ -379,71 +464,11 @@ def calculate_max_pain(df):
     return None
 
 # -----------------------
-# 🔥 SPOT POSITION ANALYSIS
-# -----------------------
-def analyze_spot_position(spot, ranked_df):
-    """
-    Analyze spot position relative to all support/resistance levels
-    Returns nearest support below, nearest resistance above, and next levels
-    """
-    # Sort by strike price
-    sorted_df = ranked_df.sort_values("strikePrice").reset_index(drop=True)
-    
-    # All strikes sorted
-    all_strikes = sorted_df["strikePrice"].tolist()
-    
-    # Find nearest support (highest strike below spot)
-    supports_below = [s for s in all_strikes if s < spot]
-    nearest_support = max(supports_below) if supports_below else None
-    
-    # Find next support (second highest below spot)
-    next_support = None
-    if len(supports_below) >= 2:
-        next_support = sorted(supports_below, reverse=True)[1]
-    
-    # Find nearest resistance (lowest strike above spot)
-    resistances_above = [s for s in all_strikes if s > spot]
-    nearest_resistance = min(resistances_above) if resistances_above else None
-    
-    # Find next resistance (second lowest above spot)
-    next_resistance = None
-    if len(resistances_above) >= 2:
-        next_resistance = sorted(resistances_above)[1]
-    
-    # Get details for each level
-    def get_level_details(strike, df):
-        if strike is None:
-            return None
-        row = df[df["strikePrice"] == strike]
-        if row.empty:
-            return None
-        return {
-            "strike": int(strike),
-            "oi_ce": int(row.iloc[0]["OI_CE"]),
-            "oi_pe": int(row.iloc[0]["OI_PE"]),
-            "chg_oi_ce": int(row.iloc[0].get("Chg_OI_CE", 0)),
-            "chg_oi_pe": int(row.iloc[0].get("Chg_OI_PE", 0)),
-            "pcr": row.iloc[0]["PCR"],
-            "distance": abs(spot - strike),
-            "distance_pct": abs(spot - strike) / spot * 100
-        }
-    
-    return {
-        "nearest_support": get_level_details(nearest_support, sorted_df),
-        "next_support": get_level_details(next_support, sorted_df),
-        "nearest_resistance": get_level_details(nearest_resistance, sorted_df),
-        "next_resistance": get_level_details(next_resistance, sorted_df),
-        "spot_in_range": (nearest_support, nearest_resistance)
-    }
-
-# -----------------------
 # 🔥 SELLER-CENTRIC MARKET BIAS CALCULATION
 # -----------------------
 def calculate_seller_market_bias(merged_df, spot, atm_strike):
     """
-    Market bias from SELLER's perspective (Option Writer Logic)
-    CALL building = BEARISH (sellers selling calls, expecting price to stay below)
-    PUT building = BULLISH (sellers selling puts, expecting price to stay above)
+    Market bias from 100% SELLER's perspective
     """
     polarity = 0.0
     
@@ -453,127 +478,211 @@ def calculate_seller_market_bias(merged_df, spot, atm_strike):
         chg_pe = safe_int(r.get("Chg_OI_PE", 0))  # ΔOI PE
         
         # ============================================
-        # SELLER'S LOGIC: Who's WRITING the options?
+        # PURE SELLER LOGIC
         # ============================================
         
-        # CALL OPTIONS: When CE OI increases, SELLERS are bearish
-        if strike < atm_strike:  # ITM CALLS (strike BELOW spot)
-            if chg_ce > 0:  # ITM CALL building
-                # Sellers writing ITM calls = VERY BEARISH
-                # They expect price to STAY BELOW these strikes
-                polarity -= 2.0  # STRONG BEARISH
-            elif chg_ce < 0:  # ITM CALL unwinding
-                # Sellers buying back ITM calls = BULLISH
-                # They're covering bearish positions
+        # CALL OPTIONS: SELLERS WRITING = BEARISH
+        if strike < atm_strike:  # ITM CALLS
+            if chg_ce > 0:  # ITM CALL building = SELLERS WRITING
+                polarity -= 2.0  # VERY BEARISH
+            elif chg_ce < 0:  # ITM CALL unwinding = SELLERS BUYING BACK
                 polarity += 1.5  # BULLISH
         
-        elif strike > atm_strike:  # OTM CALLS (strike ABOVE spot)
-            if chg_ce > 0:  # OTM CALL building
-                # Sellers writing OTM calls = MILD BEARISH
-                # Expecting price to stay below these strikes
+        elif strike > atm_strike:  # OTM CALLS
+            if chg_ce > 0:  # OTM CALL building = SELLERS WRITING
                 polarity -= 0.7  # MILD BEARISH
-            elif chg_ce < 0:  # OTM CALL unwinding
-                # Sellers buying back OTM calls = BULLISH
-                # Removing upside resistance
+            elif chg_ce < 0:  # OTM CALL unwinding = SELLERS BUYING BACK
                 polarity += 0.5  # MILD BULLISH
         
-        # PUT OPTIONS: When PE OI increases, SELLERS are bullish
-        if strike > atm_strike:  # ITM PUTS (strike ABOVE spot)
-            if chg_pe > 0:  # ITM PUT building
-                # Sellers writing ITM puts = VERY BULLISH
-                # They expect price to STAY ABOVE these strikes
-                polarity += 2.0  # STRONG BULLISH
-            elif chg_pe < 0:  # ITM PUT unwinding
-                # Sellers buying back ITM puts = BEARISH
-                # They're covering bullish positions
+        # PUT OPTIONS: SELLERS WRITING = BULLISH
+        if strike > atm_strike:  # ITM PUTS
+            if chg_pe > 0:  # ITM PUT building = SELLERS WRITING
+                polarity += 2.0  # VERY BULLISH
+            elif chg_pe < 0:  # ITM PUT unwinding = SELLERS BUYING BACK
                 polarity -= 1.5  # BEARISH
         
-        elif strike < atm_strike:  # OTM PUTS (strike BELOW spot)
-            if chg_pe > 0:  # OTM PUT building
-                # Sellers writing OTM puts = MILD BULLISH
-                # Expecting price to stay above these strikes
+        elif strike < atm_strike:  # OTM PUTS
+            if chg_pe > 0:  # OTM PUT building = SELLERS WRITING
                 polarity += 0.7  # MILD BULLISH
-            elif chg_pe < 0:  # OTM PUT unwinding
-                # Sellers buying back OTM puts = BEARISH
-                # Removing downside protection
+            elif chg_pe < 0:  # OTM PUT unwinding = SELLERS BUYING BACK
                 polarity -= 0.5  # MILD BEARISH
     
     # ============================================
-    # ADDITIONAL SELLER-CENTRIC METRICS
+    # SELLER CONFIDENCE METRICS
     # ============================================
     
-    # 1. PCR bias (from seller perspective)
+    # 1. PCR from SELLER perspective
     total_ce_oi = merged_df["OI_CE"].sum()
     total_pe_oi = merged_df["OI_PE"].sum()
     if total_ce_oi > 0:
         pcr = total_pe_oi / total_ce_oi
-        if pcr > 2.0:  # High PCR = More puts sold = BULLISH
+        if pcr > 2.0:  # High PCR = More puts written = BULLISH SELLERS
             polarity += 1.0
-        elif pcr < 0.5:  # Low PCR = More calls sold = BEARISH
+        elif pcr < 0.5:  # Low PCR = More calls written = BEARISH SELLERS
             polarity -= 1.0
     
-    # 2. IV Premium Bias (Seller Confidence)
+    # 2. IV Premium (SELLER pricing power)
     avg_iv_ce = merged_df["IV_CE"].mean()
     avg_iv_pe = merged_df["IV_PE"].mean()
-    if avg_iv_ce > avg_iv_pe + 5:  # Higher CE IV
+    if avg_iv_ce > avg_iv_pe + 5:  # Higher CALL IV
         # Sellers charging more for calls = Bearish confidence
         polarity -= 0.3
-    elif avg_iv_pe > avg_iv_ce + 5:  # Higher PE IV
+    elif avg_iv_pe > avg_iv_ce + 5:  # Higher PUT IV
         # Sellers charging more for puts = Bullish confidence
         polarity += 0.3
     
-    # 3. GEX bias (seller gamma risk)
-    net_gex = merged_df["GEX_Net"].sum()
+    # 3. GEX (SELLER gamma risk)
+    total_gex_ce = merged_df["GEX_CE"].sum()
+    total_gex_pe = merged_df["GEX_PE"].sum()
+    net_gex = total_gex_ce + total_gex_pe
     if net_gex < -1000000:  # Negative GEX = Sellers under pressure
-        polarity -= 0.4  # BEARISH pressure
+        polarity -= 0.4
     elif net_gex > 1000000:  # Positive GEX = Sellers comfortable
-        polarity += 0.4  # BULLISH comfort
+        polarity += 0.4
+    
+    # 4. Max Pain alignment
+    max_pain = calculate_seller_max_pain(merged_df)
+    if max_pain:
+        distance_to_spot = abs(spot - max_pain) / spot * 100
+        if distance_to_spot < 1.0:  # Close to max pain
+            polarity += 0.5  # Sellers in control
     
     # ============================================
-    # FINAL INTERPRETATION
+    # FINAL SELLER BIAS
     # ============================================
     if polarity > 3.0:
-        bias = "STRONG BULLISH 📈"
-        color = "green"
-        emoji = "🚀"
-        explanation = "Sellers aggressively selling PUTS (bullish conviction)"
+        return {
+            "bias": "STRONG BULLISH SELLERS 🚀",
+            "polarity": polarity,
+            "color": "#00ff88",
+            "explanation": "Sellers aggressively WRITING PUTS (bullish conviction). Expecting price to STAY ABOVE strikes.",
+            "action": "Bullish breakout likely. Sellers confident in upside."
+        }
     elif polarity > 1.0:
-        bias = "BULLISH 📈"
-        color = "lightgreen"
-        emoji = "📊"
-        explanation = "Sellers leaning towards PUT selling"
+        return {
+            "bias": "BULLISH SELLERS 📈",
+            "polarity": polarity,
+            "color": "#00cc66",
+            "explanation": "Sellers leaning towards PUT writing. Moderate bullish sentiment.",
+            "action": "Expect support to hold. Upside bias."
+        }
     elif polarity < -3.0:
-        bias = "STRONG BEARISH 📉"
-        color = "red"
-        emoji = "⚠️"
-        explanation = "Sellers aggressively selling CALLS (bearish conviction)"
+        return {
+            "bias": "STRONG BEARISH SELLERS 🐻",
+            "polarity": polarity,
+            "color": "#ff4444",
+            "explanation": "Sellers aggressively WRITING CALLS (bearish conviction). Expecting price to STAY BELOW strikes.",
+            "action": "Bearish breakdown likely. Sellers confident in downside."
+        }
     elif polarity < -1.0:
-        bias = "BEARISH 📉"
-        color = "orange"
-        emoji = "🔻"
-        explanation = "Sellers leaning towards CALL selling"
+        return {
+            "bias": "BEARISH SELLERS 📉",
+            "polarity": polarity,
+            "color": "#ff6666",
+            "explanation": "Sellers leaning towards CALL writing. Moderate bearish sentiment.",
+            "action": "Expect resistance to hold. Downside bias."
+        }
     else:
-        bias = "NEUTRAL ↔️"
-        color = "gray"
-        emoji = "⚖️"
-        explanation = "Balanced seller activity on both sides"
+        return {
+            "bias": "NEUTRAL SELLERS ⚖️",
+            "polarity": polarity,
+            "color": "#66b3ff",
+            "explanation": "Balanced seller activity. No clear directional bias.",
+            "action": "Range-bound expected. Wait for clearer signals."
+        }
+
+# -----------------------
+# 🔥 SPOT POSITION ANALYSIS - SELLER VIEW
+# -----------------------
+def analyze_spot_position_seller(spot, pcr_df, market_bias):
+    """
+    Analyze spot position from SELLER's perspective
+    """
+    # Sort by strike price
+    sorted_df = pcr_df.sort_values("strikePrice").reset_index(drop=True)
+    
+    # All strikes sorted
+    all_strikes = sorted_df["strikePrice"].tolist()
+    
+    # Find nearest support (highest strike below spot)
+    supports_below = [s for s in all_strikes if s < spot]
+    nearest_support = max(supports_below) if supports_below else None
+    
+    # Find nearest resistance (lowest strike above spot)
+    resistances_above = [s for s in all_strikes if s > spot]
+    nearest_resistance = min(resistances_above) if resistances_above else None
+    
+    # Get details for each level
+    def get_level_details(strike, df):
+        if strike is None:
+            return None
+        row = df[df["strikePrice"] == strike]
+        if row.empty:
+            return None
+        
+        # SELLER interpretation
+        pcr = row.iloc[0]["PCR"]
+        oi_ce = int(row.iloc[0]["OI_CE"])
+        oi_pe = int(row.iloc[0]["OI_PE"])
+        chg_oi_ce = int(row.iloc[0].get("Chg_OI_CE", 0))
+        chg_oi_pe = int(row.iloc[0].get("Chg_OI_PE", 0))
+        
+        # SELLER strength
+        if pcr > 1.5:
+            seller_strength = "Strong PUT selling (Bullish sellers)"
+        elif pcr > 1.0:
+            seller_strength = "Moderate PUT selling"
+        elif pcr < 0.5:
+            seller_strength = "Strong CALL selling (Bearish sellers)"
+        elif pcr < 1.0:
+            seller_strength = "Moderate CALL selling"
+        else:
+            seller_strength = "Balanced selling"
+        
+        return {
+            "strike": int(strike),
+            "oi_ce": oi_ce,
+            "oi_pe": oi_pe,
+            "chg_oi_ce": chg_oi_ce,
+            "chg_oi_pe": chg_oi_pe,
+            "pcr": pcr,
+            "seller_strength": seller_strength,
+            "distance": abs(spot - strike),
+            "distance_pct": abs(spot - strike) / spot * 100
+        }
+    
+    nearest_sup = get_level_details(nearest_support, sorted_df)
+    nearest_res = get_level_details(nearest_resistance, sorted_df)
+    
+    # SELLER range analysis
+    if nearest_sup and nearest_res:
+        range_size = nearest_res["strike"] - nearest_sup["strike"]
+        spot_position_pct = ((spot - nearest_sup["strike"]) / range_size * 100) if range_size > 0 else 50
+        
+        # SELLER range interpretation
+        if spot_position_pct < 40:
+            range_bias = "Near SELLER support (Bullish sellers defending)"
+        elif spot_position_pct > 60:
+            range_bias = "Near SELLER resistance (Bearish sellers defending)"
+        else:
+            range_bias = "Middle of SELLER range"
+    else:
+        range_size = 0
+        spot_position_pct = 50
+        range_bias = "Range undefined"
     
     return {
-        "bias": bias,
-        "polarity": polarity,
-        "color": color,
-        "emoji": emoji,
-        "explanation": explanation,
-        "details": {
-            "pcr": total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0,
-            "avg_iv_ce": avg_iv_ce,
-            "avg_iv_pe": avg_iv_pe,
-            "net_gex": net_gex
-        }
+        "nearest_support": nearest_sup,
+        "nearest_resistance": nearest_res,
+        "spot_in_range": (nearest_support, nearest_resistance),
+        "range_size": range_size,
+        "spot_position_pct": spot_position_pct,
+        "range_bias": range_bias,
+        "market_bias": market_bias
     }
 
 # -----------------------
-# PCR FUNCTIONS
+# PCR FUNCTIONS (Seller View)
 # -----------------------
 def compute_pcr_df(merged_df):
     df = merged_df.copy()
@@ -593,239 +702,31 @@ def compute_pcr_df(merged_df):
     df["PCR"] = df.apply(pcr_calc, axis=1)
     return df
 
-def rank_support_resistance_current(pcr_df):
+def rank_support_resistance_seller(pcr_df):
+    """
+    Rank supports/resistances from SELLER's perspective
+    """
     eps = 1e-6
     t = pcr_df.copy()
+    
+    # SELLER LOGIC: High PCR = Strong PUT selling = Strong support
+    # Low PCR = Strong CALL selling = Strong resistance
     t["PCR_clipped"] = t["PCR"].replace([np.inf, -np.inf], np.nan).fillna(0)
-    t["support_score"] = t["OI_PE"] + (t["PCR_clipped"] * 100000.0)
-    t["resistance_factor"] = t["PCR_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
-    t["resistance_score"] = t["OI_CE"] + (t["resistance_factor"] * 100000.0)
     
-    top_supports = t.sort_values("support_score", ascending=False).head(3)
-    top_resists = t.sort_values("resistance_score", ascending=False).head(3)
+    # Support score: High PE OI + High PCR
+    t["seller_support_score"] = t["OI_PE"] + (t["PCR_clipped"] * 100000.0)
+    
+    # Resistance score: High CE OI + Low PCR (inverse)
+    t["seller_resistance_factor"] = t["PCR_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
+    t["seller_resistance_score"] = t["OI_CE"] + (t["seller_resistance_factor"] * 100000.0)
+    
+    top_supports = t.sort_values("seller_support_score", ascending=False).head(3)
+    top_resists = t.sort_values("seller_resistance_score", ascending=False).head(3)
     
     return t, top_supports, top_resists
 
-def create_snapshot_tag():
-    return get_ist_now().isoformat(timespec="seconds")
-
-def save_pcr_snapshot_to_supabase(df_for_save, expiry, spot):
-    if df_for_save is None or df_for_save.empty:
-        return False, None, "no data"
-    
-    snapshot_tag = create_snapshot_tag()
-    date_str = get_ist_date_str()
-    time_str = get_ist_time_str()
-    
-    payload = []
-    for _, r in df_for_save.iterrows():
-        payload.append({
-            "snapshot_tag": snapshot_tag,
-            "date": date_str,
-            "time": time_str,
-            "expiry": expiry,
-            "spot": float(spot or 0.0),
-            "strike": int(r["strikePrice"]),
-            "oi_ce": int(r.get("OI_CE",0)),
-            "oi_pe": int(r.get("OI_PE",0)),
-            "chg_oi_ce": int(r.get("Chg_OI_CE",0)) if "Chg_OI_CE" in r else 0,
-            "chg_oi_pe": int(r.get("Chg_OI_PE",0)) if "Chg_OI_PE" in r else 0,
-            "pcr": float(np.nan if pd.isna(r.get("PCR")) or np.isinf(r.get("PCR")) else r.get("PCR")),
-            "ltp_ce": float(r.get("LTP_CE", 0.0)) if "LTP_CE" in r else 0.0,
-            "ltp_pe": float(r.get("LTP_PE", 0.0)) if "LTP_PE" in r else 0.0
-        })
-    try:
-        batch_size = 200
-        for i in range(0, len(payload), batch_size):
-            chunk = payload[i:i+batch_size]
-            res = supabase.table(SUPABASE_TABLE_PCR).insert(chunk).execute()
-            if res.status_code not in (200,201,204):
-                return False, None, f"Insert failed {res.status_code}"
-        return True, snapshot_tag, "saved"
-    except Exception as e:
-        return False, None, str(e)
-
-def get_last_two_snapshot_tags():
-    try:
-        resp = supabase.table(SUPABASE_TABLE_PCR).select("snapshot_tag, created_at").order("created_at", desc=True).limit(2000).execute()
-        if resp.status_code not in (200,201):
-            return []
-        rows = resp.data or []
-        tags = []
-        for r in rows:
-            tag = r.get("snapshot_tag")
-            if tag and tag not in tags:
-                tags.append(tag)
-            if len(tags) >= 2:
-                break
-        return tags
-    except Exception as e:
-        return []
-
-def fetch_pcr_snapshot_by_tag(tag):
-    try:
-        resp = supabase.table(SUPABASE_TABLE_PCR).select("*").eq("snapshot_tag", tag).order("strike", {"ascending": True}).execute()
-        if resp.status_code not in (200,201):
-            return pd.DataFrame()
-        rows = resp.data or []
-        if not rows:
-            return pd.DataFrame()
-        df = pd.DataFrame(rows)
-        mapping = {
-            "strike":"strikePrice", "oi_ce":"OI_CE", "oi_pe":"OI_PE",
-            "chg_oi_ce":"Chg_OI_CE","chg_oi_pe":"Chg_OI_PE",
-            "pcr":"PCR","ltp_ce":"LTP_CE","ltp_pe":"LTP_PE"
-        }
-        for col in mapping.keys():
-            if col not in df.columns:
-                df[col] = 0
-        df = df.rename(columns=mapping)
-        for c in ["strikePrice","OI_CE","OI_PE","Chg_OI_CE","Chg_OI_PE","PCR","LTP_CE","LTP_PE"]:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-        return df.sort_values("strikePrice").reset_index(drop=True)
-    except Exception as e:
-        return pd.DataFrame()
-
-def evaluate_trend(current_df, prev_df):
-    if current_df is None or current_df.empty:
-        return pd.DataFrame()
-    current = current_df.set_index("strikePrice")
-    prev = prev_df.set_index("strikePrice") if (prev_df is not None and not prev_df.empty) else pd.DataFrame()
-    all_strikes = sorted(list(set(current.index).union(set(prev.index))))
-    cur = current.reindex(all_strikes).fillna(0)
-    prv = prev.reindex(all_strikes).fillna(0) if not prev.empty else pd.DataFrame(index=all_strikes).fillna(0)
-    
-    deltas = pd.DataFrame(index=all_strikes)
-    deltas["OI_CE_now"] = cur["OI_CE"]
-    deltas["OI_PE_now"] = cur["OI_PE"]
-    deltas["PCR_now"] = cur["PCR"]
-    deltas["OI_CE_prev"] = prv["OI_CE"] if "OI_CE" in prv.columns else 0
-    deltas["OI_PE_prev"] = prv["OI_PE"] if "OI_PE" in prv.columns else 0
-    deltas["PCR_prev"] = prv["PCR"] if "PCR" in prv.columns else 0
-    deltas["ΔOI_CE"] = deltas["OI_CE_now"] - deltas["OI_CE_prev"]
-    deltas["ΔOI_PE"] = deltas["OI_PE_now"] - deltas["OI_PE_prev"]
-    deltas["ΔPCR"] = deltas["PCR_now"] - deltas["PCR_prev"]
-    
-    def label(row):
-        oi_pe_up = row["ΔOI_PE"] > 0
-        oi_pe_down = row["ΔOI_PE"] < 0
-        oi_ce_up = row["ΔOI_CE"] > 0
-        oi_ce_down = row["ΔOI_CE"] < 0
-        pcr_up = row["ΔPCR"] > 0.05
-        pcr_down = row["ΔPCR"] < -0.05
-        
-        if oi_pe_up and pcr_up:
-            return "Support Building"
-        if oi_pe_down and pcr_down:
-            return "Support Breaking"
-        if oi_ce_up and pcr_down:
-            return "Resistance Building"
-        if oi_ce_down and pcr_up:
-            return "Resistance Breaking"
-        if abs(row["ΔPCR"]) > 0.2:
-            return "PCR Rapid Change"
-        return "Neutral"
-    
-    deltas["Trend"] = deltas.apply(label, axis=1)
-    deltas = deltas.reset_index().rename(columns={"index":"strikePrice"})
-    return deltas
-
-def rank_support_resistance(trend_df):
-    """
-    Rank supports and resistances using PCR + OI scores
-    """
-    eps = 1e-6
-    t = trend_df.copy()
-    t["PCR_now_clipped"] = t["PCR_now"].replace([np.inf, -np.inf], np.nan).fillna(0)
-    t["support_score"] = t["OI_PE_now"] + (t["PCR_now_clipped"] * 100000.0)
-    t["resistance_factor"] = t["PCR_now_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
-    t["resistance_score"] = t["OI_CE_now"] + (t["resistance_factor"] * 100000.0)
-    
-    top_supports = t.sort_values("support_score", ascending=False).head(3)["strikePrice"].astype(int).tolist()
-    top_resists = t.sort_values("resistance_score", ascending=False).head(3)["strikePrice"].astype(int).tolist()
-    return t, top_supports, top_resists
-
-def detect_fake_breakout(spot, strong_support, strong_resist, trend_df):
-    """Detect potential fake breakouts"""
-    fake = None
-    fake_hint = ""
-    
-    if strong_resist is not None and spot > strong_resist:
-        row = trend_df[trend_df["strikePrice"]==strong_resist]
-        if not row.empty and row.iloc[0]["ΔOI_CE"] > 0:
-            fake = "Bull Trap"
-            fake_hint = f"Price above resistance {strong_resist} but CALL OI building → Sellers bearish (fake upside)."
-    
-    if strong_support is not None and spot < strong_support:
-        row = trend_df[trend_df["strikePrice"]==strong_support]
-        if not row.empty and row.iloc[0]["ΔOI_PE"] > 0:
-            fake = "Bear Trap"
-            fake_hint = f"Price below support {strong_support} but PUT OI building → Sellers bullish (fake downside)."
-    
-    return fake, fake_hint
-
-def generate_stop_loss_hint(spot, top_supports, top_resists, fake_type):
-    """Generate stop-loss hint based on support/resistance levels"""
-    if fake_type == "Bull Trap":
-        return f"Keep SL near strong support {top_supports[0] if top_supports else 'N/A'} — trap likely reverse down."
-    if fake_type == "Bear Trap":
-        return f"Keep SL near strong resistance {top_resists[0] if top_resists else 'N/A'} — trap likely reverse up."
-    if top_resists and spot > top_resists[0]:
-        return f"Real upside: place SL near 2nd strongest support {top_supports[1] if len(top_supports)>1 else 'N/A'}"
-    if top_supports and spot < top_supports[0]:
-        return f"Real downside: place SL near 2nd strongest resistance {top_resists[1] if len(top_resists)>1 else 'N/A'}"
-    return f"No clear breakout — SL inside range between {top_supports[1] if len(top_supports)>1 else 'N/A'} and {top_resists[1] if len(top_resists)>1 else 'N/A'}"
-
 # -----------------------
-#  SUPABASE SNAPSHOT HELPERS
-# -----------------------
-def supabase_snapshot_exists(date_str, window):
-    try:
-        resp = supabase.table(SUPABASE_TABLE).select("id").eq("date", date_str).eq("time_window", window).limit(1).execute()
-        if resp.status_code == 200:
-            data = resp.data
-            return len(data) > 0
-        return False
-    except Exception as e:
-        return False
-
-def save_snapshot_to_supabase(df, window, underlying):
-    """Insert rows (one per strike) into supabase table with date & time_window."""
-    if df is None or df.empty:
-        return False, "no data"
-    date_str = get_ist_date_str()
-    payload = []
-    for _, r in df.iterrows():
-        payload.append({
-            "date": date_str,
-            "time_window": window,
-            "underlying": float(underlying),
-            "strike": int(r.get("strikePrice",0)),
-            "oi_ce": int(safe_int(r.get("OI_CE",0))),
-            "chg_oi_ce": int(safe_int(r.get("Chg_OI_CE",0))),
-            "vol_ce": int(safe_int(r.get("Vol_CE",0))),
-            "ltp_ce": float(safe_float(r.get("LTP_CE", np.nan)) or 0.0),
-            "iv_ce": float(safe_float(r.get("IV_CE", np.nan) or 0.0)),
-            "oi_pe": int(safe_int(r.get("OI_PE",0))),
-            "chg_oi_pe": int(safe_int(r.get("Chg_OI_PE",0))),
-            "vol_pe": int(safe_int(r.get("Vol_PE",0))),
-            "ltp_pe": float(safe_float(r.get("LTP_PE", np.nan) or 0.0)),
-            "iv_pe": float(safe_float(r.get("IV_PE", np.nan) or 0.0))
-        })
-    try:
-        batch_size = 200
-        for i in range(0, len(payload), batch_size):
-            chunk = payload[i:i+batch_size]
-            res = supabase.table(SUPABASE_TABLE).insert(chunk).execute()
-            if res.status_code not in (200,201,204):
-                return False, f"supabase insert returned {res.status_code}"
-        return True, "saved"
-    except Exception as e:
-        return False, str(e)
-
-# -----------------------
-#  DHAN API
+# DHAN API
 # -----------------------
 @st.cache_data(ttl=5)
 def get_nifty_spot_price():
@@ -928,9 +829,9 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
-#  MAIN APP
+#  MAIN APP - SELLER'S PERSPECTIVE
 # -----------------------
-st.title("🎯 NIFTY Option Screener v4.0 — SELLER-CENTRIC LOGIC")
+st.title("🎯 NIFTY Option Screener v4.0 — SELLER'S PERSPECTIVE")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -941,21 +842,24 @@ st.markdown(f"""
 
 # Sidebar
 with st.sidebar:
-    st.header("⚙️ Configuration")
-    st.markdown(f"### 🕐 Current IST")
-    st.markdown(f"**{get_ist_time_str()}**")
-    st.markdown(f"**{get_ist_date_str()}**")
-    st.markdown("---")
-    
     st.markdown("""
-    ### 🎯 SELLER'S LOGIC
-    - **CALL building** = BEARISH (sellers selling calls)
-    - **CALL unwinding** = BULLISH (sellers buying back calls)
-    - **PUT building** = BULLISH (sellers selling puts)
-    - **PUT unwinding** = BEARISH (sellers buying back puts)
-    """)
+    <div class='seller-explanation'>
+    <h3>🎯 SELLER'S LOGIC</h3>
+    <p><strong>Options WRITING = Directional Bias:</strong></p>
+    <ul>
+    <li><span class='seller-bearish'>📉 CALL Writing</span> = BEARISH (expecting price to STAY BELOW)</li>
+    <li><span class='seller-bullish'>📈 PUT Writing</span> = BULLISH (expecting price to STAY ABOVE)</li>
+    <li><span class='seller-bullish'>🔄 CALL Buying Back</span> = BULLISH (covering bearish bets)</li>
+    <li><span class='seller-bearish'>🔄 PUT Buying Back</span> = BEARISH (covering bullish bets)</li>
+    </ul>
+    <p><em>Market makers & institutions are primarily SELLERS, not buyers.</em></p>
+    </div>
+    """, unsafe_allow_html=True)
     
     st.markdown("---")
+    st.markdown(f"**Current IST:** {get_ist_time_str()}")
+    st.markdown(f"**Date:** {get_ist_date_str()}")
+    
     save_interval = st.number_input("PCR Auto-save (sec)", value=SAVE_INTERVAL_SEC, min_value=60, step=60)
     
     if st.button("Clear Caches"):
@@ -1016,12 +920,12 @@ except Exception:
     tau = 7.0/365.0
 
 # Session storage for prev LTP/IV
-if "prev_ltps_v3" not in st.session_state:
-    st.session_state["prev_ltps_v3"] = {}
-if "prev_ivs_v3" not in st.session_state:
-    st.session_state["prev_ivs_v3"] = {}
+if "prev_ltps_seller" not in st.session_state:
+    st.session_state["prev_ltps_seller"] = {}
+if "prev_ivs_seller" not in st.session_state:
+    st.session_state["prev_ivs_seller"] = {}
 
-# Compute per-strike metrics including Greeks
+# Compute per-strike metrics with SELLER interpretation
 for i, row in merged.iterrows():
     strike = int(row["strikePrice"])
     ltp_ce = safe_float(row.get("LTP_CE",0.0))
@@ -1031,32 +935,36 @@ for i, row in merged.iterrows():
 
     key_ce = f"{expiry}_{strike}_CE"
     key_pe = f"{expiry}_{strike}_PE"
-    prev_ce = st.session_state["prev_ltps_v3"].get(key_ce, None)
-    prev_pe = st.session_state["prev_ltps_v3"].get(key_pe, None)
-    prev_iv_ce = st.session_state["prev_ivs_v3"].get(key_ce, None)
-    prev_iv_pe = st.session_state["prev_ivs_v3"].get(key_pe, None)
+    prev_ce = st.session_state["prev_ltps_seller"].get(key_ce, None)
+    prev_pe = st.session_state["prev_ltps_seller"].get(key_pe, None)
+    prev_iv_ce = st.session_state["prev_ivs_seller"].get(key_ce, None)
+    prev_iv_pe = st.session_state["prev_ivs_seller"].get(key_pe, None)
 
     ce_price_delta = None if prev_ce is None else (ltp_ce - prev_ce)
     pe_price_delta = None if prev_pe is None else (ltp_pe - prev_pe)
     ce_iv_delta = None if prev_iv_ce is None else (iv_ce - prev_iv_ce)
     pe_iv_delta = None if prev_iv_pe is None else (iv_pe - prev_iv_pe)
 
-    st.session_state["prev_ltps_v3"][key_ce] = ltp_ce
-    st.session_state["prev_ltps_v3"][key_pe] = ltp_pe
-    st.session_state["prev_ivs_v3"][key_ce] = iv_ce
-    st.session_state["prev_ivs_v3"][key_pe] = iv_pe
+    st.session_state["prev_ltps_seller"][key_ce] = ltp_ce
+    st.session_state["prev_ltps_seller"][key_pe] = ltp_pe
+    st.session_state["prev_ivs_seller"][key_ce] = iv_ce
+    st.session_state["prev_ivs_seller"][key_pe] = iv_pe
 
     chg_oi_ce = safe_int(row.get("Chg_OI_CE",0))
     chg_oi_pe = safe_int(row.get("Chg_OI_PE",0))
 
-    merged.at[i,"CE_Winding"] = "Winding" if chg_oi_ce>0 else ("Unwinding" if chg_oi_ce<0 else "NoChange")
-    merged.at[i,"PE_Winding"] = "Winding" if chg_oi_pe>0 else ("Unwinding" if chg_oi_pe<0 else "NoChange")
+    # SELLER winding/unwinding labels
+    merged.at[i,"CE_Seller_Action"] = "WRITING" if chg_oi_ce>0 else ("BUYING BACK" if chg_oi_ce<0 else "HOLDING")
+    merged.at[i,"PE_Seller_Action"] = "WRITING" if chg_oi_pe>0 else ("BUYING BACK" if chg_oi_pe<0 else "HOLDING")
 
-    merged.at[i,"CE_Divergence"] = price_oi_divergence_label(chg_oi_ce, safe_int(row.get("Vol_CE",0)), ce_price_delta)
-    merged.at[i,"PE_Divergence"] = price_oi_divergence_label(chg_oi_pe, safe_int(row.get("Vol_PE",0)), pe_price_delta)
+    # SELLER divergence interpretation
+    merged.at[i,"CE_Seller_Divergence"] = seller_price_oi_divergence_label(chg_oi_ce, safe_int(row.get("Vol_CE",0)), ce_price_delta, "CE")
+    merged.at[i,"PE_Seller_Divergence"] = seller_price_oi_divergence_label(chg_oi_pe, safe_int(row.get("Vol_PE",0)), pe_price_delta, "PE")
 
-    merged.at[i,"Interpretation"] = interpret_itm_otm(strike, atm_strike, chg_oi_ce, chg_oi_pe)
+    # SELLER ITM/OTM interpretation
+    merged.at[i,"Seller_Interpretation"] = seller_itm_otm_interpretation(strike, atm_strike, chg_oi_ce, chg_oi_pe)
 
+    # Greeks calculation
     sigma_ce = iv_ce/100.0 if not np.isnan(iv_ce) and iv_ce>0 else 0.25
     sigma_pe = iv_pe/100.0 if not np.isnan(iv_pe) and iv_pe>0 else 0.25
 
@@ -1085,6 +993,7 @@ for i, row in merged.iterrows():
     merged.at[i,"Vega_PE"] = vega_pe
     merged.at[i,"Theta_PE"] = theta_pe
 
+    # GEX calculation (SELLER exposure)
     oi_ce = safe_int(row.get("OI_CE",0))
     oi_pe = safe_int(row.get("OI_PE",0))
     notional = LOT_SIZE * spot
@@ -1092,170 +1001,124 @@ for i, row in merged.iterrows():
     gex_pe = gamma_pe * notional * oi_pe
     merged.at[i,"GEX_CE"] = gex_ce
     merged.at[i,"GEX_PE"] = gex_pe
-    merged.at[i,"GEX_Net"] = gex_ce - gex_pe
+    merged.at[i,"GEX_Net"] = gex_ce + gex_pe  # Both add to seller risk
 
-    merged.at[i,"Strength_Score"] = strike_strength_score(row)
-    merged.at[i,"Gamma_Pressure"] = gamma_pressure_metric(row, atm_strike, strike_gap)
+    # SELLER strength score
+    merged.at[i,"Seller_Strength_Score"] = seller_strength_score(row)
+
+    # SELLER gamma pressure
+    merged.at[i,"Seller_Gamma_Pressure"] = seller_gamma_pressure(row, atm_strike, strike_gap)
 
     merged.at[i,"CE_Price_Delta"] = ce_price_delta
     merged.at[i,"PE_Price_Delta"] = pe_price_delta
     merged.at[i,"CE_IV_Delta"] = ce_iv_delta
     merged.at[i,"PE_IV_Delta"] = pe_iv_delta
 
-# Aggregations & summaries
+# Aggregations
 total_CE_OI = merged["OI_CE"].sum()
 total_PE_OI = merged["OI_PE"].sum()
 total_CE_chg = merged["Chg_OI_CE"].sum()
 total_PE_chg = merged["Chg_OI_PE"].sum()
 
-itm_ce_mask = merged["strikePrice"] < atm_strike
-otm_ce_mask = merged["strikePrice"] > atm_strike
-itm_pe_mask = merged["strikePrice"] > atm_strike
-otm_pe_mask = merged["strikePrice"] < atm_strike
+# SELLER activity summary
+ce_selling = (merged["Chg_OI_CE"] > 0).sum()
+ce_buying_back = (merged["Chg_OI_CE"] < 0).sum()
+pe_selling = (merged["Chg_OI_PE"] > 0).sum()
+pe_buying_back = (merged["Chg_OI_PE"] < 0).sum()
 
-ITM_CE_OI = merged.loc[itm_ce_mask, "OI_CE"].sum()
-OTM_CE_OI = merged.loc[otm_ce_mask, "OI_CE"].sum()
-ITM_PE_OI = merged.loc[itm_pe_mask, "OI_PE"].sum()
-OTM_PE_OI = merged.loc[otm_pe_mask, "OI_PE"].sum()
-
-ITM_CE_winding_count = (merged.loc[itm_ce_mask,"CE_Winding"]=="Winding").sum()
-OTM_CE_winding_count = (merged.loc[otm_ce_mask,"CE_Winding"]=="Winding").sum()
-ITM_PE_winding_count = (merged.loc[itm_pe_mask,"PE_Winding"]=="Winding").sum()
-OTM_PE_winding_count = (merged.loc[otm_pe_mask,"PE_Winding"]=="Winding").sum()
-
-itm_ce_winding_pct = (ITM_CE_winding_count / (merged.loc[itm_ce_mask].shape[0] or 1))*100
-otm_ce_winding_pct = (OTM_CE_winding_count / (merged.loc[otm_ce_mask].shape[0] or 1))*100
-itm_pe_winding_pct = (ITM_PE_winding_count / (merged.loc[itm_pe_mask].shape[0] or 1))*100
-otm_pe_winding_pct = (OTM_PE_winding_count / (merged.loc[otm_pe_mask].shape[0] or 1))*100
-
-merged["CE_Delta_Exposure"] = merged["Delta_CE"].fillna(0) * merged["OI_CE"].fillna(0) * LOT_SIZE
-merged["PE_Delta_Exposure"] = merged["Delta_PE"].fillna(0) * merged["OI_PE"].fillna(0) * LOT_SIZE
-net_delta_exposure = merged["CE_Delta_Exposure"].sum() + merged["PE_Delta_Exposure"].sum()
-
+# Greeks totals
 total_gex_ce = merged["GEX_CE"].sum()
 total_gex_pe = merged["GEX_PE"].sum()
 total_gex_net = merged["GEX_Net"].sum()
 
-# Calculate Max Pain
-max_pain = calculate_max_pain(merged)
+# Calculate SELLER metrics
+seller_max_pain = calculate_seller_max_pain(merged)
+seller_breakout_index = seller_breakout_probability_index(merged, atm_strike, strike_gap)
 
-breakout_index = breakout_probability_index(merged, atm_strike, strike_gap)
-
-ce_com = center_of_mass_oi(merged, "OI_CE")
-pe_com = center_of_mass_oi(merged, "OI_PE")
-atm_shift = []
-if ce_com > atm_strike + strike_gap: atm_shift.append("CE build above ATM")
-elif ce_com < atm_strike - strike_gap: atm_shift.append("CE build below ATM")
-if pe_com > atm_strike + strike_gap: atm_shift.append("PE build above ATM")
-elif pe_com < atm_strike - strike_gap: atm_shift.append("PE build below ATM")
-atm_shift_str = " | ".join(atm_shift) if atm_shift else "Neutral"
-
-# Calculate SELLER-CENTRIC Market Bias
-market_bias_result = calculate_seller_market_bias(merged, spot, atm_strike)
+# Calculate SELLER market bias
+seller_bias_result = calculate_seller_market_bias(merged, spot, atm_strike)
 
 # Compute PCR
 pcr_df = compute_pcr_df(merged)
 
-# Get support/resistance rankings
-ranked_current, supports_df, resists_df = rank_support_resistance_current(pcr_df)
+# Get SELLER support/resistance rankings
+ranked_current, seller_supports_df, seller_resists_df = rank_support_resistance_seller(pcr_df)
 
-# 🔥 ANALYZE SPOT POSITION
-spot_analysis = analyze_spot_position(spot, ranked_current)
-
-# Auto-save PCR
-last_saved = st.session_state.get("last_pcr_auto_saved", 0)
-if time.time() - last_saved > save_interval:
-    ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
-    if ok:
-        st.session_state["last_pcr_auto_saved"] = time.time()
-
-# Get trend analysis
-tags = get_last_two_snapshot_tags()
-trend_df = pd.DataFrame()
-
-if len(tags) >= 2:
-    cur_df = fetch_pcr_snapshot_by_tag(tags[0])
-    prev_df = fetch_pcr_snapshot_by_tag(tags[1])
-    
-    if not cur_df.empty:
-        trend_df = evaluate_trend(cur_df, prev_df)
+# Analyze spot position from SELLER perspective
+spot_analysis = analyze_spot_position_seller(spot, ranked_current, seller_bias_result)
 
 # ============================================
-# 🎯 MAIN DASHBOARD
+# 🎯 MAIN DASHBOARD - SELLER'S VIEW
 # ============================================
-
-st.markdown("## 📈 CORE MARKET METRICS")
 
 # SELLER BIAS DISPLAY
-st.markdown("""
-<div class="seller-logic">
-    <h4>🎯 SELLER'S MARKET BIAS (Option Writer Logic)</h4>
+st.markdown(f"""
+<div class='seller-bias-box'>
+    <h3>🎯 SELLER'S MARKET BIAS</h3>
+    <div class='bias-value' style='color:{seller_bias_result["color"]}'>
+        {seller_bias_result["bias"]}
+    </div>
+    <p>Polarity Score: {seller_bias_result["polarity"]:.2f}</p>
 </div>
 """, unsafe_allow_html=True)
+
+st.markdown(f"""
+<div class='seller-explanation'>
+    <h4>🧠 SELLER'S THINKING:</h4>
+    <p><strong>{seller_bias_result["explanation"]}</strong></p>
+    <p><strong>Action:</strong> {seller_bias_result["action"]}</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Core Metrics
+st.markdown("## 📈 SELLER'S MARKET OVERVIEW")
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Spot", f"₹{spot:.2f}")
     st.metric("ATM", f"₹{atm_strike}")
 with col2:
-    st.metric("Total CE OI", f"{int(total_CE_OI):,}")
-    st.metric("Total PE OI", f"{int(total_PE_OI):,}")
+    st.metric("CALL Sellers", f"{ce_selling} strikes")
+    st.metric("PUT Sellers", f"{pe_selling} strikes")
 with col3:
-    st.metric("Total CE ΔOI", f"{int(total_CE_chg):,}")
-    st.metric("Total PE ΔOI", f"{int(total_PE_chg):,}")
+    st.metric("CALL Buying Back", f"{ce_buying_back} strikes")
+    st.metric("PUT Buying Back", f"{pe_buying_back} strikes")
 with col4:
-    st.markdown(f"**Market Bias:**")
-    st.markdown(f"<h2 style='color:{market_bias_result['color']};text-align:center'>{market_bias_result['emoji']} {market_bias_result['bias']}</h2>", 
-                unsafe_allow_html=True)
-    st.caption(f"Polarity Score: {market_bias_result['polarity']:.2f}")
-
-st.info(f"**Explanation:** {market_bias_result['explanation']}")
+    st.metric("Total GEX", f"₹{int(total_gex_net):,}")
+    st.metric("Breakout Index", f"{seller_breakout_index}%")
 
 # Max Pain Display
-if max_pain:
+if seller_max_pain:
+    distance_to_max_pain = abs(spot - seller_max_pain)
     st.markdown(f"""
-    <div class="max-pain-box">
-        <h4>🎯 MAX PAIN (Sellers' Preferred Level)</h4>
-        <p style='font-size: 1.5rem; color: #ff9900; font-weight: bold; text-align: center;'>₹{max_pain:,}</p>
-        <p style='text-align: center; color: #cccccc;'>Distance from spot: ₹{abs(spot - max_pain):.2f} ({abs(spot - max_pain)/spot*100:.2f}%)</p>
+    <div class='max-pain-box'>
+        <h4>🎯 SELLER'S MAX PAIN (Preferred Level)</h4>
+        <p style='font-size: 1.5rem; color: #ff9900; font-weight: bold; text-align: center;'>₹{seller_max_pain:,}</p>
+        <p style='text-align: center; color: #cccccc;'>Distance from spot: ₹{distance_to_max_pain:.2f} ({distance_to_max_pain/spot*100:.2f}%)</p>
+        <p style='text-align: center; color: #ffcc00;'>Sellers want price here to minimize losses</p>
     </div>
     """, unsafe_allow_html=True)
 
-st.markdown("### 🔎 ITM/OTM Pressure Summary (ATM ± 8)")
-pressure_table = pd.DataFrame([
-    {"Category":"ITM CE OI","Value":int(ITM_CE_OI),"Winding_Count":int(ITM_CE_winding_count),"Winding_%":f"{itm_ce_winding_pct:.1f}%","Seller Bias":"BEARISH if building"},
-    {"Category":"OTM CE OI","Value":int(OTM_CE_OI),"Winding_Count":int(OTM_CE_winding_count),"Winding_%":f"{otm_ce_winding_pct:.1f}%","Seller Bias":"Mild BEARISH if building"},
-    {"Category":"ITM PE OI","Value":int(ITM_PE_OI),"Winding_Count":int(ITM_PE_winding_count),"Winding_%":f"{itm_pe_winding_pct:.1f}%","Seller Bias":"BULLISH if building"},
-    {"Category":"OTM PE OI","Value":int(OTM_PE_OI),"Winding_Count":int(OTM_PE_winding_count),"Winding_%":f"{otm_pe_winding_pct:.1f}%","Seller Bias":"Mild BULLISH if building"}
-])
-st.dataframe(pressure_table, use_container_width=True)
+# SELLER Activity Summary
+st.markdown("### 🔥 SELLER ACTIVITY HEATMAP")
 
-# Greeks Summary
-st.markdown("### 🧮 GREEKS SUMMARY")
-gex_col1, gex_col2, gex_col3, gex_col4 = st.columns(4)
-with gex_col1:
-    st.metric("Total GEX CE", f"₹{int(total_gex_ce):,}")
-with gex_col2:
-    st.metric("Total GEX PE", f"₹{int(total_gex_pe):,}")
-with gex_col3:
-    st.metric("Net GEX", f"₹{int(total_gex_net):,}")
-    st.caption("Positive = Sellers comfortable | Negative = Sellers under pressure")
-with gex_col4:
-    st.metric("Breakout Index", f"{breakout_index}%")
-    st.metric("PCR", f"{market_bias_result['details']['pcr']:.2f}")
+seller_activity = pd.DataFrame([
+    {"Activity": "CALL Writing (Bearish)", "Strikes": ce_selling, "Bias": "BEARISH", "Color": "#ff4444"},
+    {"Activity": "CALL Buying Back (Bullish)", "Strikes": ce_buying_back, "Bias": "BULLISH", "Color": "#00ff88"},
+    {"Activity": "PUT Writing (Bullish)", "Strikes": pe_selling, "Bias": "BULLISH", "Color": "#00ff88"},
+    {"Activity": "PUT Buying Back (Bearish)", "Strikes": pe_buying_back, "Bias": "BEARISH", "Color": "#ff4444"}
+])
+
+st.dataframe(seller_activity, use_container_width=True)
 
 st.markdown("---")
 
 # ============================================
-# 🎯 SPOT POSITION & KEY LEVELS
+# 🎯 SPOT POSITION - SELLER'S VIEW
 # ============================================
 
-st.markdown("## 🎯 SPOT POSITION & KEY LEVELS")
+st.markdown("## 📍 SPOT POSITION (SELLER'S DEFENSE)")
 
-# Row 1: SPOT POSITION CARD
-st.markdown("### 📍 NIFTY SPOT POSITION")
-
-# Create spot position display
 nearest_sup = spot_analysis["nearest_support"]
 nearest_res = spot_analysis["nearest_resistance"]
 
@@ -1266,359 +1129,353 @@ with col_spot:
     <div class="spot-card">
         <h3>🎯 CURRENT SPOT</h3>
         <div class="spot-price">₹{spot:,.2f}</div>
-        <div class="distance">ATM Strike: ₹{atm_strike:,}</div>
+        <div class="distance">ATM: ₹{atm_strike:,}</div>
+        <div class="distance">Market Bias: <span style='color:{seller_bias_result["color"]}'>{seller_bias_result["bias"]}</span></div>
     </div>
     """, unsafe_allow_html=True)
 
 with col_range:
     if nearest_sup and nearest_res:
-        range_size = nearest_res["strike"] - nearest_sup["strike"]
-        spot_position_pct = ((spot - nearest_sup["strike"]) / range_size * 100) if range_size > 0 else 50
+        range_size = spot_analysis["range_size"]
+        spot_position_pct = spot_analysis["spot_position_pct"]
+        range_bias = spot_analysis["range_bias"]
         
         st.markdown(f"""
         <div class="spot-card">
-            <h3>📊 SPOT IN RANGE</h3>
+            <h3>📊 SELLER'S DEFENSE RANGE</h3>
             <div class="distance">₹{nearest_sup['strike']:,} ← SPOT → ₹{nearest_res['strike']:,}</div>
             <div class="distance">Position: {spot_position_pct:.1f}% within range</div>
             <div class="distance">Range Width: ₹{range_size:,}</div>
+            <div class="distance" style='color:#ffcc00;'>{range_bias}</div>
         </div>
         """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# Row 2: NEAREST LEVELS FROM SPOT
-st.markdown("### 🎯 NEAREST SUPPORT & RESISTANCE FROM SPOT")
+# NEAREST LEVELS WITH SELLER INTERPRETATION
+st.markdown("### 🎯 NEAREST SELLER DEFENSE LEVELS")
 
 col_ns, col_nr = st.columns(2)
 
 with col_ns:
-    st.markdown("#### 🛡️ SUPPORT BELOW SPOT")
+    st.markdown("#### 🛡️ SELLER SUPPORT BELOW")
     
     if nearest_sup:
         sup = nearest_sup
         pcr_display = f"{sup['pcr']:.2f}" if not np.isinf(sup['pcr']) else "∞"
         
-        # Get trend if available
-        trend_label = ""
-        if not trend_df.empty:
-            trend_row = trend_df[trend_df["strikePrice"] == sup['strike']]
-            if not trend_row.empty:
-                trend = trend_row.iloc[0]["Trend"]
-                if trend == "Support Building":
-                    trend_label = " 🟢 BUILDING"
-                elif trend == "Support Breaking":
-                    trend_label = " 🔴 BREAKING"
-        
         st.markdown(f"""
         <div class="nearest-level">
-            <h4>💚 NEAREST SUPPORT{trend_label}</h4>
+            <h4>💚 NEAREST SELLER SUPPORT</h4>
             <div class="level-value">₹{sup['strike']:,}</div>
             <div class="level-distance">⬇️ Distance: ₹{sup['distance']:.2f} ({sup['distance_pct']:.2f}%)</div>
             <div class="sub-info">
-                PE OI: {sup['oi_pe']:,} | PCR: {pcr_display} | ΔOI: {sup['chg_oi_pe']:+,}
+                <strong>SELLER ACTIVITY:</strong> {sup['seller_strength']}<br>
+                PUT OI: {sup['oi_pe']:,} | CALL OI: {sup['oi_ce']:,}<br>
+                PCR: {pcr_display} | ΔCALL: {sup['chg_oi_ce']:+,} | ΔPUT: {sup['chg_oi_pe']:+,}
             </div>
         </div>
         """, unsafe_allow_html=True)
     else:
-        st.info("No support level below spot")
-    
-    # Next support
-    next_sup = spot_analysis["next_support"]
-    if next_sup:
-        pcr_display = f"{next_sup['pcr']:.2f}" if not np.isinf(next_sup['pcr']) else "∞"
-        
-        st.markdown(f"""
-        <div class="level-card">
-            <h4>Next Support</h4>
-            <p>₹{next_sup['strike']:,}</p>
-            <div class="sub-info">
-                ⬇️ Distance: ₹{next_sup['distance']:.2f} ({next_sup['distance_pct']:.2f}%) | PCR: {pcr_display}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.info("No seller support level below spot")
 
 with col_nr:
-    st.markdown("#### ⚡ RESISTANCE ABOVE SPOT")
+    st.markdown("#### ⚡ SELLER RESISTANCE ABOVE")
     
     if nearest_res:
         res = nearest_res
         pcr_display = f"{res['pcr']:.2f}" if not np.isinf(res['pcr']) else "∞"
         
-        # Get trend if available
-        trend_label = ""
-        if not trend_df.empty:
-            trend_row = trend_df[trend_df["strikePrice"] == res['strike']]
-            if not trend_row.empty:
-                trend = trend_row.iloc[0]["Trend"]
-                if trend == "Resistance Building":
-                    trend_label = " 🟡 BUILDING"
-                elif trend == "Resistance Breaking":
-                    trend_label = " 🔵 BREAKING"
-        
         st.markdown(f"""
         <div class="nearest-level">
-            <h4>🧡 NEAREST RESISTANCE{trend_label}</h4>
+            <h4>🧡 NEAREST SELLER RESISTANCE</h4>
             <div class="level-value">₹{res['strike']:,}</div>
             <div class="level-distance">⬆️ Distance: ₹{res['distance']:.2f} ({res['distance_pct']:.2f}%)</div>
             <div class="sub-info">
-                CE OI: {res['oi_ce']:,} | PCR: {pcr_display} | ΔOI: {res['chg_oi_ce']:+,}
+                <strong>SELLER ACTIVITY:</strong> {res['seller_strength']}<br>
+                CALL OI: {res['oi_ce']:,} | PUT OI: {res['oi_pe']:,}<br>
+                PCR: {pcr_display} | ΔCALL: {res['chg_oi_ce']:+,} | ΔPUT: {res['chg_oi_pe']:+,}
             </div>
         </div>
         """, unsafe_allow_html=True)
     else:
-        st.info("No resistance level above spot")
-    
-    # Next resistance
-    next_res = spot_analysis["next_resistance"]
-    if next_res:
-        pcr_display = f"{next_res['pcr']:.2f}" if not np.isinf(next_res['pcr']) else "∞"
-        
-        st.markdown(f"""
-        <div class="level-card">
-            <h4>Next Resistance</h4>
-            <p>₹{next_res['strike']:,}</p>
-            <div class="sub-info">
-                ⬆️ Distance: ₹{next_res['distance']:.2f} ({next_res['distance_pct']:.2f}%) | PCR: {pcr_display}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.info("No seller resistance level above spot")
 
 st.markdown("---")
 
-# Row 3: ALL SUPPORT & RESISTANCE LEVELS
-st.markdown("### 🎯 ALL KEY LEVELS (Top 3 Each)")
+# TOP SELLER DEFENSE LEVELS
+st.markdown("### 🎯 TOP SELLER DEFENSE LEVELS (Strongest 3)")
 
 col_s, col_r = st.columns(2)
 
 with col_s:
-    st.markdown("#### 🛡️ STRONGEST SUPPORTS")
+    st.markdown("#### 🛡️ STRONGEST SELLER SUPPORTS")
     
-    for i, (idx, row) in enumerate(supports_df.head(3).iterrows(), 1):
+    for i, (idx, row) in enumerate(seller_supports_df.head(3).iterrows(), 1):
         strike = int(row["strikePrice"])
         oi_pe = int(row["OI_PE"])
+        oi_ce = int(row["OI_CE"])
         pcr = row["PCR"]
         pcr_display = f"{pcr:.2f}" if not np.isinf(pcr) else "∞"
         chg_oi_pe = int(row.get("Chg_OI_PE", 0))
+        chg_oi_ce = int(row.get("Chg_OI_CE", 0))
         
-        # Distance from spot
+        # SELLER interpretation
+        if pcr > 1.5:
+            seller_msg = "Heavy PUT writing - Strong bullish defense"
+            color = "#00ff88"
+        elif pcr > 1.0:
+            seller_msg = "Moderate PUT writing - Bullish defense"
+            color = "#00cc66"
+        else:
+            seller_msg = "Light PUT writing - Weak defense"
+            color = "#cccccc"
+        
         dist = abs(spot - strike)
         dist_pct = (dist / spot * 100)
         direction = "⬆️ Above" if strike > spot else "⬇️ Below"
         
-        # Get trend
-        trend_label = ""
-        if not trend_df.empty:
-            trend_row = trend_df[trend_df["strikePrice"] == strike]
-            if not trend_row.empty:
-                trend = trend_row.iloc[0]["Trend"]
-                if trend == "Support Building":
-                    trend_label = " 🟢 BUILDING"
-                elif trend == "Support Breaking":
-                    trend_label = " 🔴 BREAKING"
-        
         st.markdown(f"""
         <div class="level-card">
-            <h4>Support #{i}{trend_label}</h4>
+            <h4>Seller Support #{i}</h4>
             <p>₹{strike:,}</p>
             <div class="sub-info">
-                {direction}: ₹{dist:.2f} ({dist_pct:.2f}%) | PE OI: {oi_pe:,} | PCR: {pcr_display} | ΔOI: {chg_oi_pe:+,}
+                {direction}: ₹{dist:.2f} ({dist_pct:.2f}%)<br>
+                <span style='color:{color}'><strong>{seller_msg}</strong></span><br>
+                PUT OI: {oi_pe:,} | ΔPUT: {chg_oi_pe:+,}<br>
+                CALL OI: {oi_ce:,} | ΔCALL: {chg_oi_ce:+,}<br>
+                PCR: {pcr_display}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
 with col_r:
-    st.markdown("#### ⚡ STRONGEST RESISTANCES")
+    st.markdown("#### ⚡ STRONGEST SELLER RESISTANCES")
     
-    for i, (idx, row) in enumerate(resists_df.head(3).iterrows(), 1):
+    for i, (idx, row) in enumerate(seller_resists_df.head(3).iterrows(), 1):
         strike = int(row["strikePrice"])
         oi_ce = int(row["OI_CE"])
+        oi_pe = int(row["OI_PE"])
         pcr = row["PCR"]
         pcr_display = f"{pcr:.2f}" if not np.isinf(pcr) else "∞"
         chg_oi_ce = int(row.get("Chg_OI_CE", 0))
+        chg_oi_pe = int(row.get("Chg_OI_PE", 0))
         
-        # Distance from spot
+        # SELLER interpretation
+        if pcr < 0.5:
+            seller_msg = "Heavy CALL writing - Strong bearish defense"
+            color = "#ff4444"
+        elif pcr < 1.0:
+            seller_msg = "Moderate CALL writing - Bearish defense"
+            color = "#ff6666"
+        else:
+            seller_msg = "Light CALL writing - Weak defense"
+            color = "#cccccc"
+        
         dist = abs(spot - strike)
         dist_pct = (dist / spot * 100)
         direction = "⬆️ Above" if strike > spot else "⬇️ Below"
         
-        # Get trend
-        trend_label = ""
-        if not trend_df.empty:
-            trend_row = trend_df[trend_df["strikePrice"] == strike]
-            if not trend_row.empty:
-                trend = trend_row.iloc[0]["Trend"]
-                if trend == "Resistance Building":
-                    trend_label = " 🟡 BUILDING"
-                elif trend == "Resistance Breaking":
-                    trend_label = " 🔵 BREAKING"
-        
         st.markdown(f"""
         <div class="level-card">
-            <h4>Resistance #{i}{trend_label}</h4>
+            <h4>Seller Resistance #{i}</h4>
             <p>₹{strike:,}</p>
             <div class="sub-info">
-                {direction}: ₹{dist:.2f} ({dist_pct:.2f}%) | CE OI: {oi_ce:,} | PCR: {pcr_display} | ΔOI: {chg_oi_ce:+,}
+                {direction}: ₹{dist:.2f} ({dist_pct:.2f}%)<br>
+                <span style='color:{color}'><strong>{seller_msg}</strong></span><br>
+                CALL OI: {oi_ce:,} | ΔCALL: {chg_oi_ce:+,}<br>
+                PUT OI: {oi_pe:,} | ΔPUT: {chg_oi_pe:+,}<br>
+                PCR: {pcr_display}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# Row 4: Trading Insights
-st.markdown("### 💡 TRADING INSIGHTS")
-
-col_insight1, col_insight2 = st.columns(2)
-
-with col_insight1:
-    if nearest_sup and nearest_res:
-        mid_point = (nearest_sup["strike"] + nearest_res["strike"]) / 2
-        if spot < mid_point:
-            bias = "🔴 Spot closer to support"
-            insight = f"Watch ₹{nearest_sup['strike']:,} for breakdown."
-        else:
-            bias = "🟢 Spot closer to resistance"
-            insight = f"Watch ₹{nearest_res['strike']:,} for breakout."
-        
-        st.info(f"**{bias}**: {insight}")
-    
-    # Fake Breakout Detection
-    if not trend_df.empty:
-        fake_type, fake_hint = detect_fake_breakout(
-            spot, 
-            supports_df.head(3)["strikePrice"].tolist()[0] if not supports_df.empty else None, 
-            resists_df.head(3)["strikePrice"].tolist()[0] if not resists_df.empty else None, 
-            trend_df
-        )
-        if fake_type:
-            st.warning(f"⚠️ **Fake Breakout Alert: {fake_type}**")
-            st.info(f"{fake_hint}")
-
-with col_insight2:
-    if nearest_sup and nearest_res:
-        risk_reward = (nearest_res["distance"] / nearest_sup["distance"]) if nearest_sup["distance"] > 0 else 0
-        st.metric("Risk:Reward Ratio", f"1:{risk_reward:.2f}")
-    
-    # Max Pain
-    if max_pain:
-        st.metric("Max Pain", f"₹{max_pain:,}")
-
-# Stop-loss Hint
-if not trend_df.empty:
-    stop_loss_hint = generate_stop_loss_hint(
-        spot, 
-        supports_df.head(3)["strikePrice"].tolist() if not supports_df.empty else [], 
-        resists_df.head(3)["strikePrice"].tolist() if not resists_df.empty else [], 
-        fake_type if 'fake_type' in locals() else None
-    )
-    st.markdown("### 🛡️ Stop-loss Hint")
-    st.info(stop_loss_hint)
-
-st.markdown("---")
-
 # ============================================
-# 📊 DETAILED DATA TABS
+# 📊 DETAILED DATA - SELLER VIEW
 # ============================================
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 All Strikes", "🔥 PCR Analysis", "🧮 Greeks View", "💾 Snapshots"])
+tab1, tab2, tab3 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR"])
 
 with tab1:
-    st.markdown("### Complete Strike Table with Seller Analysis")
-    display_cols = [
-        "strikePrice", "OI_CE", "Chg_OI_CE", "Vol_CE", "LTP_CE", 
-        "CE_Price_Delta", "CE_IV_Delta", "CE_Winding", "CE_Divergence",
-        "OI_PE", "Chg_OI_PE", "Vol_PE", "LTP_PE", 
-        "PE_Price_Delta", "PE_IV_Delta", "PE_Winding", "PE_Divergence",
-        "Interpretation", "Strength_Score"
+    st.markdown("### 📊 SELLER ACTIVITY BY STRIKE")
+    
+    seller_cols = [
+        "strikePrice", 
+        "OI_CE", "Chg_OI_CE", "CE_Seller_Action", "CE_Seller_Divergence",
+        "OI_PE", "Chg_OI_PE", "PE_Seller_Action", "PE_Seller_Divergence",
+        "Seller_Interpretation", "Seller_Strength_Score"
     ]
+    
     # Ensure all columns exist
-    for col in display_cols:
+    for col in seller_cols:
         if col not in merged.columns:
             merged[col] = ""
     
-    st.dataframe(merged[display_cols], use_container_width=True)
+    # Color code seller actions
+    def color_seller_action(val):
+        if "WRITING" in str(val):
+            if "CALL" in str(val):
+                return "background-color: #2e1a1a; color: #ff6666"
+            else:
+                return "background-color: #1a2e1a; color: #00ff88"
+        elif "BUYING BACK" in str(val):
+            if "CALL" in str(val):
+                return "background-color: #1a2e1a; color: #00ff88"
+            else:
+                return "background-color: #2e1a1a; color: #ff6666"
+        return ""
+    
+    seller_display = merged[seller_cols].copy()
+    styled_df = seller_display.style.applymap(color_seller_action, subset=["CE_Seller_Action", "PE_Seller_Action"])
+    st.dataframe(styled_df, use_container_width=True)
 
 with tab2:
-    st.markdown("### PCR & Score Analysis")
-    analysis_df = ranked_current[["strikePrice", "OI_CE", "OI_PE", "PCR", "support_score", "resistance_score"]].copy()
-    analysis_df["distance_from_spot"] = abs(analysis_df["strikePrice"] - spot)
-    st.dataframe(analysis_df.sort_values("distance_from_spot"), use_container_width=True)
+    st.markdown("### 🧮 SELLER GREEKS & GEX EXPOSURE")
     
-    # PCR Heatmap
-    st.markdown("### 🔥 PCR Heatmap")
-    pcr_heatmap = analysis_df[["strikePrice", "PCR"]].set_index("strikePrice")
-    def color_pcr(val):
-        try:
-            if val > 1.5:
-                return "background-color: #1a2e1a; color: #00ff88"
-            elif val > 1.0:
-                return "background-color: #2e2a1a; color: #ffcc44"
-            elif val > 0.5:
-                return "background-color: #1a1f2e; color: #66b3ff"
-            else:
-                return "background-color: #2e1a1a; color: #ff4444"
-        except:
-            return ""
-    st.dataframe(pcr_heatmap.style.applymap(color_pcr), use_container_width=True)
-
-with tab3:
-    st.markdown("### 🧮 GREEKS & GEX DETAILS")
     greeks_cols = [
-        "strikePrice", 
+        "strikePrice",
         "Delta_CE", "Gamma_CE", "Vega_CE", "Theta_CE", "GEX_CE",
         "Delta_PE", "Gamma_PE", "Vega_PE", "Theta_PE", "GEX_PE",
-        "GEX_Net", "Gamma_Pressure"
+        "GEX_Net", "Seller_Gamma_Pressure"
     ]
+    
     for col in greeks_cols:
         if col not in merged.columns:
             merged[col] = 0.0
     
     # Format Greek values
     greeks_display = merged[greeks_cols].copy()
-    for col in ["Delta_CE", "Delta_PE", "Gamma_CE", "Gamma_PE", "Vega_CE", "Vega_PE", "Theta_CE", "Theta_PE"]:
-        if col in greeks_display.columns:
-            greeks_display[col] = greeks_display[col].apply(lambda x: f"{x:.4f}")
     
-    st.dataframe(greeks_display, use_container_width=True)
+    # Color code GEX
+    def color_gex(val):
+        if val > 0:
+            return "background-color: #1a2e1a; color: #00ff88"
+        elif val < 0:
+            return "background-color: #2e1a1a; color: #ff6666"
+        return ""
+    
+    styled_greeks = greeks_display.style.applymap(color_gex, subset=["GEX_Net"])
+    st.dataframe(styled_greeks, use_container_width=True)
+    
+    # GEX Interpretation
+    st.markdown("#### 🎯 GEX INTERPRETATION (SELLER'S VIEW)")
+    if total_gex_net > 0:
+        st.success(f"**POSITIVE GEX (₹{int(total_gex_net):,}):** Sellers have POSITIVE gamma exposure. They're SHORT gamma and will BUY when price rises, SELL when price falls (stabilizing effect).")
+    elif total_gex_net < 0:
+        st.error(f"**NEGATIVE GEX (₹{int(total_gex_net):,}):** Sellers have NEGATIVE gamma exposure. They're LONG gamma and will SELL when price rises, BUY when price falls (destabilizing effect).")
+    else:
+        st.info("**NEUTRAL GEX:** Balanced seller gamma exposure.")
 
-with tab4:
-    st.markdown("### Snapshot Manager")
-    st.markdown(f"**Current IST:** {get_ist_datetime_str()}")
+with tab3:
+    st.markdown("### 📈 SELLER PCR ANALYSIS")
     
-    # Manual save buttons
-    col_man1, col_man2 = st.columns(2)
-    with col_man1:
-        if st.button("💾 Save PCR Snapshot"):
-            ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
-            if ok:
-                st.success(f"Saved: {get_ist_time_str()} IST")
-            else:
-                st.error(f"Failed: {msg}")
+    pcr_display_cols = ["strikePrice", "OI_CE", "OI_PE", "PCR", "Chg_OI_CE", "Chg_OI_PE", "seller_support_score", "seller_resistance_score"]
+    for col in pcr_display_cols:
+        if col not in ranked_current.columns:
+            ranked_current[col] = 0
     
-    with col_man2:
-        if st.button("📊 Save Time Snapshot (Current)"):
-            ok, msg = save_snapshot_to_supabase(merged, "manual", spot)
-            if ok:
-                st.success(f"Saved time snapshot")
-            else:
-                st.error(f"Failed: {msg}")
+    # Color PCR values
+    def color_pcr(val):
+        if val > 1.5:
+            return "background-color: #1a2e1a; color: #00ff88"
+        elif val > 1.0:
+            return "background-color: #2e2a1a; color: #ffcc44"
+        elif val > 0.5:
+            return "background-color: #1a1f2e; color: #66b3ff"
+        else:
+            return "background-color: #2e1a1a; color: #ff4444"
     
-    # Time window auto-save status
-    st.markdown("#### Time Window Auto-save Status")
-    today = get_ist_date_str()
-    for w_key, w_info in TIME_WINDOWS.items():
-        exists = supabase_snapshot_exists(today, w_key)
-        status = "✅ Saved" if exists else "⏳ Waiting"
-        st.write(f"{w_info['label']}: {status}")
+    pcr_display = ranked_current[pcr_display_cols].copy()
+    pcr_display["distance_from_spot"] = abs(pcr_display["strikePrice"] - spot)
     
-    # Trend analysis display
-    if not trend_df.empty:
-        st.markdown("#### Trend Analysis")
-        trend_display = trend_df.rename(columns={"OI_CE_now":"OI_CE","OI_PE_now":"OI_PE","PCR_now":"PCR"})
-        active = trend_display[trend_display["Trend"] != "Neutral"]
-        if not active.empty:
-            st.dataframe(active[["strikePrice","OI_CE","OI_PE","ΔOI_CE","ΔOI_PE","ΔPCR","Trend"]], use_container_width=True)
+    styled_pcr = pcr_display.style.applymap(color_pcr, subset=["PCR"])
+    st.dataframe(styled_pcr.sort_values("distance_from_spot"), use_container_width=True)
+    
+    # PCR Interpretation
+    avg_pcr = ranked_current["PCR"].replace([np.inf, -np.inf], np.nan).mean()
+    if not np.isnan(avg_pcr):
+        st.markdown(f"#### 🎯 AVERAGE PCR: {avg_pcr:.2f}")
+        if avg_pcr > 1.5:
+            st.success("**HIGH PCR (>1.5):** Heavy PUT selling relative to CALL selling. Sellers are BULLISH.")
+        elif avg_pcr > 1.0:
+            st.info("**MODERATE PCR (1.0-1.5):** More PUT selling than CALL selling. Sellers leaning BULLISH.")
+        elif avg_pcr > 0.5:
+            st.warning("**LOW PCR (0.5-1.0):** More CALL selling than PUT selling. Sellers leaning BEARISH.")
+        else:
+            st.error("**VERY LOW PCR (<0.5):** Heavy CALL selling relative to PUT selling. Sellers are BEARISH.")
+
+# ============================================
+# 🎯 TRADING INSIGHTS - SELLER PERSPECTIVE
+# ============================================
+st.markdown("---")
+st.markdown("## 💡 SELLER'S TRADING INSIGHTS")
+
+insight_col1, insight_col2 = st.columns(2)
+
+with insight_col1:
+    st.markdown("### 🎯 KEY OBSERVATIONS")
+    
+    # Max Pain insight
+    if seller_max_pain:
+        max_pain_insight = ""
+        if spot > seller_max_pain:
+            max_pain_insight = f"Spot ABOVE max pain (₹{seller_max_pain:,}). Sellers losing on CALLs, gaining on PUTs."
+        else:
+            max_pain_insight = f"Spot BELOW max pain (₹{seller_max_pain:,}). Sellers gaining on CALLs, losing on PUTs."
+        
+        st.info(f"**Max Pain:** {max_pain_insight}")
+    
+    # GEX insight
+    if total_gex_net > 0:
+        st.success("**Gamma Exposure:** Sellers SHORT gamma. Expect reduced volatility and mean reversion.")
+    elif total_gex_net < 0:
+        st.warning("**Gamma Exposure:** Sellers LONG gamma. Expect increased volatility and momentum moves.")
+    
+    # PCR insight
+    total_pcr = total_PE_OI / total_CE_OI if total_CE_OI > 0 else 0
+    if total_pcr > 1.5:
+        st.success(f"**Overall PCR ({total_pcr:.2f}):** Strong PUT selling dominance. Bullish seller conviction.")
+    elif total_pcr < 0.7:
+        st.error(f"**Overall PCR ({total_pcr:.2f}):** Strong CALL selling dominance. Bearish seller conviction.")
+
+with insight_col2:
+    st.markdown("### 🛡️ RISK MANAGEMENT")
+    
+    # Nearest levels insight
+    if nearest_sup and nearest_res:
+        risk_reward = (nearest_res["distance"] / nearest_sup["distance"]) if nearest_sup["distance"] > 0 else 0
+        
+        st.metric("Risk:Reward (Current Range)", f"1:{risk_reward:.2f}")
+        
+        # Stop loss suggestion
+        if seller_bias_result["bias"].startswith("BULLISH"):
+            stop_loss = f"Below seller support: ₹{nearest_sup['strike']:,}"
+            target = f"Seller resistance: ₹{nearest_res['strike']:,}"
+        elif seller_bias_result["bias"].startswith("BEARISH"):
+            stop_loss = f"Above seller resistance: ₹{nearest_res['strike']:,}"
+            target = f"Seller support: ₹{nearest_sup['strike']:,}"
+        else:
+            stop_loss = f"Range: ₹{nearest_sup['strike']:,} - ₹{nearest_res['strike']:,}"
+            target = "Wait for breakout"
+        
+        st.info(f"**Stop Loss:** {stop_loss}")
+        st.info(f"**Target:** {target}")
+
+# Final Seller Summary
+st.markdown("---")
+st.markdown(f"""
+<div class='seller-explanation'>
+    <h3>🎯 FINAL SELLER ASSESSMENT</h3>
+    <p><strong>Market Makers are telling us:</strong> {seller_bias_result["explanation"]}</p>
+    <p><strong>Their game plan:</strong> {seller_bias_result["action"]}</p>
+    <p><strong>Key defense levels:</strong> ₹{nearest_sup['strike'] if nearest_sup else 'N/A':,} (Support) | ₹{nearest_res['strike'] if nearest_res else 'N/A':,} (Resistance)</p>
+    <p><strong>Preferred price level:</strong> ₹{seller_max_pain if seller_max_pain else 'N/A':,} (Max Pain)</p>
+</div>
+""", unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")
-st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | 💾 Auto-save: {save_interval}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v4.0 — SELLER-CENTRIC LOGIC** | All rights reserved")
+st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
+st.caption("🎯 **NIFTY Option Screener v4.0 — 100% SELLER'S PERSPECTIVE** | Market Maker Logic Applied")
