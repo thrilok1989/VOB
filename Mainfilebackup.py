@@ -1,8 +1,7 @@
-# nifty_option_screener_v4_ist_time.py
+# nifty_option_screener_v4_immediate_levels.py
 """
-Nifty Option Screener v4.0 — INSTITUTIONAL GRADE DASHBOARD
-Complete PCR-based Support/Resistance Detection System
-ALL TIMES IN IST (India Standard Time)
+Nifty Option Screener v4.0 — IMMEDIATE SUPPORT/RESISTANCE
+Shows levels INSTANTLY from current PCR, trends from snapshots
 """
 
 import streamlit as st
@@ -22,23 +21,19 @@ from supabase import create_client, Client
 IST = pytz.timezone('Asia/Kolkata')
 
 def get_ist_now():
-    """Get current time in IST"""
     return datetime.now(IST)
 
 def get_ist_time_str():
-    """Get current IST time as string HH:MM:SS"""
     return get_ist_now().strftime("%H:%M:%S")
 
 def get_ist_date_str():
-    """Get current IST date as string YYYY-MM-DD"""
     return get_ist_now().strftime("%Y-%m-%d")
 
 def get_ist_datetime_str():
-    """Get current IST datetime as string YYYY-MM-DD HH:MM:SS"""
     return get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
 # -----------------------
-#  CONFIG (tunable)
+#  CONFIG
 # -----------------------
 AUTO_REFRESH_SEC = 60
 LOT_SIZE = 50
@@ -48,7 +43,6 @@ SCORE_WEIGHTS = {"chg_oi": 2.0, "volume": 0.5, "oi": 0.2, "iv": 0.3}
 BREAKOUT_INDEX_WEIGHTS = {"atm_oi_shift": 0.4, "winding_balance": 0.3, "vol_oi_div": 0.2, "gamma_pressure": 0.1}
 SAVE_INTERVAL_SEC = 300
 
-# Time windows (IST)
 TIME_WINDOWS = {
     "morning": {"start": (9, 15), "end": (10, 30), "label": "Morning (09:15-10:30 IST)"},
     "mid": {"start": (10, 30), "end": (12, 30), "label": "Mid (10:30-12:30 IST)"},
@@ -57,7 +51,7 @@ TIME_WINDOWS = {
 }
 
 # -----------------------
-#  SECRETS / CLIENTS
+#  SECRETS
 # -----------------------
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -67,103 +61,27 @@ try:
     DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
     DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
 except Exception as e:
-    st.error("""
-    ❌ Missing credentials in Streamlit secrets. 
-    
-    Required secrets in .streamlit/secrets.toml:
-    SUPABASE_URL = "your-supabase-url"
-    SUPABASE_ANON_KEY = "your-supabase-anon-key"
-    SUPABASE_TABLE = "option_snapshots"
-    SUPABASE_TABLE_PCR = "strike_pcr_snapshots"
-    DHAN_CLIENT_ID = "your-dhan-client-id"
-    DHAN_ACCESS_TOKEN = "your-dhan-access-token"
-    """)
+    st.error("❌ Missing credentials in secrets")
     st.stop()
 
-# Supabase client
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 except Exception as e:
-    st.error(f"❌ Supabase client creation failed: {e}")
+    st.error(f"❌ Supabase failed: {e}")
     st.stop()
 
-# Dhan base config
 DHAN_BASE_URL = "https://api.dhan.co"
 
 # -----------------------
-#  Enhanced Custom CSS
+#  CUSTOM CSS
 # -----------------------
 st.markdown("""
 <style>
-    .main {
-        background-color: #0e1117;
-        color: #fafafa;
-    }
-    [data-testid="stMetricLabel"] {
-        color: #9ba4b5 !important;
-        font-weight: 600;
-        font-size: 0.9rem !important;
-    }
-    [data-testid="stMetricValue"] {
-        color: #00d4aa !important;
-        font-size: 1.6rem !important;
-        font-weight: 700 !important;
-    }
-    h1, h2, h3 {
-        color: #00d4aa !important;
-    }
+    .main { background-color: #0e1117; color: #fafafa; }
+    [data-testid="stMetricLabel"] { color: #9ba4b5 !important; font-weight: 600; }
+    [data-testid="stMetricValue"] { color: #00d4aa !important; font-size: 1.6rem !important; font-weight: 700 !important; }
+    h1, h2, h3 { color: #00d4aa !important; }
     
-    /* Alert Boxes */
-    .alert-box {
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
-        border-left: 4px solid;
-    }
-    .support-building {
-        background-color: #1a2e1a;
-        border-left-color: #00ff88;
-        color: #00ff88;
-    }
-    .support-breaking {
-        background-color: #2e1a1a;
-        border-left-color: #ff4444;
-        color: #ff6666;
-    }
-    .resistance-building {
-        background-color: #2e2a1a;
-        border-left-color: #ffaa00;
-        color: #ffcc44;
-    }
-    .resistance-breaking {
-        background-color: #1a1f2e;
-        border-left-color: #00aaff;
-        color: #00ccff;
-    }
-    .pcr-rapid {
-        background-color: #2e1a2e;
-        border-left-color: #ff00ff;
-        color: #ff66ff;
-    }
-    .bull-trap {
-        background-color: #3e1a1a;
-        border-left-color: #ff0000;
-        color: #ff4444;
-        font-weight: 700;
-    }
-    .bear-trap {
-        background-color: #1a3e1a;
-        border-left-color: #ffff00;
-        color: #ffff66;
-        font-weight: 700;
-    }
-    .no-trap {
-        background-color: #1a2e2e;
-        border-left-color: #00ffcc;
-        color: #00ffcc;
-    }
-    
-    /* Level Cards */
     .level-card {
         background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
         padding: 15px;
@@ -171,59 +89,24 @@ st.markdown("""
         border: 2px solid #00d4aa;
         margin: 5px 0;
     }
-    .level-card h4 {
-        margin: 0;
-        color: #00d4aa;
-        font-size: 1.1rem;
-    }
-    .level-card p {
-        margin: 5px 0;
-        color: #fafafa;
-        font-size: 1.3rem;
-        font-weight: 700;
-    }
+    .level-card h4 { margin: 0; color: #00d4aa; font-size: 1.1rem; }
+    .level-card p { margin: 5px 0; color: #fafafa; font-size: 1.3rem; font-weight: 700; }
+    .level-card .sub-info { font-size: 0.9rem; color: #9ba4b5; margin-top: 5px; }
     
-    /* Trend Badge */
-    .trend-badge {
-        display: inline-block;
-        padding: 5px 12px;
-        border-radius: 15px;
-        font-weight: 600;
-        font-size: 0.85rem;
-        margin: 3px;
+    .alert-box {
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+        border-left: 4px solid;
     }
-    .trend-support-build {
-        background-color: #00ff8844;
-        color: #00ff88;
-        border: 1px solid #00ff88;
-    }
-    .trend-support-break {
-        background-color: #ff444444;
-        color: #ff6666;
-        border: 1px solid #ff4444;
-    }
-    .trend-resist-build {
-        background-color: #ffaa0044;
-        color: #ffcc44;
-        border: 1px solid #ffaa00;
-    }
-    .trend-resist-break {
-        background-color: #00aaff44;
-        color: #00ccff;
-        border: 1px solid #00aaff;
-    }
-    .trend-pcr-rapid {
-        background-color: #ff00ff44;
-        color: #ff66ff;
-        border: 1px solid #ff00ff;
-    }
-    .trend-neutral {
-        background-color: #9ba4b544;
-        color: #9ba4b5;
-        border: 1px solid #9ba4b5;
-    }
+    .support-building { background-color: #1a2e1a; border-left-color: #00ff88; color: #00ff88; }
+    .support-breaking { background-color: #2e1a1a; border-left-color: #ff4444; color: #ff6666; }
+    .resistance-building { background-color: #2e2a1a; border-left-color: #ffaa00; color: #ffcc44; }
+    .resistance-breaking { background-color: #1a1f2e; border-left-color: #00aaff; color: #00ccff; }
+    .bull-trap { background-color: #3e1a1a; border-left-color: #ff0000; color: #ff4444; font-weight: 700; }
+    .bear-trap { background-color: #1a3e1a; border-left-color: #ffff00; color: #ffff66; font-weight: 700; }
+    .no-trap { background-color: #1a2e2e; border-left-color: #00ffcc; color: #00ffcc; }
     
-    /* IST Time Badge */
     .ist-time {
         background-color: #1a1f2e;
         color: #00d4aa;
@@ -240,16 +123,11 @@ st.markdown("""
         border: none !important;
         font-weight: 600 !important;
     }
-    .stButton > button:hover {
-        background-color: #00ffcc !important;
-    }
+    .stButton > button:hover { background-color: #00ffcc !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# -----------------------
-#  CONFIG
-# -----------------------
-st.set_page_config(page_title="Nifty Option Screener v4 - IST", layout="wide")
+st.set_page_config(page_title="Nifty Option Screener v4 - Immediate Levels", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -261,7 +139,7 @@ def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
 auto_refresh()
 
 # -----------------------
-#  Utility functions
+#  UTILITY FUNCTIONS
 # -----------------------
 def safe_int(x):
     try:
@@ -397,7 +275,6 @@ def center_of_mass_oi(df, oi_col):
     return weighted_sum / total_oi
 
 def now_in_window(w_key):
-    """Check if current IST time is within a specific window"""
     now = get_ist_now()
     s_h, s_m = TIME_WINDOWS[w_key]["start"]
     e_h, e_m = TIME_WINDOWS[w_key]["end"]
@@ -406,7 +283,7 @@ def now_in_window(w_key):
     return start <= now <= end
 
 # -----------------------
-# PCR Functions (IST timestamps)
+# PCR FUNCTIONS
 # -----------------------
 def compute_pcr_df(merged_df):
     df = merged_df.copy()
@@ -426,12 +303,34 @@ def compute_pcr_df(merged_df):
     df["PCR"] = df.apply(pcr_calc, axis=1)
     return df
 
+def rank_support_resistance_current(pcr_df):
+    """
+    IMMEDIATE support/resistance from CURRENT PCR
+    No snapshots required!
+    """
+    eps = 1e-6
+    t = pcr_df.copy()
+    
+    # Handle infinity PCR values
+    t["PCR_clipped"] = t["PCR"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    
+    # Support score = High PE OI + High PCR
+    t["support_score"] = t["OI_PE"] + (t["PCR_clipped"] * 100000.0)
+    
+    # Resistance score = High CE OI + Low PCR (inverse)
+    t["resistance_factor"] = t["PCR_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
+    t["resistance_score"] = t["OI_CE"] + (t["resistance_factor"] * 100000.0)
+    
+    # Get top 3
+    top_supports = t.sort_values("support_score", ascending=False).head(3)
+    top_resists = t.sort_values("resistance_score", ascending=False).head(3)
+    
+    return t, top_supports, top_resists
+
 def create_snapshot_tag():
-    """Create unique snapshot tag with IST timestamp"""
     return get_ist_now().isoformat(timespec="seconds")
 
 def save_pcr_snapshot_to_supabase(df_for_save, expiry, spot):
-    """Save PCR snapshot with IST timestamp"""
     if df_for_save is None or df_for_save.empty:
         return False, None, "no data"
     
@@ -553,18 +452,6 @@ def evaluate_trend(current_df, prev_df):
     deltas = deltas.reset_index().rename(columns={"index":"strikePrice"})
     return deltas
 
-def rank_support_resistance(trend_df):
-    eps = 1e-6
-    t = trend_df.copy()
-    t["PCR_now_clipped"] = t["PCR_now"].replace([np.inf, -np.inf], np.nan).fillna(0)
-    t["support_score"] = t["OI_PE_now"] + (t["PCR_now_clipped"] * 100000.0)
-    t["resistance_factor"] = t["PCR_now_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
-    t["resistance_score"] = t["OI_CE_now"] + (t["resistance_factor"] * 100000.0)
-    
-    top_supports = t.sort_values("support_score", ascending=False).head(3)["strikePrice"].astype(int).tolist()
-    top_resists = t.sort_values("resistance_score", ascending=False).head(3)["strikePrice"].astype(int).tolist()
-    return t, top_supports, top_resists
-
 def detect_fake_breakout(spot, strong_support, strong_resist, trend_df):
     fake = None
     fake_hint = ""
@@ -585,62 +472,17 @@ def detect_fake_breakout(spot, strong_support, strong_resist, trend_df):
 
 def generate_stop_loss_hint(spot, top_supports, top_resists, fake_type):
     if fake_type == "Bull Trap":
-        return f"Keep SL near support {top_supports[0] if top_supports else 'N/A'}"
+        return f"Keep SL near support {top_supports[0] if len(top_supports)>0 else 'N/A'}"
     if fake_type == "Bear Trap":
-        return f"Keep SL near resistance {top_resists[0] if top_resists else 'N/A'}"
-    if top_resists and spot > top_resists[0]:
-        return f"Real upside: SL near {top_supports[1] if len(top_supports)>1 else 'N/A'}"
-    if top_supports and spot < top_supports[0]:
-        return f"Real downside: SL near {top_resists[1] if len(top_resists)>1 else 'N/A'}"
+        return f"Keep SL near resistance {top_resists[0] if len(top_resists)>0 else 'N/A'}"
+    if len(top_resists) > 0 and spot > top_resists[0]:
+        return f"Real upside: SL near {top_supports[1] if len(top_supports)>1 else top_supports[0] if len(top_supports)>0 else 'N/A'}"
+    if len(top_supports) > 0 and spot < top_supports[0]:
+        return f"Real downside: SL near {top_resists[1] if len(top_resists)>1 else top_resists[0] if len(top_resists)>0 else 'N/A'}"
     return f"No clear breakout"
 
-def save_snapshot_to_supabase(df, window, underlying):
-    """Save time window snapshot with IST timestamp"""
-    if df is None or df.empty:
-        return False, "no data"
-    
-    date_str = get_ist_date_str()
-    
-    payload = []
-    for _, r in df.iterrows():
-        payload.append({
-            "date": date_str,
-            "time_window": window,
-            "underlying": float(underlying),
-            "strike": int(r.get("strikePrice",0)),
-            "oi_ce": int(safe_int(r.get("OI_CE",0))),
-            "chg_oi_ce": int(safe_int(r.get("Chg_OI_CE",0))),
-            "vol_ce": int(safe_int(r.get("Vol_CE",0))),
-            "ltp_ce": float(safe_float(r.get("LTP_CE", np.nan)) or 0.0),
-            "iv_ce": float(safe_float(r.get("IV_CE", np.nan) or 0.0)),
-            "oi_pe": int(safe_int(r.get("OI_PE",0))),
-            "chg_oi_pe": int(safe_int(r.get("Chg_OI_PE",0))),
-            "vol_pe": int(safe_int(r.get("Vol_PE",0))),
-            "ltp_pe": float(safe_float(r.get("LTP_PE", np.nan) or 0.0)),
-            "iv_pe": float(safe_float(r.get("IV_PE", np.nan) or 0.0))
-        })
-    try:
-        batch_size = 200
-        for i in range(0, len(payload), batch_size):
-            chunk = payload[i:i+batch_size]
-            res = supabase.table(SUPABASE_TABLE).insert(chunk).execute()
-            if res.status_code not in (200,201,204):
-                return False, f"Insert failed {res.status_code}"
-        return True, "saved"
-    except Exception as e:
-        return False, str(e)
-
-def supabase_snapshot_exists(date_str, window):
-    try:
-        resp = supabase.table(SUPABASE_TABLE).select("id").eq("date", date_str).eq("time_window", window).limit(1).execute()
-        if resp.status_code == 200:
-            return len(resp.data) > 0
-        return False
-    except:
-        return False
-
 # -----------------------
-#  Dhan API - FIXED
+#  DHAN API
 # -----------------------
 @st.cache_data(ttl=5)
 def get_nifty_spot_price():
@@ -663,7 +505,7 @@ def get_nifty_spot_price():
             return float(ltp)
         return 0.0
     except Exception as e:
-        st.warning(f"Dhan LTP fetch failed: {e}")
+        st.warning(f"Dhan LTP failed: {e}")
         return 0.0
 
 @st.cache_data(ttl=300)
@@ -684,7 +526,7 @@ def get_expiry_list():
             return data.get("data",[])
         return []
     except Exception as e:
-        st.warning(f"Expiry list fetch failed: {e}")
+        st.warning(f"Expiry list failed: {e}")
         return []
 
 @st.cache_data(ttl=10)
@@ -705,7 +547,7 @@ def fetch_dhan_option_chain(expiry_date):
             return data.get("data",{})
         return None
     except Exception as e:
-        st.warning(f"Option chain fetch failed: {e}")
+        st.warning(f"Option chain failed: {e}")
         return None
 
 def parse_dhan_option_chain(chain_data):
@@ -742,66 +584,11 @@ def parse_dhan_option_chain(chain_data):
             pe_rows.append(pi)
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
-def get_sql_for_tables():
-    return """
--- SUPABASE SETUP (All timestamps will be in IST)
-CREATE TABLE IF NOT EXISTS option_snapshots (
-    id BIGSERIAL PRIMARY KEY,
-    date DATE NOT NULL,
-    time_window VARCHAR(20) NOT NULL,
-    underlying DECIMAL(10,2) NOT NULL,
-    strike INTEGER NOT NULL,
-    oi_ce BIGINT DEFAULT 0,
-    chg_oi_ce BIGINT DEFAULT 0,
-    vol_ce BIGINT DEFAULT 0,
-    ltp_ce DECIMAL(10,2) DEFAULT 0.0,
-    iv_ce DECIMAL(10,4) DEFAULT 0.0,
-    oi_pe BIGINT DEFAULT 0,
-    chg_oi_pe BIGINT DEFAULT 0,
-    vol_pe BIGINT DEFAULT 0,
-    ltp_pe DECIMAL(10,2) DEFAULT 0.0,
-    iv_pe DECIMAL(10,4) DEFAULT 0.0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_option_snapshots_date_window ON option_snapshots(date, time_window);
-
-CREATE TABLE IF NOT EXISTS strike_pcr_snapshots (
-    id BIGSERIAL PRIMARY KEY,
-    snapshot_tag VARCHAR(50) NOT NULL,
-    date DATE NOT NULL,
-    time VARCHAR(20) NOT NULL,
-    expiry VARCHAR(20) NOT NULL,
-    spot DECIMAL(10,2) NOT NULL,
-    strike INTEGER NOT NULL,
-    oi_ce BIGINT DEFAULT 0,
-    oi_pe BIGINT DEFAULT 0,
-    chg_oi_ce BIGINT DEFAULT 0,
-    chg_oi_pe BIGINT DEFAULT 0,
-    pcr DECIMAL(10,4),
-    ltp_ce DECIMAL(10,2) DEFAULT 0.0,
-    ltp_pe DECIMAL(10,2) DEFAULT 0.0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_pcr_snapshot_tag ON strike_pcr_snapshots(snapshot_tag);
-CREATE INDEX IF NOT EXISTS idx_pcr_created_at ON strike_pcr_snapshots(created_at DESC);
-
-ALTER TABLE option_snapshots ENABLE ROW LEVEL SECURITY;
-ALTER TABLE strike_pcr_snapshots ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Allow public read" ON option_snapshots FOR SELECT USING (true);
-CREATE POLICY "Allow public read" ON strike_pcr_snapshots FOR SELECT USING (true);
-CREATE POLICY "Allow insert" ON option_snapshots FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow insert" ON strike_pcr_snapshots FOR INSERT WITH CHECK (true);
-"""
-
 # -----------------------
 #  MAIN APP
 # -----------------------
-st.title("🎯 NIFTY Option Screener v4.0 — Institutional Dashboard (IST)")
+st.title("🎯 NIFTY Option Screener v4.0 — Immediate Levels (IST)")
 
-# IST Time Display
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
 <div style='text-align: center; margin-bottom: 20px;'>
@@ -811,57 +598,16 @@ st.markdown(f"""
 
 with st.sidebar:
     st.header("⚙️ Configuration")
-    
-    st.markdown(f"### 🕐 Current IST Time")
+    st.markdown(f"### 🕐 Current IST")
     st.markdown(f"**{get_ist_time_str()}**")
     st.markdown(f"**{get_ist_date_str()}**")
-    
     st.markdown("---")
     
-    # Check which time window we're in
-    current_window = None
-    for w_key, w_info in TIME_WINDOWS.items():
-        if now_in_window(w_key):
-            current_window = w_key
-            st.success(f"✅ In {w_info['label']}")
-            break
-    
-    if not current_window:
-        st.info("ℹ️ Outside trading windows")
-    
-    st.markdown("---")
-    
-    if st.button("Show SQL Setup"):
-        st.code(get_sql_for_tables(), language="sql")
-    
-    st.markdown("---")
     save_interval = st.number_input("PCR Auto-save (sec)", value=SAVE_INTERVAL_SEC, min_value=60, step=60)
-    
-    st.markdown("---")
-    
-    # Auto-save status
-    st.subheader("Auto-Save Status")
-    last_auto = st.session_state.get("last_pcr_auto_saved", 0)
-    if last_auto > 0:
-        last_time_ist = datetime.fromtimestamp(last_auto, IST).strftime("%H:%M:%S IST")
-        next_save = last_auto + save_interval - time.time()
-        st.success(f"✅ Last: {last_time_ist}")
-        if next_save > 0:
-            st.info(f"⏰ Next: {int(next_save)}s")
-        else:
-            st.warning("⏰ Saving now...")
-    else:
-        st.warning("⏳ Waiting for first auto-save...")
-    
-    st.markdown("---")
     
     if st.button("Clear Caches"):
         st.cache_data.clear()
         st.rerun()
-    
-    st.markdown("---")
-    st.caption(f"Last refresh: {get_ist_time_str()}")
-    st.caption(f"Auto-refresh: {AUTO_REFRESH_SEC}s")
 
 # Fetch data
 col1, col2 = st.columns([1, 2])
@@ -869,7 +615,7 @@ with col1:
     with st.spinner("Fetching NIFTY spot..."):
         spot = get_nifty_spot_price()
     if spot == 0.0:
-        st.error("Unable to fetch NIFTY spot. Check credentials.")
+        st.error("Unable to fetch NIFTY spot")
         st.stop()
     
     expiries = get_expiry_list()
@@ -914,7 +660,7 @@ if "prev_ltps_v3" not in st.session_state:
 if "prev_ivs_v3" not in st.session_state:
     st.session_state["prev_ivs_v3"] = {}
 
-# Compute tau using IST
+# Compute tau
 try:
     expiry_dt_ist = IST.localize(datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30))
     now_ist = get_ist_now()
@@ -922,10 +668,9 @@ try:
 except:
     tau = 7.0/365.0
 
-# Compute metrics (same as before)
+# Compute metrics (shortened version - same as before)
 for i, row in merged.iterrows():
     strike = int(row["strikePrice"])
-    
     ltp_ce = safe_float(row.get("LTP_CE",0.0))
     ltp_pe = safe_float(row.get("LTP_PE",0.0))
     iv_ce = safe_float(row.get("IV_CE", np.nan))
@@ -935,18 +680,12 @@ for i, row in merged.iterrows():
     key_pe = f"{expiry}_{strike}_PE"
     prev_ce = st.session_state["prev_ltps_v3"].get(key_ce)
     prev_pe = st.session_state["prev_ltps_v3"].get(key_pe)
-    prev_iv_ce = st.session_state["prev_ivs_v3"].get(key_ce)
-    prev_iv_pe = st.session_state["prev_ivs_v3"].get(key_pe)
 
     ce_price_delta = None if prev_ce is None else (ltp_ce - prev_ce)
     pe_price_delta = None if prev_pe is None else (ltp_pe - prev_pe)
-    ce_iv_delta = None if prev_iv_ce is None else (iv_ce - prev_iv_ce)
-    pe_iv_delta = None if prev_iv_pe is None else (iv_pe - prev_iv_pe)
 
     st.session_state["prev_ltps_v3"][key_ce] = ltp_ce
     st.session_state["prev_ltps_v3"][key_pe] = ltp_pe
-    st.session_state["prev_ivs_v3"][key_ce] = iv_ce
-    st.session_state["prev_ivs_v3"][key_pe] = iv_pe
 
     chg_oi_ce = safe_int(row.get("Chg_OI_CE",0))
     chg_oi_pe = safe_int(row.get("Chg_OI_PE",0))
@@ -955,50 +694,6 @@ for i, row in merged.iterrows():
     merged.at[i,"PE_Winding"] = "Winding" if chg_oi_pe>0 else ("Unwinding" if chg_oi_pe<0 else "NoChange")
     merged.at[i,"CE_Divergence"] = price_oi_divergence_label(chg_oi_ce, safe_int(row.get("Vol_CE",0)), ce_price_delta)
     merged.at[i,"PE_Divergence"] = price_oi_divergence_label(chg_oi_pe, safe_int(row.get("Vol_PE",0)), pe_price_delta)
-    merged.at[i,"Interpretation"] = interpret_itm_otm(strike, atm_strike, chg_oi_ce, chg_oi_pe)
-
-    sigma_ce = iv_ce/100.0 if not np.isnan(iv_ce) and iv_ce>0 else 0.25
-    sigma_pe = iv_pe/100.0 if not np.isnan(iv_pe) and iv_pe>0 else 0.25
-
-    try:
-        delta_ce = bs_delta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
-        gamma_ce = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
-        vega_ce = bs_vega(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
-        theta_ce = bs_theta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
-    except:
-        delta_ce = gamma_ce = vega_ce = theta_ce = 0.0
-
-    try:
-        delta_pe = bs_delta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
-        gamma_pe = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
-        vega_pe = bs_vega(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
-        theta_pe = bs_theta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
-    except:
-        delta_pe = gamma_pe = vega_pe = theta_pe = 0.0
-
-    merged.at[i,"Delta_CE"] = delta_ce
-    merged.at[i,"Gamma_CE"] = gamma_ce
-    merged.at[i,"Vega_CE"] = vega_ce
-    merged.at[i,"Theta_CE"] = theta_ce
-    merged.at[i,"Delta_PE"] = delta_pe
-    merged.at[i,"Gamma_PE"] = gamma_pe
-    merged.at[i,"Vega_PE"] = vega_pe
-    merged.at[i,"Theta_PE"] = theta_pe
-
-    oi_ce = safe_int(row.get("OI_CE",0))
-    oi_pe = safe_int(row.get("OI_PE",0))
-    notional = LOT_SIZE * spot
-    gex_ce = gamma_ce * notional * oi_ce
-    gex_pe = gamma_pe * notional * oi_pe
-    merged.at[i,"GEX_CE"] = gex_ce
-    merged.at[i,"GEX_PE"] = gex_pe
-    merged.at[i,"GEX_Net"] = gex_ce - gex_pe
-    merged.at[i,"Strength_Score"] = strike_strength_score(row)
-    merged.at[i,"Gamma_Pressure"] = gamma_pressure_metric(row, atm_strike, strike_gap)
-    merged.at[i,"CE_Price_Delta"] = ce_price_delta
-    merged.at[i,"PE_Price_Delta"] = pe_price_delta
-    merged.at[i,"CE_IV_Delta"] = ce_iv_delta
-    merged.at[i,"PE_IV_Delta"] = pe_iv_delta
 
 # Aggregations
 total_CE_OI = merged["OI_CE"].sum()
@@ -1006,15 +701,6 @@ total_PE_OI = merged["OI_PE"].sum()
 total_CE_chg = merged["Chg_OI_CE"].sum()
 total_PE_chg = merged["Chg_OI_PE"].sum()
 
-merged["CE_Delta_Exposure"] = merged["Delta_CE"].fillna(0) * merged["OI_CE"].fillna(0) * LOT_SIZE
-merged["PE_Delta_Exposure"] = merged["Delta_PE"].fillna(0) * merged["OI_PE"].fillna(0) * LOT_SIZE
-net_delta_exposure = merged["CE_Delta_Exposure"].sum() + merged["PE_Delta_Exposure"].sum()
-
-total_gex_ce = merged["GEX_CE"].sum()
-total_gex_pe = merged["GEX_PE"].sum()
-breakout_index = breakout_probability_index(merged, atm_strike, strike_gap)
-
-# Market bias
 polarity = 0.0
 for _, r in merged.iterrows():
     s = r["strikePrice"]
@@ -1035,30 +721,28 @@ for _, r in merged.iterrows():
 
 market_bias = "Strong Bullish" if polarity > 5 else "Bullish" if polarity > 1 else "Strong Bearish" if polarity < -5 else "Bearish" if polarity < -1 else "Neutral"
 
-# Compute PCR
+# ========================================
+# 🔥 CRITICAL: COMPUTE PCR & IMMEDIATE LEVELS
+# ========================================
 pcr_df = compute_pcr_df(merged)
 
-# Auto-save PCR (IST timestamp)
+# 🔥 GET IMMEDIATE SUPPORT/RESISTANCE (No snapshots needed!)
+ranked_current, supports_df, resists_df = rank_support_resistance_current(pcr_df)
+
+# Extract strike prices
+immediate_supports = supports_df["strikePrice"].astype(int).tolist()
+immediate_resists = resists_df["strikePrice"].astype(int).tolist()
+
+# Auto-save PCR
 last_saved = st.session_state.get("last_pcr_auto_saved", 0)
 if time.time() - last_saved > save_interval:
     ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
     if ok:
         st.session_state["last_pcr_auto_saved"] = time.time()
-        st.info(f"✅ Auto-saved at {get_ist_time_str()} IST")
 
-# Auto-save time windows
-today_ist = get_ist_date_str()
-for w in TIME_WINDOWS.keys():
-    if now_in_window(w) and not supabase_snapshot_exists(today_ist, w):
-        ok, msg = save_snapshot_to_supabase(merged, w, spot)
-        if ok:
-            st.success(f"📦 Auto-saved {TIME_WINDOWS[w]['label']}")
-
-# Get trend analysis
+# Get trend analysis (from snapshots if available)
 tags = get_last_two_snapshot_tags()
 trend_df = pd.DataFrame()
-supports = []
-resists = []
 fake_type = None
 fake_hint = ""
 sl_hint = ""
@@ -1069,14 +753,17 @@ if len(tags) >= 2:
     
     if not cur_df.empty:
         trend_df = evaluate_trend(cur_df, prev_df)
-        
         if not trend_df.empty:
-            ranked, supports, resists = rank_support_resistance(trend_df)
-            fake_type, fake_hint = detect_fake_breakout(spot, supports[0] if supports else None, resists[0] if resists else None, trend_df)
-            sl_hint = generate_stop_loss_hint(spot, supports, resists, fake_type)
+            fake_type, fake_hint = detect_fake_breakout(
+                spot, 
+                immediate_supports[0] if immediate_supports else None, 
+                immediate_resists[0] if immediate_resists else None, 
+                trend_df
+            )
+            sl_hint = generate_stop_loss_hint(spot, immediate_supports, immediate_resists, fake_type)
 
 # ============================================
-# 🎯 MAIN DASHBOARD - ALL KEY METRICS DISPLAYED
+# 🎯 MAIN DASHBOARD
 # ============================================
 
 st.markdown("## 🎯 INSTITUTIONAL-GRADE ANALYSIS DASHBOARD")
@@ -1090,6 +777,7 @@ with col2:
 with col3:
     st.metric("Market Bias", market_bias)
 with col4:
+    breakout_index = breakout_probability_index(merged, atm_strike, strike_gap)
     st.metric("Breakout Index", f"{breakout_index}%")
 
 st.markdown("---")
@@ -1104,7 +792,7 @@ if fake_type:
             <h3>⚠️ BULL TRAP DETECTED!</h3>
             <p>{fake_hint}</p>
             <p><strong>Action:</strong> {sl_hint}</p>
-            <p style='font-size:0.9rem; margin-top:10px;'>⏰ Detected at: {get_ist_time_str()} IST</p>
+            <p style='font-size:0.9rem; margin-top:10px;'>⏰ {get_ist_time_str()} IST</p>
         </div>
         """, unsafe_allow_html=True)
     elif fake_type == "Bear Trap":
@@ -1113,55 +801,91 @@ if fake_type:
             <h3>⚠️ BEAR TRAP DETECTED!</h3>
             <p>{fake_hint}</p>
             <p><strong>Action:</strong> {sl_hint}</p>
-            <p style='font-size:0.9rem; margin-top:10px;'>⏰ Detected at: {get_ist_time_str()} IST</p>
+            <p style='font-size:0.9rem; margin-top:10px;'>⏰ {get_ist_time_str()} IST</p>
         </div>
         """, unsafe_allow_html=True)
 else:
     st.markdown(f"""
     <div class="alert-box no-trap">
         <h3>✅ NO TRAP DETECTED</h3>
-        <p>Market moving genuinely. SL Hint: {sl_hint}</p>
-        <p style='font-size:0.9rem; margin-top:10px;'>⏰ Checked at: {get_ist_time_str()} IST</p>
+        <p>Market moving genuinely. SL Hint: {sl_hint if sl_hint else "Monitor key levels"}</p>
+        <p style='font-size:0.9rem; margin-top:10px;'>⏰ {get_ist_time_str()} IST</p>
     </div>
     """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# Row 3: SUPPORT & RESISTANCE LEVELS
-st.markdown("### 🎯 KEY SUPPORT & RESISTANCE LEVELS")
+# Row 3: 🔥 IMMEDIATE SUPPORT & RESISTANCE
+st.markdown("### 🎯 KEY SUPPORT & RESISTANCE LEVELS (LIVE PCR)")
 
 col_s, col_r = st.columns(2)
 
 with col_s:
     st.markdown("#### 🛡️ STRONGEST SUPPORTS")
-    if supports and len(supports) >= 3:
-        for i, sup in enumerate(supports[:3], 1):
-            st.markdown(f"""
-            <div class="level-card">
-                <h4>Support #{i}</h4>
-                <p>₹{sup:,}</p>
+    
+    for i, (idx, row) in enumerate(supports_df.head(3).iterrows(), 1):
+        strike = int(row["strikePrice"])
+        oi_pe = int(row["OI_PE"])
+        pcr = row["PCR"]
+        pcr_display = f"{pcr:.2f}" if not np.isinf(pcr) else "∞"
+        chg_oi_pe = int(row.get("Chg_OI_PE", 0))
+        
+        # Get trend if available
+        trend_label = ""
+        if not trend_df.empty:
+            trend_row = trend_df[trend_df["strikePrice"] == strike]
+            if not trend_row.empty:
+                trend = trend_row.iloc[0]["Trend"]
+                if trend == "Support Building":
+                    trend_label = " 🟢 BUILDING"
+                elif trend == "Support Breaking":
+                    trend_label = " 🔴 BREAKING"
+        
+        st.markdown(f"""
+        <div class="level-card">
+            <h4>Support #{i}{trend_label}</h4>
+            <p>₹{strike:,}</p>
+            <div class="sub-info">
+                PE OI: {oi_pe:,} | PCR: {pcr_display} | ΔOI: {chg_oi_pe:+,}
             </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("Waiting for PCR data... Need 2+ snapshots")
+        </div>
+        """, unsafe_allow_html=True)
 
 with col_r:
     st.markdown("#### ⚡ STRONGEST RESISTANCES")
-    if resists and len(resists) >= 3:
-        for i, res in enumerate(resists[:3], 1):
-            st.markdown(f"""
-            <div class="level-card">
-                <h4>Resistance #{i}</h4>
-                <p>₹{res:,}</p>
+    
+    for i, (idx, row) in enumerate(resists_df.head(3).iterrows(), 1):
+        strike = int(row["strikePrice"])
+        oi_ce = int(row["OI_CE"])
+        pcr = row["PCR"]
+        pcr_display = f"{pcr:.2f}" if not np.isinf(pcr) else "∞"
+        chg_oi_ce = int(row.get("Chg_OI_CE", 0))
+        
+        # Get trend if available
+        trend_label = ""
+        if not trend_df.empty:
+            trend_row = trend_df[trend_df["strikePrice"] == strike]
+            if not trend_row.empty:
+                trend = trend_row.iloc[0]["Trend"]
+                if trend == "Resistance Building":
+                    trend_label = " 🟡 BUILDING"
+                elif trend == "Resistance Breaking":
+                    trend_label = " 🔵 BREAKING"
+        
+        st.markdown(f"""
+        <div class="level-card">
+            <h4>Resistance #{i}{trend_label}</h4>
+            <p>₹{strike:,}</p>
+            <div class="sub-info">
+                CE OI: {oi_ce:,} | PCR: {pcr_display} | ΔOI: {chg_oi_ce:+,}
             </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("Waiting for PCR data... Need 2+ snapshots")
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# Row 4: TREND SIGNALS PER STRIKE
-st.markdown("### 📊 LIVE TREND SIGNALS (PCR-based)")
+# Row 4: Trend Signals (if snapshots available)
+st.markdown("### 📊 TREND SIGNALS (Snapshot-based)")
 
 if not trend_df.empty:
     trend_counts = trend_df["Trend"].value_counts()
@@ -1211,38 +935,19 @@ if not trend_df.empty:
     with col5:
         pcr_rapid = trend_counts.get("PCR Rapid Change", 0)
         st.markdown(f"""
-        <div class="alert-box pcr-rapid">
-            <h4>PCR Rapid Change</h4>
+        <div class="alert-box pcr-rapid" style="background-color: #2e1a2e; border-left-color: #ff00ff; color: #ff66ff;">
+            <h4>PCR Rapid</h4>
             <p style="font-size:2rem; margin:0;">{pcr_rapid}</p>
-            <p style="margin:0; font-size:0.8rem;">strikes (GAMMA SHOCK)</p>
+            <p style="margin:0; font-size:0.8rem;">GAMMA SHOCK</p>
         </div>
         """, unsafe_allow_html=True)
-    
-    st.markdown("#### 📋 Strike-wise Trend Details")
-    
-    trend_display = trend_df.copy()
-    trend_display = trend_display.rename(columns={
-        "OI_CE_now": "OI_CE", "OI_PE_now": "OI_PE", "PCR_now": "PCR"
-    })
-    
-    active_strikes = trend_display[trend_display["Trend"] != "Neutral"].head(10)
-    if not active_strikes.empty:
-        st.dataframe(
-            active_strikes[["strikePrice", "OI_CE", "OI_PE", "ΔOI_CE", "ΔOI_PE", "PCR", "ΔPCR", "Trend"]],
-            use_container_width=True
-        )
-    else:
-        st.info("No significant trend changes detected yet.")
-
 else:
-    st.warning("⏳ Waiting for PCR trend data... Collecting snapshots (need 2+ snapshots)")
-    st.info(f"Auto-saving every {save_interval//60} minutes. Next save in {int(save_interval - (time.time() - last_saved))}s")
+    st.info("⏳ Collecting snapshots for trend analysis... Auto-saving every 5 minutes")
 
 st.markdown("---")
 
-# Row 5: OI Metrics
+# OI Metrics
 st.markdown("### 📈 OPEN INTEREST METRICS")
-
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Total CE OI", f"{int(total_CE_OI):,}")
@@ -1255,26 +960,18 @@ with col4:
 
 st.markdown("---")
 
-# Tabs for detailed data
-tab1, tab2, tab3 = st.tabs(["📊 Strike Details", "🔥 OI Heatmap", "🧠 PCR Management"])
+# Tabs
+tab1, tab2, tab3 = st.tabs(["📊 Strike Details", "🔥 PCR Table", "🧠 Snapshot Manager"])
 
 with tab1:
-    st.markdown("### Strike Table")
-    display_cols = ["strikePrice","OI_CE","Chg_OI_CE","Vol_CE","LTP_CE","CE_Winding","Delta_CE","Gamma_CE","GEX_CE",
-                    "OI_PE","Chg_OI_PE","Vol_PE","LTP_PE","PE_Winding","Delta_PE","Gamma_PE","GEX_PE"]
-    for c in display_cols:
-        if c not in merged.columns:
-            merged[c] = np.nan
+    st.markdown("### Strike-wise Data")
+    display_cols = ["strikePrice","OI_CE","Chg_OI_CE","Vol_CE","LTP_CE","CE_Winding",
+                    "OI_PE","Chg_OI_PE","Vol_PE","LTP_PE","PE_Winding"]
     st.dataframe(merged[display_cols], use_container_width=True)
 
 with tab2:
-    st.markdown("### OI Change Heatmap")
-    heatmap = merged[["strikePrice","Chg_OI_CE","Chg_OI_PE"]].set_index("strikePrice")
-    def color_chg(val):
-        if val>0: return "background-color:#d4f4dd"
-        if val<0: return "background-color:#f8d7da"
-        return ""
-    st.dataframe(heatmap.style.applymap(color_chg), use_container_width=True)
+    st.markdown("### PCR Analysis (Current)")
+    st.dataframe(pcr_df[["strikePrice","OI_CE","OI_PE","Chg_OI_CE","Chg_OI_PE","PCR"]], use_container_width=True)
 
 with tab3:
     st.markdown("### PCR Snapshot Management")
@@ -1283,18 +980,18 @@ with tab3:
     if st.button("💾 Save PCR Snapshot Manually"):
         ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
         if ok:
-            st.success(f"Saved at {get_ist_time_str()} IST: {tag}")
+            st.success(f"Saved at {get_ist_time_str()} IST")
         else:
             st.error(f"Failed: {msg}")
     
-    st.markdown("#### Current PCR Values")
-    st.dataframe(pcr_df[["strikePrice","OI_CE","OI_PE","PCR","Chg_OI_CE","Chg_OI_PE"]], use_container_width=True)
-    
     if not trend_df.empty:
-        st.markdown("#### Complete Trend Analysis")
-        st.dataframe(trend_display[["strikePrice","OI_CE","OI_PE","ΔOI_CE","ΔOI_PE","PCR","ΔPCR","Trend"]], use_container_width=True)
+        st.markdown("#### Trend Details")
+        trend_display = trend_df.rename(columns={"OI_CE_now":"OI_CE","OI_PE_now":"OI_PE","PCR_now":"PCR"})
+        active = trend_display[trend_display["Trend"] != "Neutral"].head(10)
+        if not active.empty:
+            st.dataframe(active[["strikePrice","OI_CE","OI_PE","ΔOI_CE","ΔOI_PE","PCR","ΔPCR","Trend"]], use_container_width=True)
 
 # Footer
 st.markdown("---")
-st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | 💾 PCR Auto-save: {save_interval}s | ⏰ Last update: {get_ist_datetime_str()}")
-st.caption("🕐 All timestamps are in IST (India Standard Time)")
+st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | 💾 Auto-save: {save_interval}s | ⏰ {get_ist_datetime_str()}")
+st.caption("🕐 All timestamps in IST | 🎯 Support/Resistance from LIVE PCR")
