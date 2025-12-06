@@ -410,12 +410,18 @@ def seller_breakout_probability_index(merged_df, atm, strike_gap):
     seller_atm_bias = atm_pe_build - atm_ce_build  # Positive = bullish sellers
     atm_score = min(abs(seller_atm_bias)/50000.0, 1.0)
     
-    # SELLER winding/unwinding balance
-    winding_count = (merged_df[["CE_Winding","PE_Winding"]]=="Winding").sum().sum()
-    unwinding_count = (merged_df[["CE_Winding","PE_Winding"]]=="Unwinding").sum().sum()
+    # SELLER winding/unwinding balance using seller action columns
+    ce_writing_count = (merged_df["CE_Seller_Action"] == "WRITING").sum()
+    pe_writing_count = (merged_df["PE_Seller_Action"] == "WRITING").sum()
+    ce_buying_back_count = (merged_df["CE_Seller_Action"] == "BUYING BACK").sum()
+    pe_buying_back_count = (merged_df["PE_Seller_Action"] == "BUYING BACK").sum()
     
-    # SELLER LOGIC: More winding = More selling = Higher conviction
-    seller_conviction = winding_count/(winding_count+unwinding_count) if (winding_count+unwinding_count)>0 else 0.5
+    # SELLER LOGIC: More writing = Higher conviction
+    total_actions = ce_writing_count + pe_writing_count + ce_buying_back_count + pe_buying_back_count
+    if total_actions > 0:
+        seller_conviction = (ce_writing_count + pe_writing_count) / total_actions
+    else:
+        seller_conviction = 0.5
     
     # SELLER volume-OI activity
     vol_oi_scores = (merged_df[["Vol_CE","Vol_PE"]].sum(axis=1) * merged_df[["Chg_OI_CE","Chg_OI_PE"]].abs().sum(axis=1)).fillna(0)
