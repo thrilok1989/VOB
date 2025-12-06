@@ -1,7 +1,8 @@
-# nifty_option_screener_v4_enhanced_dashboard.py
+# nifty_option_screener_v4_ist_time.py
 """
 Nifty Option Screener v4.0 — INSTITUTIONAL GRADE DASHBOARD
 Complete PCR-based Support/Resistance Detection System
+ALL TIMES IN IST (India Standard Time)
 """
 
 import streamlit as st
@@ -10,9 +11,31 @@ import numpy as np
 import requests
 import time
 from datetime import datetime, timedelta
+import pytz
 from math import log, sqrt
 from scipy.stats import norm
 from supabase import create_client, Client
+
+# -----------------------
+#  IST TIMEZONE SETUP
+# -----------------------
+IST = pytz.timezone('Asia/Kolkata')
+
+def get_ist_now():
+    """Get current time in IST"""
+    return datetime.now(IST)
+
+def get_ist_time_str():
+    """Get current IST time as string HH:MM:SS"""
+    return get_ist_now().strftime("%H:%M:%S")
+
+def get_ist_date_str():
+    """Get current IST date as string YYYY-MM-DD"""
+    return get_ist_now().strftime("%Y-%m-%d")
+
+def get_ist_datetime_str():
+    """Get current IST datetime as string YYYY-MM-DD HH:MM:SS"""
+    return get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
 # -----------------------
 #  CONFIG (tunable)
@@ -25,12 +48,12 @@ SCORE_WEIGHTS = {"chg_oi": 2.0, "volume": 0.5, "oi": 0.2, "iv": 0.3}
 BREAKOUT_INDEX_WEIGHTS = {"atm_oi_shift": 0.4, "winding_balance": 0.3, "vol_oi_div": 0.2, "gamma_pressure": 0.1}
 SAVE_INTERVAL_SEC = 300
 
-# Time windows
+# Time windows (IST)
 TIME_WINDOWS = {
-    "morning": {"start": (9, 15), "end": (10, 30), "label": "Morning (09:15-10:30)"},
-    "mid": {"start": (10, 30), "end": (12, 30), "label": "Mid (10:30-12:30)"},
-    "afternoon": {"start": (14, 0), "end": (15, 30), "label": "Afternoon (14:00-15:30)"},
-    "evening": {"start": (15, 0), "end": (15, 30), "label": "Evening (15:00-15:30)"}
+    "morning": {"start": (9, 15), "end": (10, 30), "label": "Morning (09:15-10:30 IST)"},
+    "mid": {"start": (10, 30), "end": (12, 30), "label": "Mid (10:30-12:30 IST)"},
+    "afternoon": {"start": (14, 0), "end": (15, 30), "label": "Afternoon (14:00-15:30 IST)"},
+    "evening": {"start": (15, 0), "end": (15, 30), "label": "Evening (15:00-15:30 IST)"}
 }
 
 # -----------------------
@@ -200,6 +223,17 @@ st.markdown("""
         border: 1px solid #9ba4b5;
     }
     
+    /* IST Time Badge */
+    .ist-time {
+        background-color: #1a1f2e;
+        color: #00d4aa;
+        padding: 8px 15px;
+        border-radius: 20px;
+        border: 2px solid #00d4aa;
+        font-weight: 700;
+        font-size: 1.1rem;
+    }
+    
     .stButton > button {
         background-color: #00d4aa !important;
         color: #0e1117 !important;
@@ -215,7 +249,7 @@ st.markdown("""
 # -----------------------
 #  CONFIG
 # -----------------------
-st.set_page_config(page_title="Nifty Option Screener v4 - Institutional Dashboard", layout="wide")
+st.set_page_config(page_title="Nifty Option Screener v4 - IST", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -362,8 +396,17 @@ def center_of_mass_oi(df, oi_col):
     weighted_sum = (df["strikePrice"] * df[oi_col]).sum()
     return weighted_sum / total_oi
 
+def now_in_window(w_key):
+    """Check if current IST time is within a specific window"""
+    now = get_ist_now()
+    s_h, s_m = TIME_WINDOWS[w_key]["start"]
+    e_h, e_m = TIME_WINDOWS[w_key]["end"]
+    start = now.replace(hour=s_h, minute=s_m, second=0, microsecond=0)
+    end = now.replace(hour=e_h, minute=e_m, second=0, microsecond=0)
+    return start <= now <= end
+
 # -----------------------
-# PCR Functions
+# PCR Functions (IST timestamps)
 # -----------------------
 def compute_pcr_df(merged_df):
     df = merged_df.copy()
@@ -384,14 +427,18 @@ def compute_pcr_df(merged_df):
     return df
 
 def create_snapshot_tag():
-    return datetime.utcnow().isoformat(timespec="seconds")
+    """Create unique snapshot tag with IST timestamp"""
+    return get_ist_now().isoformat(timespec="seconds")
 
 def save_pcr_snapshot_to_supabase(df_for_save, expiry, spot):
+    """Save PCR snapshot with IST timestamp"""
     if df_for_save is None or df_for_save.empty:
         return False, None, "no data"
+    
     snapshot_tag = create_snapshot_tag()
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    time_str = datetime.now().strftime("%H:%M:%S")
+    date_str = get_ist_date_str()
+    time_str = get_ist_time_str()
+    
     payload = []
     for _, r in df_for_save.iterrows():
         payload.append({
@@ -547,6 +594,51 @@ def generate_stop_loss_hint(spot, top_supports, top_resists, fake_type):
         return f"Real downside: SL near {top_resists[1] if len(top_resists)>1 else 'N/A'}"
     return f"No clear breakout"
 
+def save_snapshot_to_supabase(df, window, underlying):
+    """Save time window snapshot with IST timestamp"""
+    if df is None or df.empty:
+        return False, "no data"
+    
+    date_str = get_ist_date_str()
+    
+    payload = []
+    for _, r in df.iterrows():
+        payload.append({
+            "date": date_str,
+            "time_window": window,
+            "underlying": float(underlying),
+            "strike": int(r.get("strikePrice",0)),
+            "oi_ce": int(safe_int(r.get("OI_CE",0))),
+            "chg_oi_ce": int(safe_int(r.get("Chg_OI_CE",0))),
+            "vol_ce": int(safe_int(r.get("Vol_CE",0))),
+            "ltp_ce": float(safe_float(r.get("LTP_CE", np.nan)) or 0.0),
+            "iv_ce": float(safe_float(r.get("IV_CE", np.nan) or 0.0)),
+            "oi_pe": int(safe_int(r.get("OI_PE",0))),
+            "chg_oi_pe": int(safe_int(r.get("Chg_OI_PE",0))),
+            "vol_pe": int(safe_int(r.get("Vol_PE",0))),
+            "ltp_pe": float(safe_float(r.get("LTP_PE", np.nan) or 0.0)),
+            "iv_pe": float(safe_float(r.get("IV_PE", np.nan) or 0.0))
+        })
+    try:
+        batch_size = 200
+        for i in range(0, len(payload), batch_size):
+            chunk = payload[i:i+batch_size]
+            res = supabase.table(SUPABASE_TABLE).insert(chunk).execute()
+            if res.status_code not in (200,201,204):
+                return False, f"Insert failed {res.status_code}"
+        return True, "saved"
+    except Exception as e:
+        return False, str(e)
+
+def supabase_snapshot_exists(date_str, window):
+    try:
+        resp = supabase.table(SUPABASE_TABLE).select("id").eq("date", date_str).eq("time_window", window).limit(1).execute()
+        if resp.status_code == 200:
+            return len(resp.data) > 0
+        return False
+    except:
+        return False
+
 # -----------------------
 #  Dhan API - FIXED
 # -----------------------
@@ -652,7 +744,7 @@ def parse_dhan_option_chain(chain_data):
 
 def get_sql_for_tables():
     return """
--- SUPABASE SETUP
+-- SUPABASE SETUP (All timestamps will be in IST)
 CREATE TABLE IF NOT EXISTS option_snapshots (
     id BIGSERIAL PRIMARY KEY,
     date DATE NOT NULL,
@@ -707,10 +799,37 @@ CREATE POLICY "Allow insert" ON strike_pcr_snapshots FOR INSERT WITH CHECK (true
 # -----------------------
 #  MAIN APP
 # -----------------------
-st.title("🎯 NIFTY Option Screener v4.0 — Institutional Dashboard")
+st.title("🎯 NIFTY Option Screener v4.0 — Institutional Dashboard (IST)")
+
+# IST Time Display
+current_ist = get_ist_datetime_str()
+st.markdown(f"""
+<div style='text-align: center; margin-bottom: 20px;'>
+    <span class='ist-time'>🕐 IST: {current_ist}</span>
+</div>
+""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("⚙️ Configuration")
+    
+    st.markdown(f"### 🕐 Current IST Time")
+    st.markdown(f"**{get_ist_time_str()}**")
+    st.markdown(f"**{get_ist_date_str()}**")
+    
+    st.markdown("---")
+    
+    # Check which time window we're in
+    current_window = None
+    for w_key, w_info in TIME_WINDOWS.items():
+        if now_in_window(w_key):
+            current_window = w_key
+            st.success(f"✅ In {w_info['label']}")
+            break
+    
+    if not current_window:
+        st.info("ℹ️ Outside trading windows")
+    
+    st.markdown("---")
     
     if st.button("Show SQL Setup"):
         st.code(get_sql_for_tables(), language="sql")
@@ -718,12 +837,30 @@ with st.sidebar:
     st.markdown("---")
     save_interval = st.number_input("PCR Auto-save (sec)", value=SAVE_INTERVAL_SEC, min_value=60, step=60)
     
+    st.markdown("---")
+    
+    # Auto-save status
+    st.subheader("Auto-Save Status")
+    last_auto = st.session_state.get("last_pcr_auto_saved", 0)
+    if last_auto > 0:
+        last_time_ist = datetime.fromtimestamp(last_auto, IST).strftime("%H:%M:%S IST")
+        next_save = last_auto + save_interval - time.time()
+        st.success(f"✅ Last: {last_time_ist}")
+        if next_save > 0:
+            st.info(f"⏰ Next: {int(next_save)}s")
+        else:
+            st.warning("⏰ Saving now...")
+    else:
+        st.warning("⏳ Waiting for first auto-save...")
+    
+    st.markdown("---")
+    
     if st.button("Clear Caches"):
         st.cache_data.clear()
         st.rerun()
     
     st.markdown("---")
-    st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
+    st.caption(f"Last refresh: {get_ist_time_str()}")
     st.caption(f"Auto-refresh: {AUTO_REFRESH_SEC}s")
 
 # Fetch data
@@ -777,14 +914,15 @@ if "prev_ltps_v3" not in st.session_state:
 if "prev_ivs_v3" not in st.session_state:
     st.session_state["prev_ivs_v3"] = {}
 
-# Compute tau
+# Compute tau using IST
 try:
-    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
-    tau = max((expiry_dt - datetime.now()).total_seconds() / (365.25*24*3600), 1/365.25)
+    expiry_dt_ist = IST.localize(datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30))
+    now_ist = get_ist_now()
+    tau = max((expiry_dt_ist - now_ist).total_seconds() / (365.25*24*3600), 1/365.25)
 except:
     tau = 7.0/365.0
 
-# Compute metrics
+# Compute metrics (same as before)
 for i, row in merged.iterrows():
     strike = int(row["strikePrice"])
     
@@ -900,12 +1038,21 @@ market_bias = "Strong Bullish" if polarity > 5 else "Bullish" if polarity > 1 el
 # Compute PCR
 pcr_df = compute_pcr_df(merged)
 
-# Auto-save PCR
+# Auto-save PCR (IST timestamp)
 last_saved = st.session_state.get("last_pcr_auto_saved", 0)
 if time.time() - last_saved > save_interval:
     ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
     if ok:
         st.session_state["last_pcr_auto_saved"] = time.time()
+        st.info(f"✅ Auto-saved at {get_ist_time_str()} IST")
+
+# Auto-save time windows
+today_ist = get_ist_date_str()
+for w in TIME_WINDOWS.keys():
+    if now_in_window(w) and not supabase_snapshot_exists(today_ist, w):
+        ok, msg = save_snapshot_to_supabase(merged, w, spot)
+        if ok:
+            st.success(f"📦 Auto-saved {TIME_WINDOWS[w]['label']}")
 
 # Get trend analysis
 tags = get_last_two_snapshot_tags()
@@ -947,7 +1094,7 @@ with col4:
 
 st.markdown("---")
 
-# Row 2: TRAP DETECTION - Most Critical Alert
+# Row 2: TRAP DETECTION
 st.markdown("### 🚨 TRAP & BREAKOUT DETECTION")
 
 if fake_type:
@@ -957,6 +1104,7 @@ if fake_type:
             <h3>⚠️ BULL TRAP DETECTED!</h3>
             <p>{fake_hint}</p>
             <p><strong>Action:</strong> {sl_hint}</p>
+            <p style='font-size:0.9rem; margin-top:10px;'>⏰ Detected at: {get_ist_time_str()} IST</p>
         </div>
         """, unsafe_allow_html=True)
     elif fake_type == "Bear Trap":
@@ -965,6 +1113,7 @@ if fake_type:
             <h3>⚠️ BEAR TRAP DETECTED!</h3>
             <p>{fake_hint}</p>
             <p><strong>Action:</strong> {sl_hint}</p>
+            <p style='font-size:0.9rem; margin-top:10px;'>⏰ Detected at: {get_ist_time_str()} IST</p>
         </div>
         """, unsafe_allow_html=True)
 else:
@@ -972,6 +1121,7 @@ else:
     <div class="alert-box no-trap">
         <h3>✅ NO TRAP DETECTED</h3>
         <p>Market moving genuinely. SL Hint: {sl_hint}</p>
+        <p style='font-size:0.9rem; margin-top:10px;'>⏰ Checked at: {get_ist_time_str()} IST</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1014,10 +1164,8 @@ st.markdown("---")
 st.markdown("### 📊 LIVE TREND SIGNALS (PCR-based)")
 
 if not trend_df.empty:
-    # Count trends
     trend_counts = trend_df["Trend"].value_counts()
     
-    # Display trend summary
     col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
@@ -1070,7 +1218,6 @@ if not trend_df.empty:
         </div>
         """, unsafe_allow_html=True)
     
-    # Strike-wise trend table with badges
     st.markdown("#### 📋 Strike-wise Trend Details")
     
     trend_display = trend_df.copy()
@@ -1078,20 +1225,6 @@ if not trend_df.empty:
         "OI_CE_now": "OI_CE", "OI_PE_now": "OI_PE", "PCR_now": "PCR"
     })
     
-    # Add trend badges in HTML
-    def trend_badge(trend):
-        badge_map = {
-            "Support Building": "trend-support-build",
-            "Support Breaking": "trend-support-break",
-            "Resistance Building": "trend-resist-build",
-            "Resistance Breaking": "trend-resist-break",
-            "PCR Rapid Change": "trend-pcr-rapid",
-            "Neutral": "trend-neutral"
-        }
-        css_class = badge_map.get(trend, "trend-neutral")
-        return f'<span class="trend-badge {css_class}">{trend}</span>'
-    
-    # Display top 10 most active strikes
     active_strikes = trend_display[trend_display["Trend"] != "Neutral"].head(10)
     if not active_strikes.empty:
         st.dataframe(
@@ -1103,7 +1236,7 @@ if not trend_df.empty:
 
 else:
     st.warning("⏳ Waiting for PCR trend data... Collecting snapshots (need 2+ snapshots)")
-    st.info("Auto-saving every 5 minutes. Manual save available in tabs below.")
+    st.info(f"Auto-saving every {save_interval//60} minutes. Next save in {int(save_interval - (time.time() - last_saved))}s")
 
 st.markdown("---")
 
@@ -1145,11 +1278,12 @@ with tab2:
 
 with tab3:
     st.markdown("### PCR Snapshot Management")
+    st.markdown(f"**Current IST:** {get_ist_datetime_str()}")
     
     if st.button("💾 Save PCR Snapshot Manually"):
         ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
         if ok:
-            st.success(f"Saved: {tag}")
+            st.success(f"Saved at {get_ist_time_str()} IST: {tag}")
         else:
             st.error(f"Failed: {msg}")
     
@@ -1162,4 +1296,5 @@ with tab3:
 
 # Footer
 st.markdown("---")
-st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | 💾 PCR Auto-save: {save_interval}s | ⏰ Last update: {datetime.now().strftime('%H:%M:%S')}")
+st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | 💾 PCR Auto-save: {save_interval}s | ⏰ Last update: {get_ist_datetime_str()}")
+st.caption("🕐 All timestamps are in IST (India Standard Time)")
