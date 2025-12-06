@@ -1382,22 +1382,31 @@ with tab3:
         if col not in ranked_current.columns:
             ranked_current[col] = 0
     
-    # Color PCR values
-    def color_pcr(val):
-        if val > 1.5:
-            return "background-color: #1a2e1a; color: #00ff88"
-        elif val > 1.0:
-            return "background-color: #2e2a1a; color: #ffcc44"
-        elif val > 0.5:
-            return "background-color: #1a1f2e; color: #66b3ff"
-        else:
-            return "background-color: #2e1a1a; color: #ff4444"
-    
+    # Create display dataframe
     pcr_display = ranked_current[pcr_display_cols].copy()
     pcr_display["distance_from_spot"] = abs(pcr_display["strikePrice"] - spot)
     
+    # Sort by distance_from_spot BEFORE applying style
+    pcr_display = pcr_display.sort_values("distance_from_spot")
+    
+    # Color PCR values
+    def color_pcr(val):
+        if isinstance(val, (int, float)):
+            if val > 1.5:
+                return "background-color: #1a2e1a; color: #00ff88"
+            elif val > 1.0:
+                return "background-color: #2e2a1a; color: #ffcc44"
+            elif val > 0.5:
+                return "background-color: #1a1f2e; color: #66b3ff"
+            elif val <= 0.5:
+                return "background-color: #2e1a1a; color: #ff4444"
+        return ""
+    
+    # Apply style to already sorted dataframe
     styled_pcr = pcr_display.style.applymap(color_pcr, subset=["PCR"])
-    st.dataframe(styled_pcr.sort_values("distance_from_spot"), use_container_width=True)
+    
+    # Display without sorting again
+    st.dataframe(styled_pcr, use_container_width=True)
     
     # PCR Interpretation
     avg_pcr = ranked_current["PCR"].replace([np.inf, -np.inf], np.nan).mean()
