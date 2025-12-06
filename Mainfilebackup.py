@@ -88,7 +88,7 @@ NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
 
 # -----------------------
-#  Helpers: auto-refresh
+#  Helpers: auto-refresh - UPDATED
 # -----------------------
 st.set_page_config(page_title="Nifty Option Screener v4 (Dhan + Supabase)", layout="wide")
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
@@ -96,7 +96,7 @@ def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
         st.session_state["last_refresh"] = time.time()
     if time.time() - st.session_state["last_refresh"] > interval_sec:
         st.session_state["last_refresh"] = time.time()
-        st.experimental_rerun()
+        st.rerun()  # Updated for Streamlit >= 1.28.0
 auto_refresh()
 
 # -----------------------
@@ -808,12 +808,12 @@ with st.sidebar:
     st.subheader("App Controls")
     if st.button("Clear Caches"):
         st.cache_data.clear()
-        st.experimental_rerun()
+        st.rerun()  # Updated
     
     if st.button("Reset Session State"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        st.experimental_rerun()
+        st.rerun()  # Updated
     
     # Display current stats if available
     try:
