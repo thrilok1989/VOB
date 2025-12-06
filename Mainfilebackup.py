@@ -3,10 +3,6 @@
 Nifty Option Screener v4.0 — DhanHQ + Supabase
 Enhanced with PCR features, trend analysis, support/resistance ranking
 
-Author: Your Name
-Date: 2024
-GitHub: https://github.com/yourusername/nifty-option-screener
-
 Features:
  - ATM ± 8 strikes
  - Winding / Unwinding (CE/PE)
@@ -43,7 +39,7 @@ BREAKOUT_INDEX_WEIGHTS = {"atm_oi_shift": 0.4, "winding_balance": 0.3, "vol_oi_d
 SAVE_INTERVAL_SEC = 300  # auto-save interval for PCR snapshots
 DEFAULT_CE_OI_FLOOR = 1  # avoid division by zero for PCR calc
 
-# Time windows (your requested Afternoon 14:00-15:30)
+# Time windows
 TIME_WINDOWS = {
     "morning": {"start": (9, 15), "end": (10, 30), "label": "Morning (09:15-10:30)"},
     "mid": {"start": (10, 30), "end": (12, 30), "label": "Mid (10:30-12:30)"},
@@ -68,8 +64,8 @@ except Exception as e:
     Required secrets in .streamlit/secrets.toml:
     SUPABASE_URL = "your-supabase-url"
     SUPABASE_ANON_KEY = "your-supabase-anon-key"
-    SUPABASE_TABLE = "option_snapshots" (optional)
-    SUPABASE_TABLE_PCR = "strike_pcr_snapshots" (optional)
+    SUPABASE_TABLE = "option_snapshots"
+    SUPABASE_TABLE_PCR = "strike_pcr_snapshots"
     DHAN_CLIENT_ID = "your-dhan-client-id"
     DHAN_ACCESS_TOKEN = "your-dhan-access-token"
     """)
@@ -88,15 +84,111 @@ NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
 
 # -----------------------
-#  Helpers: auto-refresh - UPDATED
+#  Custom CSS for better UI colors
+# -----------------------
+st.markdown("""
+<style>
+    /* Main background */
+    .main {
+        background-color: #0e1117;
+        color: #fafafa;
+    }
+    
+    /* Metric labels */
+    [data-testid="stMetricLabel"] {
+        color: #9ba4b5 !important;
+        font-weight: 600;
+    }
+    
+    /* Metric values */
+    [data-testid="stMetricValue"] {
+        color: #00d4aa !important;
+        font-size: 1.8rem !important;
+    }
+    
+    /* Headers */
+    h1, h2, h3 {
+        color: #00d4aa !important;
+    }
+    
+    /* Info boxes */
+    .stAlert > div {
+        background-color: #1a1f2e !important;
+        border: 1px solid #00d4aa !important;
+        color: #fafafa !important;
+    }
+    
+    /* Success boxes */
+    .stSuccess > div {
+        background-color: #1a2e1a !important;
+        border: 1px solid #00d4aa !important;
+    }
+    
+    /* Warning boxes */
+    .stWarning > div {
+        background-color: #2e2a1a !important;
+        border: 1px solid #ffa500 !important;
+    }
+    
+    /* Error boxes */
+    .stError > div {
+        background-color: #2e1a1a !important;
+        border: 1px solid #ff4b4b !important;
+    }
+    
+    /* Dataframe */
+    .dataframe {
+        color: #fafafa !important;
+        background-color: #1a1f2e !important;
+    }
+    
+    /* Buttons */
+    .stButton > button {
+        background-color: #00d4aa !important;
+        color: #0e1117 !important;
+        border: none !important;
+        font-weight: 600 !important;
+    }
+    
+    .stButton > button:hover {
+        background-color: #00ffcc !important;
+        border: 1px solid #00ffcc !important;
+    }
+    
+    /* Selectbox */
+    .stSelectbox > div > div {
+        background-color: #1a1f2e !important;
+        color: #fafafa !important;
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: #1a1f2e !important;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        color: #9ba4b5 !important;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        color: #00d4aa !important;
+        border-bottom-color: #00d4aa !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# -----------------------
+#  Helpers: auto-refresh
 # -----------------------
 st.set_page_config(page_title="Nifty Option Screener v4 (Dhan + Supabase)", layout="wide")
+
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
         st.session_state["last_refresh"] = time.time()
     if time.time() - st.session_state["last_refresh"] > interval_sec:
         st.session_state["last_refresh"] = time.time()
-        st.rerun()  # Updated for Streamlit >= 1.28.0
+        st.rerun()
+
 auto_refresh()
 
 # -----------------------
@@ -365,10 +457,7 @@ def fetch_pcr_snapshot_by_tag(tag):
         return pd.DataFrame()
 
 def evaluate_trend(current_df, prev_df):
-    """
-    Evaluate trend with labels: 'Support Building', 'Support Breaking', 
-    'Resistance Building', 'Resistance Breaking', 'Neutral'
-    """
+    """Evaluate trend with labels"""
     if current_df is None or current_df.empty:
         return pd.DataFrame()
     current = current_df.set_index("strikePrice")
@@ -413,10 +502,7 @@ def evaluate_trend(current_df, prev_df):
     return deltas
 
 def rank_support_resistance(trend_df):
-    """
-    Rank supports and resistances using PCR + OI scores
-    Returns: ranked_df, top_supports, top_resists
-    """
+    """Rank supports and resistances using PCR + OI scores"""
     eps = 1e-6
     t = trend_df.copy()
     t["PCR_now_clipped"] = t["PCR_now"].replace([np.inf, -np.inf], np.nan).fillna(0)
@@ -460,7 +546,7 @@ def generate_stop_loss_hint(spot, top_supports, top_resists, fake_type):
     return f"No clear breakout — SL inside range between {top_supports[1] if len(top_supports)>1 else 'N/A'} and {top_resists[1] if len(top_resists)>1 else 'N/A'}"
 
 # -----------------------
-#  Dhan API helpers
+#  Dhan API helpers - FIXED
 # -----------------------
 @st.cache_data(ttl=5)
 def get_nifty_spot_price():
@@ -468,10 +554,10 @@ def get_nifty_spot_price():
         url = f"{DHAN_BASE_URL}/v2/marketfeed/ltp"
         payload = {"IDX_I": ["13"]}
         headers = {
-            "Accept":"application/json",
-            "Content-Type":"application/json",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
             "access-token": DHAN_ACCESS_TOKEN,
-            "client-id": DHAN_CLIENT_ID
+            "client-id": DHAN_CLIENT_ID  # Fixed: lowercase 'client-id'
         }
         r = requests.post(url, json=payload, headers=headers, timeout=10)
         r.raise_for_status()
@@ -490,7 +576,12 @@ def get_expiry_list():
     try:
         url = f"{DHAN_BASE_URL}/v2/optionchain/expirylist"
         payload = {"UnderlyingScrip":13,"UnderlyingSeg":"IDX_I"}
-        headers = {"Accept":"application/json","Content-Type":"application/json","access-token":DHAN_ACCESS_TOKEN,"client-id":DHAN_CLIENT_ID}
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "access-token": DHAN_ACCESS_TOKEN,
+            "client-id": DHAN_CLIENT_ID  # Fixed: lowercase 'client-id'
+        }
         r = requests.post(url, json=payload, headers=headers, timeout=10)
         r.raise_for_status()
         data = r.json()
@@ -506,7 +597,12 @@ def fetch_dhan_option_chain(expiry_date):
     try:
         url = f"{DHAN_BASE_URL}/v2/optionchain"
         payload = {"UnderlyingScrip":13,"UnderlyingSeg":"IDX_I","Expiry":expiry_date}
-        headers = {"Accept":"application/json","Content-Type":"application/json","access-token":DHAN_ACCESS_TOKEN,"client-id":DHAN_CLIENT_ID}
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "access-token": DHAN_ACCESS_TOKEN,
+            "client-id": DHAN_CLIENT_ID  # Fixed: lowercase 'client-id'
+        }
         r = requests.post(url, json=payload, headers=headers, timeout=15)
         r.raise_for_status()
         data = r.json()
@@ -554,11 +650,10 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
-#  Supabase snapshot helpers - UPDATED for time_window column
+#  Supabase snapshot helpers
 # -----------------------
 def supabase_snapshot_exists(date_str, window):
     try:
-        # Changed to use time_window instead of window (reserved keyword)
         resp = supabase.table(SUPABASE_TABLE).select("id").eq("date", date_str).eq("time_window", window).limit(1).execute()
         if resp.status_code == 200:
             data = resp.data
@@ -569,16 +664,15 @@ def supabase_snapshot_exists(date_str, window):
         return False
 
 def save_snapshot_to_supabase(df, window, underlying):
-    """Insert rows (one per strike) into supabase table with date & time_window."""
+    """Insert rows into supabase table"""
     if df is None or df.empty:
         return False, "no data"
     date_str = datetime.now().strftime("%Y-%m-%d")
     payload = []
-    # limit to relevant cols
     for _, r in df.iterrows():
         payload.append({
             "date": date_str,
-            "time_window": window,  # Changed from "window" to "time_window"
+            "time_window": window,
             "underlying": float(underlying),
             "strike": int(r.get("strikePrice",0)),
             "oi_ce": int(safe_int(r.get("OI_CE",0))),
@@ -593,7 +687,6 @@ def save_snapshot_to_supabase(df, window, underlying):
             "iv_pe": float(safe_float(r.get("IV_PE", np.nan) or 0.0))
         })
     try:
-        # Insert in batches to avoid huge single payload if many strikes
         batch_size = 200
         for i in range(0, len(payload), batch_size):
             chunk = payload[i:i+batch_size]
@@ -605,28 +698,24 @@ def save_snapshot_to_supabase(df, window, underlying):
         return False, str(e)
 
 def fetch_snapshot_from_supabase(date_str, window):
-    """Return a pandas DataFrame for requested date/time_window or None"""
+    """Return a pandas DataFrame for requested date/time_window"""
     try:
-        # Changed to use time_window instead of window
         resp = supabase.table(SUPABASE_TABLE).select("*").eq("date", date_str).eq("time_window", window).execute()
         if resp.status_code == 200:
             rows = resp.data
             if not rows:
                 return pd.DataFrame()
             df = pd.DataFrame(rows)
-            # normalize column names - include time_window
             expected = ["strike","oi_ce","chg_oi_ce","vol_ce","ltp_ce","iv_ce","oi_pe","chg_oi_pe","vol_pe","ltp_pe","iv_pe","underlying","time_window"]
             for col in expected:
                 if col not in df.columns:
                     df[col] = np.nan
-            # Rename time_window back to window for app compatibility
             df = df.rename(columns={
                 "strike":"strikePrice",
-                "time_window":"window",  # Rename back to window for app
+                "time_window":"window",
                 "oi_ce":"OI_CE","chg_oi_ce":"Chg_OI_CE","vol_ce":"Vol_CE","ltp_ce":"LTP_CE","iv_ce":"IV_CE",
                 "oi_pe":"OI_PE","chg_oi_pe":"Chg_OI_PE","vol_pe":"Vol_PE","ltp_pe":"LTP_PE","iv_pe":"IV_PE"
             })
-            # cast numeric
             for c in ["strikePrice","OI_CE","Chg_OI_CE","Vol_CE","LTP_CE","IV_CE","OI_PE","Chg_OI_PE","Vol_PE","LTP_PE","IV_PE"]:
                 if c in df.columns:
                     df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -649,7 +738,6 @@ def compare_snapshots_df(old_df, new_df):
     cols = ["OI_CE","Chg_OI_CE","Vol_CE","LTP_CE","IV_CE","OI_PE","Chg_OI_PE","Vol_PE","LTP_PE","IV_PE"]
     diff = (new[cols] - old[cols]).reset_index()
     diff.columns = ["strikePrice"] + [f"Δ{c}" for c in cols]
-    # add absolute change for sorting
     diff["abs_change"] = diff[[f"ΔChg_OI_CE", f"ΔChg_OI_PE"]].abs().sum(axis=1)
     return diff.sort_values("abs_change", ascending=False).reset_index(drop=True)
 
@@ -675,12 +763,11 @@ def bias_score_from_summary(summary):
     return score
 
 # -----------------------
-#  Supabase Database Setup Functions
+#  Database Setup Functions
 # -----------------------
 def create_tables_if_not_exist():
-    """Check if tables exist, provide SQL for manual creation if needed"""
+    """Check if tables exist"""
     try:
-        # Try to fetch from both tables
         res1 = supabase.table(SUPABASE_TABLE).select("id").limit(1).execute()
         res2 = supabase.table(SUPABASE_TABLE_PCR).select("id").limit(1).execute()
         
@@ -695,12 +782,10 @@ def create_tables_if_not_exist():
         return False
 
 def get_sql_for_tables():
-    """Return SQL commands to create the required tables"""
+    """Return SQL commands to create required tables"""
     return """
--- ============================================
 -- SUPABASE TABLES SETUP FOR NIFTY OPTION SCREENER
 -- Run these SQL commands in Supabase SQL Editor
--- ============================================
 
 -- Table 1: option_snapshots (for time-window snapshots)
 CREATE TABLE IF NOT EXISTS option_snapshots (
@@ -722,10 +807,7 @@ CREATE TABLE IF NOT EXISTS option_snapshots (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Index for faster queries
 CREATE INDEX IF NOT EXISTS idx_option_snapshots_date_window ON option_snapshots(date, time_window);
-CREATE INDEX IF NOT EXISTS idx_option_snapshots_date ON option_snapshots(date);
-CREATE INDEX IF NOT EXISTS idx_option_snapshots_strike ON option_snapshots(strike);
 
 -- Table 2: strike_pcr_snapshots (for PCR batch snapshots)
 CREATE TABLE IF NOT EXISTS strike_pcr_snapshots (
@@ -746,28 +828,18 @@ CREATE TABLE IF NOT EXISTS strike_pcr_snapshots (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Indexes for PCR table
 CREATE INDEX IF NOT EXISTS idx_pcr_snapshot_tag ON strike_pcr_snapshots(snapshot_tag);
-CREATE INDEX IF NOT EXISTS idx_pcr_date ON strike_pcr_snapshots(date);
 CREATE INDEX IF NOT EXISTS idx_pcr_created_at ON strike_pcr_snapshots(created_at DESC);
 
--- Enable RLS on both tables
+-- Enable RLS
 ALTER TABLE option_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE strike_pcr_snapshots ENABLE ROW LEVEL SECURITY;
 
--- Create policies for public read access
-CREATE POLICY "Allow public read access" ON option_snapshots
-    FOR SELECT USING (true);
-
-CREATE POLICY "Allow public read access" ON strike_pcr_snapshots
-    FOR SELECT USING (true);
-
--- Create policies for insert access
-CREATE POLICY "Allow insert access" ON option_snapshots
-    FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Allow insert access" ON strike_pcr_snapshots
-    FOR INSERT WITH CHECK (true);
+-- Create policies
+CREATE POLICY "Allow public read access" ON option_snapshots FOR SELECT USING (true);
+CREATE POLICY "Allow public read access" ON strike_pcr_snapshots FOR SELECT USING (true);
+CREATE POLICY "Allow insert access" ON option_snapshots FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow insert access" ON strike_pcr_snapshots FOR INSERT WITH CHECK (true);
 """
 
 # -----------------------
@@ -775,11 +847,10 @@ CREATE POLICY "Allow insert access" ON strike_pcr_snapshots
 # -----------------------
 st.title("📊 NIFTY Option Screener v4.0 — DhanHQ + Supabase")
 
-# Sidebar: Setup instructions and config
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Setup & Configuration")
     
-    # Database setup section
     st.subheader("Supabase Database Setup")
     if st.button("Check Database Connection"):
         if create_tables_if_not_exist():
@@ -808,36 +879,24 @@ with st.sidebar:
     st.subheader("App Controls")
     if st.button("Clear Caches"):
         st.cache_data.clear()
-        st.rerun()  # Updated
+        st.rerun()
     
     if st.button("Reset Session State"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        st.rerun()  # Updated
-    
-    # Display current stats if available
-    try:
-        res = supabase.table(SUPABASE_TABLE).select("count", count="exact").execute()
-        count1 = res.count if hasattr(res, 'count') else 0
-        res2 = supabase.table(SUPABASE_TABLE_PCR).select("count", count="exact").execute()
-        count2 = res2.count if hasattr(res2, 'count') else 0
-        st.markdown(f"**Database Stats:**")
-        st.markdown(f"- Time snapshots: {count1:,} rows")
-        st.markdown(f"- PCR snapshots: {count2:,} rows")
-    except:
-        pass
+        st.rerun()
 
-# Main app content
+# Main content
 st.markdown("""
-<div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-bottom: 20px;'>
-<h3 style='color: #1f77b4;'>📋 About This App</h3>
-<p>This Nifty Option Screener v4.0 combines real-time option chain data from DhanHQ with persistent storage in Supabase. 
+<div style='background-color: #1a1f2e; padding: 20px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #00d4aa;'>
+<h3 style='color: #00d4aa;'>📋 About This App</h3>
+<p style='color: #fafafa;'>This Nifty Option Screener v4.0 combines real-time option chain data from DhanHQ with persistent storage in Supabase. 
 It provides advanced analytics including PCR analysis, trend detection, support/resistance levels, and fake breakout alerts.</p>
-<p><strong>Features:</strong> ATM analysis, Greeks calculation, GEX tracking, Max Pain, PCR trends, and more.</p>
+<p style='color: #9ba4b5;'><strong>Features:</strong> ATM analysis, Greeks calculation, GEX tracking, Max Pain, PCR trends, and more.</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Fetch spot and expiry list
+# Fetch spot and expiry
 col1, col2 = st.columns([1, 2])
 with col1:
     with st.spinner("Fetching NIFTY spot..."):
@@ -855,10 +914,8 @@ with col1:
 
 with col2:
     if spot > 0:
-        st.metric("NIFTY Spot", f"{spot:.2f}", delta=None)
+        st.metric("NIFTY Spot", f"{spot:.2f}")
         st.metric("Expiry", expiry)
-    else:
-        st.warning("Waiting for market data...")
 
 # Fetch option chain
 with st.spinner("Fetching option chain..."):
@@ -878,20 +935,19 @@ atm_strike = min(df_ce["strikePrice"].tolist(), key=lambda x: abs(x - spot))
 lower = atm_strike - (ATM_STRIKE_WINDOW * strike_gap)
 upper = atm_strike + (ATM_STRIKE_WINDOW * strike_gap)
 
-# Filter window
 df_ce = df_ce[(df_ce["strikePrice"]>=lower) & (df_ce["strikePrice"]<=upper)].reset_index(drop=True)
 df_pe = df_pe[(df_pe["strikePrice"]>=lower) & (df_pe["strikePrice"]<=upper)].reset_index(drop=True)
 
 merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
 merged["strikePrice"] = merged["strikePrice"].astype(int)
 
-# session storage for prev LTP/IV
+# Session storage
 if "prev_ltps_v3" not in st.session_state:
     st.session_state["prev_ltps_v3"] = {}
 if "prev_ivs_v3" not in st.session_state:
     st.session_state["prev_ivs_v3"] = {}
 
-# compute tau using expiry date if available
+# Compute tau
 try:
     expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
     now = datetime.now()
@@ -899,9 +955,10 @@ try:
 except Exception:
     tau = 7.0/365.0
 
-# compute per-strike metrics
+# Compute per-strike metrics
 for i, row in merged.iterrows():
     strike = int(row["strikePrice"])
+    
     ltp_ce = safe_float(row.get("LTP_CE",0.0))
     ltp_pe = safe_float(row.get("LTP_PE",0.0))
     iv_ce = safe_float(row.get("IV_CE", np.nan))
@@ -980,7 +1037,7 @@ for i, row in merged.iterrows():
     merged.at[i,"CE_IV_Delta"] = ce_iv_delta
     merged.at[i,"PE_IV_Delta"] = pe_iv_delta
 
-# Aggregations & summaries
+# Aggregations
 total_CE_OI = merged["OI_CE"].sum()
 total_PE_OI = merged["OI_PE"].sum()
 total_CE_chg = merged["Chg_OI_CE"].sum()
@@ -1056,9 +1113,7 @@ elif polarity < -5: market_bias="Strong Bearish"
 elif polarity < -1: market_bias="Bearish"
 else: market_bias="Neutral"
 
-# -----------------------
-#  UI: Core Market Metrics
-# -----------------------
+# UI: Core Metrics
 st.markdown("## 📈 Core Market Metrics")
 col1,col2,col3,col4 = st.columns(4)
 with col1:
@@ -1083,7 +1138,7 @@ pressure_table = pd.DataFrame([
 ])
 st.dataframe(pressure_table, use_container_width=True)
 
-# Tab layout for detailed views
+# Tab layout
 tab1, tab2, tab3 = st.tabs(["📊 Strike Details", "🔥 OI Heatmap", "🧠 Max Pain & PCR"])
 
 with tab1:
@@ -1119,13 +1174,10 @@ with tab3:
         st.info(f"ATM Shift: {atm_shift_str}")
         st.info(f"PCR Trend Analysis available below")
 
-# -----------------------
 # PCR Analysis Section
-# -----------------------
 st.markdown("---")
 st.header("📊 PCR Analysis & Trend Detection")
 
-# Compute PCR
 pcr_df = compute_pcr_df(merged)
 pcr_display_cols = ["strikePrice", "OI_CE", "OI_PE", "PCR", "Chg_OI_CE", "Chg_OI_PE", "LTP_CE", "LTP_PE"]
 st.markdown("### Current Strike PCR")
@@ -1134,7 +1186,6 @@ st.dataframe(pcr_df[pcr_display_cols].sort_values("strikePrice").reset_index(dro
 # PCR Snapshot Management
 st.markdown("### PCR Snapshots (Batch-based)")
 
-# Manual save button
 colA, colB = st.columns([1,1])
 with colA:
     if st.button("💾 Save PCR Snapshot (Manual)"):
@@ -1174,7 +1225,6 @@ if not cur_df.empty:
     trend_df = evaluate_trend(cur_df, prev_df)
     
     if not trend_df.empty:
-        # Rename columns for display
         trend_display = trend_df.copy()
         trend_display = trend_display.rename(columns={
             "OI_CE_now": "OI_CE", "OI_PE_now": "OI_PE", "PCR_now": "PCR"
@@ -1223,13 +1273,10 @@ if not cur_df.empty:
 else:
     st.info("No PCR snapshots found. Use the 'Save PCR Snapshot' button to start tracking trends.")
 
-# -----------------------
 # PCR Snapshot Comparison
-# -----------------------
 st.markdown("---")
 st.header("🔍 Compare PCR Snapshots")
 
-# Get available tags
 try:
     resp = supabase.table(SUPABASE_TABLE_PCR).select("snapshot_tag, created_at").order("created_at", desc=True).limit(2000).execute()
     tags_list = []
@@ -1262,7 +1309,6 @@ if tags_list:
                 comp_display = comp_df[["strikePrice", "OI_CE_now", "OI_PE_now", "ΔOI_CE", "ΔOI_PE", "PCR_now", "PCR_prev", "ΔPCR", "Trend"]]
                 st.dataframe(comp_display, use_container_width=True)
                 
-                # Summary
                 total_ce_delta = comp_df["ΔOI_CE"].sum()
                 total_pe_delta = comp_df["ΔOI_PE"].sum()
                 avg_pcr_delta = comp_df["ΔPCR"].mean()
@@ -1276,9 +1322,7 @@ if tags_list:
 else:
     st.info("No PCR snapshots available for comparison.")
 
-# -----------------------
-# Original Snapshot Section (Time Windows)
-# -----------------------
+# Time Window Snapshots
 st.markdown("---")
 st.header("📦 Time Window Snapshots")
 
@@ -1291,7 +1335,6 @@ def now_in_window(w_key):
     return start <= now <= end
 
 today = datetime.now().strftime("%Y-%m-%d")
-# Auto-save if in a window and no snapshot saved for today
 for w in TIME_WINDOWS.keys():
     try:
         if now_in_window(w) and not supabase_snapshot_exists(today, w):
@@ -1323,7 +1366,7 @@ with c4:
         ok,msg = save_snapshot_to_supabase(merged, "evening", spot)
         st.success("Saved." if ok else f"Failed: {msg}")
 
-# Original snapshot compare UI
+# Snapshot compare UI
 st.markdown("### 🔎 Compare Time Window Snapshots")
 saved_files = []
 for d_offset in range(0,7):
@@ -1361,11 +1404,11 @@ if saved_files:
             b_left = bias_score_from_summary(s_left)
             b_right = bias_score_from_summary(s_right)
             st.markdown("**Summary:**")
-            st.write(f"- Left ({left_choice}): CE_ΔOI={s_left['CE_ΔOI']}, PE_ΔOI={s_left['PE_ΔOI']}, CE_Vol={s_left['CE_Vol']}, PE_Vol={s_left['PE_Vol']}, AvgIV_CE={s_left['Avg_IV_CE']:.2f}")
-            st.write(f"- Right ({right_choice}): CE_ΔOI={s_right['CE_ΔOI']}, PE_ΔOI={s_right['PE_ΔOI']}, CE_Vol={s_right['CE_Vol']}, PE_Vol={s_right['PE_Vol']}, AvgIV_CE={s_right['Avg_IV_CE']:.2f}")
-            st.write(f"- Bias Score Left -> {b_left:.3f} | Right -> {b_right:.3f} | ΔBias = {(b_right - b_left):.3f}")
+            st.write(f"- Left ({left_choice}): CE_ΔOI={s_left['CE_ΔOI']}, PE_ΔOI={s_left['PE_ΔOI']}")
+            st.write(f"- Right ({right_choice}): CE_ΔOI={s_right['CE_ΔOI']}, PE_ΔOI={s_right['PE_ΔOI']}")
+            st.write(f"- Bias Score Δ = {(b_right - b_left):.3f}")
 
-# Quick comparison button: Morning->Afternoon
+# Quick comparison
 if st.button("Quick: Morning → Afternoon (today)"):
     left = fetch_snapshot_from_supabase(today, "morning")
     right = fetch_snapshot_from_supabase(today, "afternoon")
@@ -1376,24 +1419,19 @@ if st.button("Quick: Morning → Afternoon (today)"):
         st.dataframe(d.drop(columns=["abs_change"]).head(200), use_container_width=True)
         st.write("Bias Δ:", bias_score_from_summary(snapshot_summary(right)) - bias_score_from_summary(snapshot_summary(left)))
 
-# -----------------------
-# Footer and Credits
-# -----------------------
+# Footer
 st.markdown("---")
 st.markdown("""
-<div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px;'>
-<h3 style='color: #1f77b4;'>📚 Credits & Information</h3>
-<p><strong>App:</strong> Nifty Option Screener v4.0</p>
-<p><strong>Data Source:</strong> DhanHQ API (https://api.dhan.co)</p>
-<p><strong>Database:</strong> Supabase PostgreSQL</p>
-<p><strong>Features:</strong> Real-time option chain analysis, PCR trends, Support/Resistance detection, Fake breakout alerts</p>
-<p><strong>Author:</strong> Your Name</p>
-<p><strong>Disclaimer:</strong> This tool is for educational purposes only. Trading involves risk.</p>
+<div style='background-color: #1a1f2e; padding: 20px; border-radius: 10px; border: 1px solid #00d4aa;'>
+<h3 style='color: #00d4aa;'>📚 Credits & Information</h3>
+<p style='color: #fafafa;'><strong>App:</strong> Nifty Option Screener v4.0</p>
+<p style='color: #9ba4b5;'><strong>Data Source:</strong> DhanHQ API</p>
+<p style='color: #9ba4b5;'><strong>Database:</strong> Supabase PostgreSQL</p>
+<p style='color: #9ba4b5;'><strong>Disclaimer:</strong> This tool is for educational purposes only. Trading involves risk.</p>
 </div>
 """, unsafe_allow_html=True)
 
 st.caption(f"""
 **App Status:** Auto-refresh every {AUTO_REFRESH_SEC} seconds | PCR auto-save: {save_interval} seconds
-**Database:** Supabase tables: {SUPABASE_TABLE} and {SUPABASE_TABLE_PCR}
 **Last Updated:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 """)
