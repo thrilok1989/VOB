@@ -1,7 +1,7 @@
-# nifty_option_screener_v4_spot_analysis.py
+# nifty_option_screener_v4_complete_spot_analysis.py
 """
-Nifty Option Screener v4.0 — SPOT POSITION ANALYSIS
-Shows nearest support/resistance from spot, distance, and next levels
+Nifty Option Screener v4.0 — COMPLETE with Spot Analysis
+Combines all features: Greek calculations, GEX, PCR, Support/Resistance, Spot Position Analysis
 """
 
 import streamlit as st
@@ -71,6 +71,8 @@ except Exception as e:
     st.stop()
 
 DHAN_BASE_URL = "https://api.dhan.co"
+NIFTY_UNDERLYING_SCRIP = "13"
+NIFTY_UNDERLYING_SEG = "IDX_I"
 
 # -----------------------
 #  CUSTOM CSS
@@ -147,10 +149,24 @@ st.markdown("""
         font-weight: 600 !important;
     }
     .stButton > button:hover { background-color: #00ffcc !important; }
+    
+    .greeks-box {
+        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #444;
+        margin: 5px 0;
+    }
+    .greeks-box h5 { margin: 0; color: #66b3ff; font-size: 0.9rem; }
+    .greeks-box .greek-value { font-size: 1.2rem; color: #66b3ff; font-weight: 700; }
+    
+    .heatmap-positive { background-color: #1a2e1a; color: #00ff88; }
+    .heatmap-negative { background-color: #2e1a1a; color: #ff4444; }
+    .heatmap-neutral { background-color: #1a1f2e; color: #cccccc; }
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Nifty Screener v4 - Spot Analysis", layout="wide")
+st.set_page_config(page_title="Nifty Screener v4 - Complete Spot Analysis", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -162,7 +178,7 @@ def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
 auto_refresh()
 
 # -----------------------
-#  UTILITY FUNCTIONS (same as before)
+#  UTILITY FUNCTIONS
 # -----------------------
 def safe_int(x):
     try:
@@ -183,7 +199,141 @@ def strike_gap_from_series(series):
     mode = diffs.mode()
     return int(mode.iloc[0]) if not mode.empty else int(diffs.median())
 
-# ... (include all other utility functions from previous script)
+# Black-Scholes Greeks
+def bs_d1(S, K, r, sigma, tau):
+    if sigma <= 0 or tau <= 0:
+        return 0.0
+    return (np.log(S / K) + (r + 0.5 * sigma ** 2) * tau) / (sigma * np.sqrt(tau))
+
+def bs_delta(S, K, r, sigma, tau, option_type="call"):
+    if tau <= 0 or sigma <= 0:
+        return 1.0 if (option_type=="call" and S>K) else (-1.0 if (option_type=="put" and S<K) else 0.0)
+    d1 = bs_d1(S,K,r,sigma,tau)
+    if option_type == "call":
+        return norm.cdf(d1)
+    return -norm.cdf(-d1)
+
+def bs_gamma(S, K, r, sigma, tau):
+    if sigma <= 0 or tau <= 0:
+        return 0.0
+    d1 = bs_d1(S,K,r,sigma,tau)
+    return norm.pdf(d1) / (S * sigma * np.sqrt(tau))
+
+def bs_vega(S,K,r,sigma,tau):
+    if sigma <= 0 or tau <= 0:
+        return 0.0
+    d1 = bs_d1(S,K,r,sigma,tau)
+    return S * norm.pdf(d1) * np.sqrt(tau)
+
+def bs_theta(S,K,r,sigma,tau,option_type="call"):
+    if sigma <=0 or tau<=0:
+        return 0.0
+    d1 = bs_d1(S,K,r,sigma,tau)
+    d2 = d1 - sigma*np.sqrt(tau)
+    term1 = - (S * norm.pdf(d1) * sigma) / (2 * np.sqrt(tau))
+    if option_type=="call":
+        term2 = r*K*np.exp(-r*tau)*norm.cdf(d2)
+        return term1 - term2
+    else:
+        term2 = r*K*np.exp(-r*tau)*norm.cdf(-d2)
+        return term1 + term2
+
+def strike_strength_score(row, weights=SCORE_WEIGHTS):
+    chg_oi = safe_float(row.get("Chg_OI_CE",0)) + safe_float(row.get("Chg_OI_PE",0))
+    vol = safe_float(row.get("Vol_CE",0)) + safe_float(row.get("Vol_PE",0))
+    oi = safe_float(row.get("OI_CE",0)) + safe_float(row.get("OI_PE",0))
+    iv_ce = safe_float(row.get("IV_CE", np.nan))
+    iv_pe = safe_float(row.get("IV_PE", np.nan))
+    iv = np.nanmean([v for v in (iv_ce, iv_pe) if not np.isnan(v)]) if (not np.isnan(iv_ce) or not np.isnan(iv_pe)) else 0
+    score = weights["chg_oi"]*chg_oi + weights["volume"]*vol + weights["oi"]*oi + weights["iv"]*iv
+    return score
+
+def price_oi_divergence_label(chg_oi, vol, ltp_change):
+    vol_up = vol>0
+    oi_up = chg_oi>0
+    price_up = (ltp_change is not None and ltp_change>0)
+    if oi_up and vol_up and price_up:
+        return "Fresh Build (Aggressive)"
+    if oi_up and vol_up and not price_up:
+        return "Seller Aggressive / Short Build"
+    if not oi_up and vol_up and price_up:
+        return "Long Covering (Buy squeeze)"
+    if not oi_up and vol_up and not price_up:
+        return "Put Covering / Sell w exit"
+    if oi_up and not vol_up:
+        return "Weak Build"
+    if (not oi_up) and not vol_up:
+        return "Weak Unwind"
+    return "Neutral"
+
+def interpret_itm_otm(strike, atm, chg_oi_ce, chg_oi_pe):
+    if strike < atm:
+        if chg_oi_ce < 0:
+            ce = "Bullish (ITM CE Unwind)"
+        elif chg_oi_ce > 0:
+            ce = "Bearish (ITM CE Build)"
+        else:
+            ce = "NoSign (ITM CE)"
+    elif strike > atm:
+        if chg_oi_ce > 0:
+            ce = "Resistance Forming (OTM CE Build)"
+        elif chg_oi_ce < 0:
+            ce = "Resistance Weakening (OTM CE Unwind) → Bullish"
+        else:
+            ce = "NoSign (OTM CE)"
+    else:
+        ce = "ATM CE zone"
+
+    if strike > atm:
+        if chg_oi_pe < 0:
+            pe = "Bullish (ITM PE Unwind)"
+        elif chg_oi_pe > 0:
+            pe = "Bearish (ITM PE Build)"
+        else:
+            pe = "NoSign (ITM PE)"
+    elif strike < atm:
+        if chg_oi_pe > 0:
+            pe = "Support Forming (OTM PE Build)"
+        elif chg_oi_pe < 0:
+            pe = "Support Weakening (OTM PE Unwind) → Bearish"
+        else:
+            pe = "NoSign (OTM PE)"
+    else:
+        pe = "ATM PE zone"
+
+    return f"{ce} | {pe}"
+
+def gamma_pressure_metric(row, atm, strike_gap):
+    strike = row["strikePrice"]
+    dist = abs(strike - atm) / max(strike_gap, 1)
+    dist = max(dist, 1e-6)
+    chg_oi_sum = safe_float(row.get("Chg_OI_CE",0)) - safe_float(row.get("Chg_OI_PE",0))
+    return chg_oi_sum / dist
+
+def breakout_probability_index(merged_df, atm, strike_gap):
+    near_mask = merged_df["strikePrice"].between(atm-strike_gap, atm+strike_gap)
+    atm_chg_oi = merged_df.loc[near_mask, ["Chg_OI_CE","Chg_OI_PE"]].abs().sum().sum()
+    atm_score = min(atm_chg_oi/50000.0, 1.0)
+    winding_count = (merged_df[["CE_Winding","PE_Winding"]]=="Winding").sum().sum()
+    unwinding_count = (merged_df[["CE_Winding","PE_Winding"]]=="Unwinding").sum().sum()
+    winding_balance = winding_count/(winding_count+unwinding_count) if (winding_count+unwinding_count)>0 else 0.5
+    vol_oi_scores = (merged_df[["Vol_CE","Vol_PE"]].sum(axis=1) * merged_df[["Chg_OI_CE","Chg_OI_PE"]].abs().sum(axis=1)).fillna(0)
+    vol_oi_score = min(vol_oi_scores.sum()/100000.0, 1.0)
+    gamma = merged_df.apply(lambda r: gamma_pressure_metric(r, atm, strike_gap), axis=1).abs().sum()
+    gamma_score = min(gamma/10000.0, 1.0)
+    w = BREAKOUT_INDEX_WEIGHTS
+    combined = (w["atm_oi_shift"]*atm_score) + (w["winding_balance"]*winding_balance) + (w["vol_oi_div"]*vol_oi_score) + (w["gamma_pressure"]*gamma_score)
+    return int(np.clip(combined*100,0,100))
+
+def center_of_mass_oi(df, oi_col):
+    """Calculate center of mass for OI distribution"""
+    if df.empty or oi_col not in df.columns:
+        return 0
+    total_oi = df[oi_col].sum()
+    if total_oi == 0:
+        return 0
+    weighted_sum = (df["strikePrice"] * df[oi_col]).sum()
+    return weighted_sum / total_oi
 
 # -----------------------
 # 🔥 NEW: SPOT POSITION ANALYSIS
@@ -406,6 +556,113 @@ def evaluate_trend(current_df, prev_df):
     deltas = deltas.reset_index().rename(columns={"index":"strikePrice"})
     return deltas
 
+def rank_support_resistance(trend_df):
+    """
+    Rank supports and resistances using PCR + OI scores
+    """
+    eps = 1e-6
+    t = trend_df.copy()
+    t["PCR_now_clipped"] = t["PCR_now"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    t["support_score"] = t["OI_PE_now"] + (t["PCR_now_clipped"] * 100000.0)
+    t["resistance_factor"] = t["PCR_now_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
+    t["resistance_score"] = t["OI_CE_now"] + (t["resistance_factor"] * 100000.0)
+    
+    top_supports = t.sort_values("support_score", ascending=False).head(3)["strikePrice"].astype(int).tolist()
+    top_resists = t.sort_values("resistance_score", ascending=False).head(3)["strikePrice"].astype(int).tolist()
+    return t, top_supports, top_resists
+
+def detect_fake_breakout(spot, strong_support, strong_resist, trend_df):
+    """Detect potential fake breakouts"""
+    fake = None
+    fake_hint = ""
+    
+    if strong_resist is not None and spot > strong_resist:
+        row = trend_df[trend_df["strikePrice"]==strong_resist]
+        if not row.empty and row.iloc[0]["ΔOI_CE"] > 0:
+            fake = "Bull Trap"
+            fake_hint = f"Price above resistance {strong_resist} but CE OI building → possible fake upside."
+    
+    if strong_support is not None and spot < strong_support:
+        row = trend_df[trend_df["strikePrice"]==strong_support]
+        if not row.empty and row.iloc[0]["ΔOI_PE"] > 0:
+            fake = "Bear Trap"
+            fake_hint = f"Price below support {strong_support} but PE OI building → possible fake downside."
+    
+    return fake, fake_hint
+
+def generate_stop_loss_hint(spot, top_supports, top_resists, fake_type):
+    """Generate stop-loss hint based on support/resistance levels"""
+    if fake_type == "Bull Trap":
+        return f"Keep SL near strong support {top_supports[0] if top_supports else 'N/A'} — trap likely reverse down."
+    if fake_type == "Bear Trap":
+        return f"Keep SL near strong resistance {top_resists[0] if top_resists else 'N/A'} — trap likely reverse up."
+    if top_resists and spot > top_resists[0]:
+        return f"Real upside: place SL near 2nd strongest support {top_supports[1] if len(top_supports)>1 else 'N/A'}"
+    if top_supports and spot < top_supports[0]:
+        return f"Real downside: place SL near 2nd strongest resistance {top_resists[1] if len(top_resists)>1 else 'N/A'}"
+    return f"No clear breakout — SL inside range between {top_supports[1] if len(top_supports)>1 else 'N/A'} and {top_resists[1] if len(top_resists)>1 else 'N/A'}"
+
+# -----------------------
+#  SUPABASE DATABASE SETUP
+# -----------------------
+def create_tables_if_not_exist():
+    """Check if tables exist"""
+    try:
+        res1 = supabase.table(SUPABASE_TABLE).select("id").limit(1).execute()
+        res2 = supabase.table(SUPABASE_TABLE_PCR).select("id").limit(1).execute()
+        
+        if res1.status_code == 200 and res2.status_code == 200:
+            return True
+        return False
+    except Exception as e:
+        return False
+
+def get_sql_for_tables():
+    return """
+-- Table 1: option_snapshots (for time-window snapshots)
+CREATE TABLE IF NOT EXISTS option_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    date DATE NOT NULL,
+    time_window VARCHAR(20) NOT NULL,
+    underlying DECIMAL(10,2) NOT NULL,
+    strike INTEGER NOT NULL,
+    oi_ce BIGINT DEFAULT 0,
+    chg_oi_ce BIGINT DEFAULT 0,
+    vol_ce BIGINT DEFAULT 0,
+    ltp_ce DECIMAL(10,2) DEFAULT 0.0,
+    iv_ce DECIMAL(10,4) DEFAULT 0.0,
+    oi_pe BIGINT DEFAULT 0,
+    chg_oi_pe BIGINT DEFAULT 0,
+    vol_pe BIGINT DEFAULT 0,
+    ltp_pe DECIMAL(10,2) DEFAULT 0.0,
+    iv_pe DECIMAL(10,4) DEFAULT 0.0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Table 2: strike_pcr_snapshots (for PCR batch snapshots)
+CREATE TABLE IF NOT EXISTS strike_pcr_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    snapshot_tag VARCHAR(50) NOT NULL,
+    date DATE NOT NULL,
+    time VARCHAR(20) NOT NULL,
+    expiry VARCHAR(20) NOT NULL,
+    spot DECIMAL(10,2) NOT NULL,
+    strike INTEGER NOT NULL,
+    oi_ce BIGINT DEFAULT 0,
+    oi_pe BIGINT DEFAULT 0,
+    chg_oi_ce BIGINT DEFAULT 0,
+    chg_oi_pe BIGINT DEFAULT 0,
+    pcr DECIMAL(10,4),
+    ltp_ce DECIMAL(10,2) DEFAULT 0.0,
+    ltp_pe DECIMAL(10,2) DEFAULT 0.0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_option_snapshots_date_window ON option_snapshots(date, time_window);
+CREATE INDEX IF NOT EXISTS idx_pcr_snapshot_tag ON strike_pcr_snapshots(snapshot_tag);
+"""
+
 # -----------------------
 #  DHAN API
 # -----------------------
@@ -510,9 +767,56 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
+#  SUPABASE SNAPSHOT HELPERS
+# -----------------------
+def supabase_snapshot_exists(date_str, window):
+    try:
+        resp = supabase.table(SUPABASE_TABLE).select("id").eq("date", date_str).eq("time_window", window).limit(1).execute()
+        if resp.status_code == 200:
+            data = resp.data
+            return len(data) > 0
+        return False
+    except Exception as e:
+        return False
+
+def save_snapshot_to_supabase(df, window, underlying):
+    """Insert rows (one per strike) into supabase table with date & time_window."""
+    if df is None or df.empty:
+        return False, "no data"
+    date_str = get_ist_date_str()
+    payload = []
+    for _, r in df.iterrows():
+        payload.append({
+            "date": date_str,
+            "time_window": window,
+            "underlying": float(underlying),
+            "strike": int(r.get("strikePrice",0)),
+            "oi_ce": int(safe_int(r.get("OI_CE",0))),
+            "chg_oi_ce": int(safe_int(r.get("Chg_OI_CE",0))),
+            "vol_ce": int(safe_int(r.get("Vol_CE",0))),
+            "ltp_ce": float(safe_float(r.get("LTP_CE", np.nan)) or 0.0),
+            "iv_ce": float(safe_float(r.get("IV_CE", np.nan) or 0.0)),
+            "oi_pe": int(safe_int(r.get("OI_PE",0))),
+            "chg_oi_pe": int(safe_int(r.get("Chg_OI_PE",0))),
+            "vol_pe": int(safe_int(r.get("Vol_PE",0))),
+            "ltp_pe": float(safe_float(r.get("LTP_PE", np.nan) or 0.0)),
+            "iv_pe": float(safe_float(r.get("IV_PE", np.nan) or 0.0))
+        })
+    try:
+        batch_size = 200
+        for i in range(0, len(payload), batch_size):
+            chunk = payload[i:i+batch_size]
+            res = supabase.table(SUPABASE_TABLE).insert(chunk).execute()
+            if res.status_code not in (200,201,204):
+                return False, f"supabase insert returned {res.status_code}"
+        return True, "saved"
+    except Exception as e:
+        return False, str(e)
+
+# -----------------------
 #  MAIN APP
 # -----------------------
-st.title("🎯 NIFTY Option Screener v4.0 — Spot Position Analysis")
+st.title("🎯 NIFTY Option Screener v4.0 — Complete Spot Analysis")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -521,6 +825,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
     st.markdown(f"### 🕐 Current IST")
@@ -528,6 +833,19 @@ with st.sidebar:
     st.markdown(f"**{get_ist_date_str()}**")
     st.markdown("---")
     
+    # Database setup
+    st.subheader("Database Setup")
+    if st.button("Check Database Connection"):
+        if create_tables_if_not_exist():
+            st.success("✅ Database connection successful!")
+        else:
+            st.warning("⚠️ Some tables may be missing")
+    
+    if st.button("Show SQL for Tables"):
+        sql_commands = get_sql_for_tables()
+        st.code(sql_commands, language="sql")
+    
+    st.markdown("---")
     save_interval = st.number_input("PCR Auto-save (sec)", value=SAVE_INTERVAL_SEC, min_value=60, step=60)
     
     if st.button("Clear Caches"):
@@ -579,6 +897,177 @@ df_pe = df_pe[(df_pe["strikePrice"]>=lower) & (df_pe["strikePrice"]<=upper)].res
 merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
 merged["strikePrice"] = merged["strikePrice"].astype(int)
 
+# Compute tau
+try:
+    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
+    now = datetime.now()
+    tau = max((expiry_dt - now).total_seconds() / (365.25*24*3600), 1/365.25)
+except Exception:
+    tau = 7.0/365.0
+
+# Session storage for prev LTP/IV
+if "prev_ltps_v3" not in st.session_state:
+    st.session_state["prev_ltps_v3"] = {}
+if "prev_ivs_v3" not in st.session_state:
+    st.session_state["prev_ivs_v3"] = {}
+
+# Compute per-strike metrics including Greeks
+for i, row in merged.iterrows():
+    strike = int(row["strikePrice"])
+    ltp_ce = safe_float(row.get("LTP_CE",0.0))
+    ltp_pe = safe_float(row.get("LTP_PE",0.0))
+    iv_ce = safe_float(row.get("IV_CE", np.nan))
+    iv_pe = safe_float(row.get("IV_PE", np.nan))
+
+    key_ce = f"{expiry}_{strike}_CE"
+    key_pe = f"{expiry}_{strike}_PE"
+    prev_ce = st.session_state["prev_ltps_v3"].get(key_ce, None)
+    prev_pe = st.session_state["prev_ltps_v3"].get(key_pe, None)
+    prev_iv_ce = st.session_state["prev_ivs_v3"].get(key_ce, None)
+    prev_iv_pe = st.session_state["prev_ivs_v3"].get(key_pe, None)
+
+    ce_price_delta = None if prev_ce is None else (ltp_ce - prev_ce)
+    pe_price_delta = None if prev_pe is None else (ltp_pe - prev_pe)
+    ce_iv_delta = None if prev_iv_ce is None else (iv_ce - prev_iv_ce)
+    pe_iv_delta = None if prev_iv_pe is None else (iv_pe - prev_iv_pe)
+
+    st.session_state["prev_ltps_v3"][key_ce] = ltp_ce
+    st.session_state["prev_ltps_v3"][key_pe] = ltp_pe
+    st.session_state["prev_ivs_v3"][key_ce] = iv_ce
+    st.session_state["prev_ivs_v3"][key_pe] = iv_pe
+
+    chg_oi_ce = safe_int(row.get("Chg_OI_CE",0))
+    chg_oi_pe = safe_int(row.get("Chg_OI_PE",0))
+
+    merged.at[i,"CE_Winding"] = "Winding" if chg_oi_ce>0 else ("Unwinding" if chg_oi_ce<0 else "NoChange")
+    merged.at[i,"PE_Winding"] = "Winding" if chg_oi_pe>0 else ("Unwinding" if chg_oi_pe<0 else "NoChange")
+
+    merged.at[i,"CE_Divergence"] = price_oi_divergence_label(chg_oi_ce, safe_int(row.get("Vol_CE",0)), ce_price_delta)
+    merged.at[i,"PE_Divergence"] = price_oi_divergence_label(chg_oi_pe, safe_int(row.get("Vol_PE",0)), pe_price_delta)
+
+    merged.at[i,"Interpretation"] = interpret_itm_otm(strike, atm_strike, chg_oi_ce, chg_oi_pe)
+
+    sigma_ce = iv_ce/100.0 if not np.isnan(iv_ce) and iv_ce>0 else 0.25
+    sigma_pe = iv_pe/100.0 if not np.isnan(iv_pe) and iv_pe>0 else 0.25
+
+    try:
+        delta_ce = bs_delta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
+        gamma_ce = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
+        vega_ce = bs_vega(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
+        theta_ce = bs_theta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
+    except Exception:
+        delta_ce = gamma_ce = vega_ce = theta_ce = 0.0
+
+    try:
+        delta_pe = bs_delta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
+        gamma_pe = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
+        vega_pe = bs_vega(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
+        theta_pe = bs_theta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
+    except Exception:
+        delta_pe = gamma_pe = vega_pe = theta_pe = 0.0
+
+    merged.at[i,"Delta_CE"] = delta_ce
+    merged.at[i,"Gamma_CE"] = gamma_ce
+    merged.at[i,"Vega_CE"] = vega_ce
+    merged.at[i,"Theta_CE"] = theta_ce
+    merged.at[i,"Delta_PE"] = delta_pe
+    merged.at[i,"Gamma_PE"] = gamma_pe
+    merged.at[i,"Vega_PE"] = vega_pe
+    merged.at[i,"Theta_PE"] = theta_pe
+
+    oi_ce = safe_int(row.get("OI_CE",0))
+    oi_pe = safe_int(row.get("OI_PE",0))
+    notional = LOT_SIZE * spot
+    gex_ce = gamma_ce * notional * oi_ce
+    gex_pe = gamma_pe * notional * oi_pe
+    merged.at[i,"GEX_CE"] = gex_ce
+    merged.at[i,"GEX_PE"] = gex_pe
+    merged.at[i,"GEX_Net"] = gex_ce - gex_pe
+
+    merged.at[i,"Strength_Score"] = strike_strength_score(row)
+    merged.at[i,"Gamma_Pressure"] = gamma_pressure_metric(row, atm_strike, strike_gap)
+
+    merged.at[i,"CE_Price_Delta"] = ce_price_delta
+    merged.at[i,"PE_Price_Delta"] = pe_price_delta
+    merged.at[i,"CE_IV_Delta"] = ce_iv_delta
+    merged.at[i,"PE_IV_Delta"] = pe_iv_delta
+
+# Aggregations & summaries
+total_CE_OI = merged["OI_CE"].sum()
+total_PE_OI = merged["OI_PE"].sum()
+total_CE_chg = merged["Chg_OI_CE"].sum()
+total_PE_chg = merged["Chg_OI_PE"].sum()
+
+itm_ce_mask = merged["strikePrice"] < atm_strike
+otm_ce_mask = merged["strikePrice"] > atm_strike
+itm_pe_mask = merged["strikePrice"] > atm_strike
+otm_pe_mask = merged["strikePrice"] < atm_strike
+
+ITM_CE_OI = merged.loc[itm_ce_mask, "OI_CE"].sum()
+OTM_CE_OI = merged.loc[otm_ce_mask, "OI_CE"].sum()
+ITM_PE_OI = merged.loc[itm_pe_mask, "OI_PE"].sum()
+OTM_PE_OI = merged.loc[otm_pe_mask, "OI_PE"].sum()
+
+ITM_CE_winding_count = (merged.loc[itm_ce_mask,"CE_Winding"]=="Winding").sum()
+OTM_CE_winding_count = (merged.loc[otm_ce_mask,"CE_Winding"]=="Winding").sum()
+ITM_PE_winding_count = (merged.loc[itm_pe_mask,"PE_Winding"]=="Winding").sum()
+OTM_PE_winding_count = (merged.loc[otm_pe_mask,"PE_Winding"]=="Winding").sum()
+
+itm_ce_winding_pct = (ITM_CE_winding_count / (merged.loc[itm_ce_mask].shape[0] or 1))*100
+otm_ce_winding_pct = (OTM_CE_winding_count / (merged.loc[otm_ce_mask].shape[0] or 1))*100
+itm_pe_winding_pct = (ITM_PE_winding_count / (merged.loc[itm_pe_mask].shape[0] or 1))*100
+otm_pe_winding_pct = (OTM_PE_winding_count / (merged.loc[otm_pe_mask].shape[0] or 1))*100
+
+merged["CE_Delta_Exposure"] = merged["Delta_CE"].fillna(0) * merged["OI_CE"].fillna(0) * LOT_SIZE
+merged["PE_Delta_Exposure"] = merged["Delta_PE"].fillna(0) * merged["OI_PE"].fillna(0) * LOT_SIZE
+net_delta_exposure = merged["CE_Delta_Exposure"].sum() + merged["PE_Delta_Exposure"].sum()
+
+total_gex_ce = merged["GEX_CE"].sum()
+total_gex_pe = merged["GEX_PE"].sum()
+total_gex_net = merged["GEX_Net"].sum()
+
+max_pain = None
+try:
+    max_pain = int(pd.Series({int(r["strikePrice"]): safe_float(r["LTP_CE"])*safe_int(r["OI_CE"]) + safe_float(r["LTP_PE"])*safe_int(r["OI_PE"]) for _, r in merged.iterrows()}).sort_values().index[0])
+except Exception:
+    max_pain = None
+
+breakout_index = breakout_probability_index(merged, atm_strike, strike_gap)
+
+ce_com = center_of_mass_oi(merged, "OI_CE")
+pe_com = center_of_mass_oi(merged, "OI_PE")
+atm_shift = []
+if ce_com > atm_strike + strike_gap: atm_shift.append("CE build above ATM")
+elif ce_com < atm_strike - strike_gap: atm_shift.append("CE build below ATM")
+if pe_com > atm_strike + strike_gap: atm_shift.append("PE build above ATM")
+elif pe_com < atm_strike - strike_gap: atm_shift.append("PE build below ATM")
+atm_shift_str = " | ".join(atm_shift) if atm_shift else "Neutral"
+
+# Market polarity
+polarity = 0.0
+for _, r in merged.iterrows():
+    s = r["strikePrice"]
+    chg_ce = safe_int(r.get("Chg_OI_CE",0))
+    chg_pe = safe_int(r.get("Chg_OI_PE",0))
+    if s < atm_strike:
+        if chg_ce < 0: polarity += 1.0
+        elif chg_ce > 0: polarity -= 1.0
+    else:
+        if chg_ce > 0: polarity -= 0.5
+        elif chg_ce < 0: polarity += 0.5
+    if s > atm_strike:
+        if chg_pe < 0: polarity += 1.0
+        elif chg_pe > 0: polarity -= 1.0
+    else:
+        if chg_pe > 0: polarity += 0.5
+        elif chg_pe < 0: polarity -= 0.5
+
+if polarity > 5: market_bias="Strong Bullish"
+elif polarity > 1: market_bias="Bullish"
+elif polarity < -5: market_bias="Strong Bearish"
+elif polarity < -1: market_bias="Bearish"
+else: market_bias="Neutral"
+
 # Compute PCR
 pcr_df = compute_pcr_df(merged)
 
@@ -608,6 +1097,49 @@ if len(tags) >= 2:
 
 # ============================================
 # 🎯 MAIN DASHBOARD
+# ============================================
+
+st.markdown("## 📈 CORE MARKET METRICS")
+
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("Spot", f"₹{spot:.2f}")
+    st.metric("ATM", f"₹{atm_strike}")
+with col2:
+    st.metric("Total CE OI", f"{int(total_CE_OI):,}")
+    st.metric("Total PE OI", f"{int(total_PE_OI):,}")
+with col3:
+    st.metric("Total CE ΔOI", f"{int(total_CE_chg):,}")
+    st.metric("Total PE ΔOI", f"{int(total_PE_chg):,}")
+with col4:
+    st.metric("Net Delta Exposure", f"{int(net_delta_exposure):,}")
+    st.metric("Market Bias", market_bias)
+
+st.markdown("### 🔎 ITM/OTM Pressure Summary (ATM ± 8)")
+pressure_table = pd.DataFrame([
+    {"Category":"ITM CE OI","Value":int(ITM_CE_OI),"Winding_Count":int(ITM_CE_winding_count),"Winding_%":f"{itm_ce_winding_pct:.1f}%"},
+    {"Category":"OTM CE OI","Value":int(OTM_CE_OI),"Winding_Count":int(OTM_CE_winding_count),"Winding_%":f"{otm_ce_winding_pct:.1f}%"},
+    {"Category":"ITM PE OI","Value":int(ITM_PE_OI),"Winding_Count":int(ITM_PE_winding_count),"Winding_%":f"{itm_pe_winding_pct:.1f}%"},
+    {"Category":"OTM PE OI","Value":int(OTM_PE_OI),"Winding_Count":int(OTM_PE_winding_count),"Winding_%":f"{otm_pe_winding_pct:.1f}%"}
+])
+st.dataframe(pressure_table, use_container_width=True)
+
+# Greeks Summary
+st.markdown("### 🧮 GREEKS SUMMARY")
+gex_col1, gex_col2, gex_col3, gex_col4 = st.columns(4)
+with gex_col1:
+    st.metric("Total GEX CE", f"₹{int(total_gex_ce):,}")
+with gex_col2:
+    st.metric("Total GEX PE", f"₹{int(total_gex_pe):,}")
+with gex_col3:
+    st.metric("Net GEX", f"₹{int(total_gex_net):,}")
+with gex_col4:
+    st.metric("Breakout Index", f"{breakout_index}%")
+
+st.markdown("---")
+
+# ============================================
+# 🎯 SPOT POSITION & KEY LEVELS
 # ============================================
 
 st.markdown("## 🎯 SPOT POSITION & KEY LEVELS")
@@ -840,39 +1372,137 @@ with col_insight1:
             insight = f"Spot closer to resistance. Watch ₹{nearest_res['strike']:,} for breakout."
         
         st.info(f"**{bias}**: {insight}")
+    
+    # Fake Breakout Detection
+    if not trend_df.empty:
+        fake_type, fake_hint = detect_fake_breakout(
+            spot, 
+            top_supports[0] if top_supports else None, 
+            top_resists[0] if top_resists else None, 
+            trend_df
+        )
+        if fake_type:
+            st.warning(f"⚠️ **Fake Breakout Alert: {fake_type}**")
+            st.info(f"{fake_hint}")
 
 with col_insight2:
     if nearest_sup and nearest_res:
         risk_reward = (nearest_res["distance"] / nearest_sup["distance"]) if nearest_sup["distance"] > 0 else 0
         st.metric("Risk:Reward Ratio", f"1:{risk_reward:.2f}")
+    
+    # Max Pain
+    if max_pain:
+        st.metric("Max Pain", f"₹{max_pain:,}")
+
+# Stop-loss Hint
+if not trend_df.empty:
+    stop_loss_hint = generate_stop_loss_hint(
+        spot, 
+        supports_df.head(3)["strikePrice"].tolist(), 
+        resists_df.head(3)["strikePrice"].tolist(), 
+        fake_type if 'fake_type' in locals() else None
+    )
+    st.markdown("### 🛡️ Stop-loss Hint")
+    st.info(stop_loss_hint)
 
 st.markdown("---")
 
-# Tabs for detailed data
-tab1, tab2, tab3 = st.tabs(["📊 All Strikes", "🔥 PCR Analysis", "💾 Snapshots"])
+# ============================================
+# 📊 DETAILED DATA TABS
+# ============================================
+
+tab1, tab2, tab3, tab4 = st.tabs(["📊 All Strikes", "🔥 PCR Analysis", "🧮 Greeks View", "💾 Snapshots"])
 
 with tab1:
-    st.markdown("### Complete Strike Table")
-    display_cols = ["strikePrice","OI_CE","Chg_OI_CE","Vol_CE","LTP_CE","OI_PE","Chg_OI_PE","Vol_PE","LTP_PE"]
+    st.markdown("### Complete Strike Table with Analysis")
+    display_cols = [
+        "strikePrice", "OI_CE", "Chg_OI_CE", "Vol_CE", "LTP_CE", 
+        "CE_Price_Delta", "CE_IV_Delta", "CE_Winding", "CE_Divergence",
+        "OI_PE", "Chg_OI_PE", "Vol_PE", "LTP_PE", 
+        "PE_Price_Delta", "PE_IV_Delta", "PE_Winding", "PE_Divergence",
+        "Interpretation", "Strength_Score"
+    ]
+    # Ensure all columns exist
+    for col in display_cols:
+        if col not in merged.columns:
+            merged[col] = ""
+    
     st.dataframe(merged[display_cols], use_container_width=True)
 
 with tab2:
     st.markdown("### PCR & Score Analysis")
-    analysis_df = ranked_current[["strikePrice","OI_CE","OI_PE","PCR","support_score","resistance_score"]].copy()
+    analysis_df = ranked_current[["strikePrice", "OI_CE", "OI_PE", "PCR", "support_score", "resistance_score"]].copy()
     analysis_df["distance_from_spot"] = abs(analysis_df["strikePrice"] - spot)
     st.dataframe(analysis_df.sort_values("distance_from_spot"), use_container_width=True)
+    
+    # PCR Heatmap
+    st.markdown("### 🔥 PCR Heatmap")
+    pcr_heatmap = analysis_df[["strikePrice", "PCR"]].set_index("strikePrice")
+    def color_pcr(val):
+        try:
+            if val > 1.5:
+                return "background-color: #1a2e1a; color: #00ff88"
+            elif val > 1.0:
+                return "background-color: #2e2a1a; color: #ffcc44"
+            elif val > 0.5:
+                return "background-color: #1a1f2e; color: #66b3ff"
+            else:
+                return "background-color: #2e1a1a; color: #ff4444"
+        except:
+            return ""
+    st.dataframe(pcr_heatmap.style.applymap(color_pcr), use_container_width=True)
 
 with tab3:
+    st.markdown("### 🧮 GREEKS & GEX DETAILS")
+    greeks_cols = [
+        "strikePrice", 
+        "Delta_CE", "Gamma_CE", "Vega_CE", "Theta_CE", "GEX_CE",
+        "Delta_PE", "Gamma_PE", "Vega_PE", "Theta_PE", "GEX_PE",
+        "GEX_Net", "Gamma_Pressure"
+    ]
+    for col in greeks_cols:
+        if col not in merged.columns:
+            merged[col] = 0.0
+    
+    # Format Greek values
+    greeks_display = merged[greeks_cols].copy()
+    for col in ["Delta_CE", "Delta_PE", "Gamma_CE", "Gamma_PE", "Vega_CE", "Vega_PE", "Theta_CE", "Theta_PE"]:
+        if col in greeks_display.columns:
+            greeks_display[col] = greeks_display[col].apply(lambda x: f"{x:.4f}")
+    
+    st.dataframe(greeks_display, use_container_width=True)
+
+with tab4:
     st.markdown("### Snapshot Manager")
     st.markdown(f"**Current IST:** {get_ist_datetime_str()}")
     
-    if st.button("💾 Save PCR Snapshot"):
-        ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
-        if ok:
-            st.success(f"Saved: {get_ist_time_str()} IST")
-        else:
-            st.error(f"Failed: {msg}")
+    # Manual save buttons
+    col_man1, col_man2 = st.columns(2)
+    with col_man1:
+        if st.button("💾 Save PCR Snapshot"):
+            ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
+            if ok:
+                st.success(f"Saved: {get_ist_time_str()} IST")
+            else:
+                st.error(f"Failed: {msg}")
     
+    with col_man2:
+        if st.button("📊 Save Time Snapshot (Current)"):
+            ok, msg = save_snapshot_to_supabase(merged, "manual", spot)
+            if ok:
+                st.success(f"Saved time snapshot")
+            else:
+                st.error(f"Failed: {msg}")
+    
+    # Time window auto-save status
+    st.markdown("#### Time Window Auto-save Status")
+    today = get_ist_date_str()
+    for w_key, w_info in TIME_WINDOWS.items():
+        exists = supabase_snapshot_exists(today, w_key)
+        status = "✅ Saved" if exists else "⏳ Waiting"
+        st.write(f"{w_info['label']}: {status}")
+    
+    # Trend analysis display
     if not trend_df.empty:
         st.markdown("#### Trend Analysis")
         trend_display = trend_df.rename(columns={"OI_CE_now":"OI_CE","OI_PE_now":"OI_PE","PCR_now":"PCR"})
@@ -883,4 +1513,4 @@ with tab3:
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | 💾 Auto-save: {save_interval}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **Immediate levels from LIVE PCR** | Trend labels from snapshots")
+st.caption("🎯 **Complete NIFTY Option Screener v4.0 with Spot Position Analysis** | All rights reserved")
