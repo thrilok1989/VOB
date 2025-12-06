@@ -195,6 +195,19 @@ st.markdown("""
         margin: 10px 0;
     }
     
+    .entry-signal-box {
+        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid #ff9900;
+        margin: 15px 0;
+        text-align: center;
+    }
+    .entry-signal-box h3 { margin: 0; color: #ff9900; font-size: 1.4rem; }
+    .entry-signal-box .signal-value { font-size: 2.5rem; font-weight: 900; margin: 15px 0; }
+    .entry-signal-box .signal-explanation { font-size: 1.1rem; color: #ffdd44; margin: 10px 0; }
+    .entry-signal-box .entry-price { font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin: 10px 0; }
+    
     [data-testid="stMetricLabel"] { color: #cccccc !important; font-weight: 600; }
     [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
 </style>
@@ -273,7 +286,199 @@ def bs_theta(S,K,r,sigma,tau,option_type="call"):
         return term1 + term2
 
 # -----------------------
-# 🔥 SELLER'S PERSPECTIVE FUNCTIONS
+# 🔥 ENTRY SIGNAL CALCULATION - NEW FUNCTION
+# -----------------------
+def calculate_entry_signal(spot, merged_df, atm_strike, seller_bias_result, seller_max_pain, seller_supports_df, seller_resists_df, nearest_sup, nearest_res, seller_breakout_index):
+    """
+    Calculate optimal entry signal based on seller's perspective
+    Returns: Entry signal with price, confidence, and reasoning
+    """
+    
+    # Initialize signal components
+    signal_score = 0
+    signal_reasons = []
+    optimal_entry_price = spot  # Default to current spot
+    position_type = "NEUTRAL"
+    confidence = 0
+    
+    # ============================================
+    # 1. SELLER BIAS ANALYSIS (40% weight)
+    # ============================================
+    seller_bias = seller_bias_result["bias"]
+    seller_polarity = seller_bias_result["polarity"]
+    
+    if "STRONG BULLISH" in seller_bias or "BULLISH" in seller_bias:
+        signal_score += 40
+        position_type = "LONG"
+        signal_reasons.append(f"Seller bias: {seller_bias} (Polarity: {seller_polarity:.1f})")
+    elif "STRONG BEARISH" in seller_bias or "BEARISH" in seller_bias:
+        signal_score += 40
+        position_type = "SHORT"
+        signal_reasons.append(f"Seller bias: {seller_bias} (Polarity: {seller_polarity:.1f})")
+    else:
+        signal_score += 10
+        position_type = "NEUTRAL"
+        signal_reasons.append("Seller bias: Neutral - Wait for clearer signal")
+    
+    # ============================================
+    # 2. MAX PAIN ALIGNMENT (15% weight)
+    # ============================================
+    if seller_max_pain:
+        distance_to_max_pain = abs(spot - seller_max_pain)
+        distance_pct = (distance_to_max_pain / spot) * 100
+        
+        if distance_pct < 0.5:  # Very close to max pain
+            signal_score += 15
+            signal_reasons.append(f"Spot VERY close to Max Pain (₹{seller_max_pain:,}, {distance_pct:.2f}%)")
+            optimal_entry_price = seller_max_pain
+        elif distance_pct < 1.0:  # Close to max pain
+            signal_score += 10
+            signal_reasons.append(f"Spot close to Max Pain (₹{seller_max_pain:,}, {distance_pct:.2f}%)")
+            if position_type == "LONG" and spot < seller_max_pain:
+                optimal_entry_price = min(spot + (seller_max_pain - spot) * 0.5, seller_max_pain)
+            elif position_type == "SHORT" and spot > seller_max_pain:
+                optimal_entry_price = max(spot - (spot - seller_max_pain) * 0.5, seller_max_pain)
+        else:
+            signal_score += 5
+            signal_reasons.append(f"Spot far from Max Pain (₹{seller_max_pain:,}, {distance_pct:.2f}%)")
+    
+    # ============================================
+    # 3. SUPPORT/RESISTANCE ALIGNMENT (20% weight)
+    # ============================================
+    if nearest_sup and nearest_res:
+        # Calculate position in range
+        range_size = nearest_res["strike"] - nearest_sup["strike"]
+        if range_size > 0:
+            position_in_range = ((spot - nearest_sup["strike"]) / range_size) * 100
+            
+            # Determine optimal entry based on bias
+            if position_type == "LONG":
+                # For LONG: Buy near support
+                if position_in_range < 40:
+                    signal_score += 20
+                    signal_reasons.append(f"Ideal LONG entry: Near support (₹{nearest_sup['strike']:,})")
+                    optimal_entry_price = nearest_sup["strike"] + (range_size * 0.1)  # Slightly above support
+                elif position_in_range < 60:
+                    signal_score += 10
+                    signal_reasons.append("OK LONG entry: Middle of range")
+                else:
+                    signal_score += 5
+                    signal_reasons.append(f"Poor LONG entry: Near resistance (₹{nearest_res['strike']:,})")
+                    
+            elif position_type == "SHORT":
+                # For SHORT: Sell near resistance
+                if position_in_range > 60:
+                    signal_score += 20
+                    signal_reasons.append(f"Ideal SHORT entry: Near resistance (₹{nearest_res['strike']:,})")
+                    optimal_entry_price = nearest_res["strike"] - (range_size * 0.1)  # Slightly below resistance
+                elif position_in_range > 40:
+                    signal_score += 10
+                    signal_reasons.append("OK SHORT entry: Middle of range")
+                else:
+                    signal_score += 5
+                    signal_reasons.append(f"Poor SHORT entry: Near support (₹{nearest_sup['strike']:,})")
+    
+    # ============================================
+    # 4. BREAKOUT INDEX (15% weight)
+    # ============================================
+    if seller_breakout_index > 80:
+        signal_score += 15
+        signal_reasons.append(f"High Breakout Index ({seller_breakout_index}%): Strong momentum expected")
+    elif seller_breakout_index > 60:
+        signal_score += 10
+        signal_reasons.append(f"Moderate Breakout Index ({seller_breakout_index}%): Some momentum expected")
+    else:
+        signal_score += 5
+        signal_reasons.append(f"Low Breakout Index ({seller_breakout_index}%): Weak momentum")
+    
+    # ============================================
+    # 5. PCR ANALYSIS (10% weight)
+    # ============================================
+    total_ce_oi = merged_df["OI_CE"].sum()
+    total_pe_oi = merged_df["OI_PE"].sum()
+    if total_ce_oi > 0:
+        total_pcr = total_pe_oi / total_ce_oi
+        if position_type == "LONG" and total_pcr > 1.5:
+            signal_score += 10
+            signal_reasons.append(f"Strong PCR ({total_pcr:.2f}): Heavy PUT selling confirms bullish bias")
+        elif position_type == "SHORT" and total_pcr < 0.7:
+            signal_score += 10
+            signal_reasons.append(f"Strong PCR ({total_pcr:.2f}): Heavy CALL selling confirms bearish bias")
+        else:
+            signal_score += 5
+            signal_reasons.append(f"Moderate PCR ({total_pcr:.2f}): Some confirmation")
+    
+    # ============================================
+    # 6. GEX ANALYSIS (Adjustment factor)
+    # ============================================
+    total_gex_net = merged_df["GEX_Net"].sum()
+    if total_gex_net > 1000000:  # Positive GEX
+        if position_type == "LONG":
+            signal_score += 5
+            signal_reasons.append("Positive GEX: Supports LONG position (stabilizing)")
+        else:
+            signal_score -= 5
+            signal_reasons.append("Positive GEX: Works against SHORT position")
+    elif total_gex_net < -1000000:  # Negative GEX
+        if position_type == "SHORT":
+            signal_score += 5
+            signal_reasons.append("Negative GEX: Supports SHORT position (destabilizing)")
+        else:
+            signal_score -= 5
+            signal_reasons.append("Negative GEX: Works against LONG position")
+    
+    # ============================================
+    # FINAL SIGNAL CALCULATION
+    # ============================================
+    
+    # Calculate confidence percentage
+    confidence = min(max(signal_score, 0), 100)
+    
+    # Determine signal strength
+    if confidence >= 80:
+        signal_strength = "STRONG"
+        signal_color = "#00ff88" if position_type == "LONG" else "#ff4444"
+    elif confidence >= 60:
+        signal_strength = "MODERATE"
+        signal_color = "#00cc66" if position_type == "LONG" else "#ff6666"
+    elif confidence >= 40:
+        signal_strength = "WEAK"
+        signal_color = "#66b3ff"
+    else:
+        signal_strength = "NO SIGNAL"
+        signal_color = "#cccccc"
+        position_type = "NEUTRAL"
+        optimal_entry_price = spot
+    
+    # Calculate stop loss and target
+    stop_loss = None
+    target = None
+    
+    if nearest_sup and nearest_res and position_type != "NEUTRAL":
+        if position_type == "LONG":
+            stop_loss = nearest_sup["strike"] - (strike_gap_from_series(merged_df["strikePrice"]) * 2)
+            target = nearest_res["strike"] + (strike_gap_from_series(merged_df["strikePrice"]) * 2)
+        elif position_type == "SHORT":
+            stop_loss = nearest_res["strike"] + (strike_gap_from_series(merged_df["strikePrice"]) * 2)
+            target = nearest_sup["strike"] - (strike_gap_from_series(merged_df["strikePrice"]) * 2)
+    
+    return {
+        "position_type": position_type,
+        "signal_strength": signal_strength,
+        "confidence": confidence,
+        "optimal_entry_price": optimal_entry_price,
+        "current_spot": spot,
+        "signal_color": signal_color,
+        "reasons": signal_reasons,
+        "stop_loss": stop_loss,
+        "target": target,
+        "max_pain": seller_max_pain,
+        "nearest_support": nearest_sup["strike"] if nearest_sup else None,
+        "nearest_resistance": nearest_res["strike"] if nearest_res else None
+    }
+
+# -----------------------
+# 🔥 SELLER'S PERSPECTIVE FUNCTIONS (Existing functions)
 # -----------------------
 def seller_strength_score(row, weights=SCORE_WEIGHTS):
     """
@@ -1053,6 +1258,25 @@ ranked_current, seller_supports_df, seller_resists_df = rank_support_resistance_
 # Analyze spot position from SELLER perspective
 spot_analysis = analyze_spot_position_seller(spot, ranked_current, seller_bias_result)
 
+nearest_sup = spot_analysis["nearest_support"]
+nearest_res = spot_analysis["nearest_resistance"]
+
+# ============================================
+# 🎯 CALCULATE ENTRY SIGNAL - NEW SECTION
+# ============================================
+entry_signal = calculate_entry_signal(
+    spot=spot,
+    merged_df=merged,
+    atm_strike=atm_strike,
+    seller_bias_result=seller_bias_result,
+    seller_max_pain=seller_max_pain,
+    seller_supports_df=seller_supports_df,
+    seller_resists_df=seller_resists_df,
+    nearest_sup=nearest_sup,
+    nearest_res=nearest_res,
+    seller_breakout_index=seller_breakout_index
+)
+
 # ============================================
 # 🎯 MAIN DASHBOARD - SELLER'S VIEW
 # ============================================
@@ -1075,6 +1299,51 @@ st.markdown(f"""
     <p><strong>Action:</strong> {seller_bias_result["action"]}</p>
 </div>
 """, unsafe_allow_html=True)
+
+# ============================================
+# 🎯 ENTRY SIGNAL DISPLAY - NEW SECTION
+# ============================================
+st.markdown(f"""
+<div class='entry-signal-box'>
+    <h3>🎯 ENTRY SIGNAL - SELLER'S PERSPECTIVE</h3>
+    <div class='signal-value' style='color:{entry_signal["signal_color"]}'>
+        {entry_signal["signal_strength"]} {entry_signal["position_type"]}
+    </div>
+    <div class='signal-explanation'>Confidence: {entry_signal["confidence"]:.0f}%</div>
+    <div class='entry-price'>Optimal Entry: ₹{entry_signal["optimal_entry_price"]:,.2f}</div>
+    <div class='distance'>Current Spot: ₹{spot:,.2f}</div>
+</div>
+""", unsafe_allow_html=True)
+
+# Entry details
+col_entry1, col_entry2 = st.columns(2)
+
+with col_entry1:
+    st.markdown("#### 📊 ENTRY DETAILS")
+    st.metric("Position Type", entry_signal["position_type"])
+    st.metric("Signal Strength", entry_signal["signal_strength"])
+    st.metric("Confidence", f"{entry_signal['confidence']:.0f}%")
+    st.metric("Optimal Entry", f"₹{entry_signal['optimal_entry_price']:,.2f}")
+
+with col_entry2:
+    st.markdown("#### 🎯 RISK MANAGEMENT")
+    if entry_signal["stop_loss"] and entry_signal["target"]:
+        stop_loss = entry_signal["stop_loss"]
+        target = entry_signal["target"]
+        risk_reward = abs(target - entry_signal["optimal_entry_price"]) / abs(stop_loss - entry_signal["optimal_entry_price"])
+        
+        st.metric("Stop Loss", f"₹{stop_loss:,.2f}")
+        st.metric("Target", f"₹{target:,.2f}")
+        st.metric("Risk:Reward", f"1:{risk_reward:.2f}")
+    else:
+        st.info("Risk management levels not available for NEUTRAL signal")
+
+# Entry reasoning
+st.markdown("#### 🧠 SIGNAL REASONING")
+for reason in entry_signal["reasons"]:
+    st.markdown(f"- {reason}")
+
+st.markdown("---")
 
 # Core Metrics
 st.markdown("## 📈 SELLER'S MARKET OVERVIEW")
@@ -1124,9 +1393,6 @@ st.markdown("---")
 # ============================================
 
 st.markdown("## 📍 SPOT POSITION (SELLER'S DEFENSE)")
-
-nearest_sup = spot_analysis["nearest_support"]
-nearest_res = spot_analysis["nearest_resistance"]
 
 col_spot, col_range = st.columns([1, 1])
 
@@ -1493,4 +1759,4 @@ st.markdown(f"""
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v4.0 — 100% SELLER'S PERSPECTIVE** | Market Maker Logic Applied")
+st.caption("🎯 **NIFTY Option Screener v4.0 — 100% SELLER'S PERSPECTIVE** | Market Maker Logic Applied | Entry Signal Analysis")
