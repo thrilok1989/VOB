@@ -1,4 +1,4 @@
-# nifty_option_screener_v5_seller_perspective_complete.py
+# nifty_option_screener_v5_seller_perspective_complete_fixed.py
 """
 Nifty Option Screener v5.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR
 EVERYTHING interpreted from Option Seller/Market Maker viewpoint
@@ -1461,58 +1461,58 @@ with moment_col1:
     mb = moment_metrics["momentum_burst"]
     if mb["available"]:
         color = "#ff00ff" if mb["score"] > 70 else ("#ff9900" if mb["score"] > 40 else "#66b3ff")
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="moment-box">
             <h4>💥 MOMENTUM BURST</h4>
-            <div class="moment-value" style='color:{color}'>{mb["score"]}/100</div>
+            <div class="moment-value" style="color:{color}">{mb["score"]}/100</div>
             <div class="sub-info">{mb["note"]}</div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
 
 with moment_col2:
     ob = moment_metrics["orderbook"]
     if ob["available"]:
         pressure = ob["pressure"]
         color = "#00ff88" if pressure > 0.15 else ("#ff4444" if pressure < -0.15 else "#66b3ff")
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="moment-box">
             <h4>📊 ORDERBOOK PRESSURE</h4>
-            <div class="moment-value" style='color:{color}'>{pressure:+.2f}</div>
+            <div class="moment-value" style="color:{color}">{pressure:+.2f}</div>
             <div class="sub-info">Buy/Sell imbalance</div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
     else:
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="moment-box">
             <h4>📊 ORDERBOOK PRESSURE</h4>
-            <div class="moment-value" style='color:#cccccc'>N/A</div>
+            <div class="moment-value" style="color:#cccccc">N/A</div>
             <div class="sub-info">Depth data unavailable</div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
 
 with moment_col3:
     gc = moment_metrics["gamma_cluster"]
     if gc["available"]:
         color = "#ff00ff" if gc["score"] > 70 else ("#ff9900" if gc["score"] > 40 else "#66b3ff")
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="moment-box">
             <h4>🌀 GAMMA CLUSTER</h4>
-            <div class="moment-value" style='color:{color}'>{gc["score"]}/100</div>
+            <div class="moment-value" style="color:{color}">{gc["score"]}/100</div>
             <div class="sub-info">ATM ±2 concentration</div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
 
 with moment_col4:
     oi = moment_metrics["oi_accel"]
     if oi["available"]:
         color = "#ff00ff" if oi["score"] > 70 else ("#ff9900" if oi["score"] > 40 else "#66b3ff")
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="moment-box">
             <h4>⚡ OI ACCELERATION</h4>
-            <div class="moment-value" style='color:{color}'>{oi["score"]}/100</div>
+            <div class="moment-value" style="color:{color}">{oi["score"]}/100</div>
             <div class="sub-info">{oi["note"]}</div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
 
 # ============================================
 # 🎯 SUPER PROMINENT ENTRY SIGNAL AT THE TOP
@@ -1523,9 +1523,9 @@ signal_container = st.container()
 with signal_container:
     # Header
     st.markdown("""
-    <div style='text-align: center; margin: 10px 0 20px 0;'>
-        <h1 style='color: #ff66cc; font-size: 2.8rem; margin-bottom: 5px;'>🎯 LIVE ENTRY SIGNAL</h1>
-        <p style='color: #cccccc; font-size: 1.1rem;'>Seller's Perspective + Moment Detector Fusion</p>
+    <div style="text-align: center; margin: 10px 0 20px 0;">
+        <h1 style="color: #ff66cc; font-size: 2.8rem; margin-bottom: 5px;">🎯 LIVE ENTRY SIGNAL</h1>
+        <p style="color: #cccccc; font-size: 1.1rem;">Seller's Perspective + Moment Detector Fusion</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1536,9 +1536,9 @@ with signal_container:
         signal_border = "#00ff88" if entry_signal["position_type"] == "LONG" else "#ff4444"
         signal_emoji = "🚀" if entry_signal["position_type"] == "LONG" else "🐻"
         
-        # Build the HTML string
-        signal_html = f"""
-        <div style='
+        # Build the HTML string with triple quotes
+        signal_html = f'''
+        <div style="
             background: linear-gradient(135deg, {signal_bg} 0%, #2a3e2a 100%);
             padding: 30px;
             border-radius: 20px;
@@ -1547,51 +1547,51 @@ with signal_container:
             text-align: center;
             max-width: 900px;
             box-shadow: 0 8px 30px rgba(0,0,0,0.4);
-        '>
-            <div style='display: flex; justify-content: center; align-items: center; margin-bottom: 15px;'>
-                <span style='font-size: 4rem; margin-right: 20px;'>{signal_emoji}</span>
+        ">
+            <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 15px;">
+                <span style="font-size: 4rem; margin-right: 20px;">{signal_emoji}</span>
                 <div>
-                    <div style='font-size: 2.8rem; font-weight: 900; color:{signal_border}; line-height: 1.2;'>
+                    <div style="font-size: 2.8rem; font-weight: 900; color:{signal_border}; line-height: 1.2;">
                         {entry_signal["signal_strength"]} {entry_signal["position_type"]} SIGNAL
                     </div>
-                    <div style='font-size: 1.2rem; color: #ffdd44; margin-top: 5px;'>
+                    <div style="font-size: 1.2rem; color: #ffdd44; margin-top: 5px;">
                         Confidence: {entry_signal["confidence"]:.0f}%
                     </div>
                 </div>
-                <span style='font-size: 4rem; margin-left: 20px;'>{signal_emoji}</span>
+                <span style="font-size: 4rem; margin-left: 20px;">{signal_emoji}</span>
             </div>
             
-            <div style='background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; margin: 20px 0;'>
-                <div style='font-size: 3rem; color: #ffcc00; font-weight: 900;'>
+            <div style="background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; margin: 20px 0;">
+                <div style="font-size: 3rem; color: #ffcc00; font-weight: 900;">
                     ₹{entry_signal["optimal_entry_price"]:,.2f}
                 </div>
-                <div style='font-size: 1.3rem; color: #cccccc; margin-top: 5px;'>
+                <div style="font-size: 1.3rem; color: #cccccc; margin-top: 5px;">
                     OPTIMAL ENTRY PRICE
                 </div>
             </div>
             
-            <div style='display: flex; justify-content: center; gap: 30px; margin-top: 20px;'>
-                <div style='text-align: center;'>
-                    <div style='font-size: 1.1rem; color: #aaaaaa;'>Current Spot</div>
-                    <div style='font-size: 1.8rem; color: #ffffff; font-weight: 700;'>₹{spot:,.2f}</div>
+            <div style="display: flex; justify-content: center; gap: 30px; margin-top: 20px;">
+                <div style="text-align: center;">
+                    <div style="font-size: 1.1rem; color: #aaaaaa;">Current Spot</div>
+                    <div style="font-size: 1.8rem; color: #ffffff; font-weight: 700;">₹{spot:,.2f}</div>
                 </div>
-                <div style='text-align: center;'>
-                    <div style='font-size: 1.1rem; color: #aaaaaa;'>Distance</div>
-                    <div style='font-size: 1.8rem; color: #ffaa00; font-weight: 700;'>
+                <div style="text-align: center;">
+                    <div style="font-size: 1.1rem; color: #aaaaaa;">Distance</div>
+                    <div style="font-size: 1.8rem; color: #ffaa00; font-weight: 700;">
                         ₹{abs(spot - entry_signal["optimal_entry_price"]):.2f}
                     </div>
                 </div>
-                <div style='text-align: center;'>
-                    <div style='font-size: 1.1rem; color: #aaaaaa;'>Direction</div>
-                    <div style='font-size: 1.8rem; color: {signal_border}; font-weight: 700;'>
+                <div style="text-align: center;">
+                    <div style="font-size: 1.1rem; color: #aaaaaa;">Direction</div>
+                    <div style="font-size: 1.8rem; color: {signal_border}; font-weight: 700;">
                         {entry_signal["position_type"]}
                     </div>
                 </div>
             </div>
             
-            <div style='margin-top: 25px; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 10px;'>
-                <div style='font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px;'>🎯 MOMENT CONFIRMATION</div>
-                <div style='display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc;'>
+            <div style="margin-top: 25px; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+                <div style="font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px;">🎯 MOMENT CONFIRMATION</div>
+                <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc;">
                     <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
                     <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
                     <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
@@ -1599,7 +1599,7 @@ with signal_container:
                 </div>
             </div>
         </div>
-        """
+        '''
         
         st.markdown(signal_html, unsafe_allow_html=True)
         
@@ -1634,8 +1634,8 @@ with signal_container:
         
     else:
         # NO SIGNAL
-        no_signal_html = f"""
-        <div style='
+        no_signal_html = f'''
+        <div style="
             background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
             padding: 30px;
             border-radius: 20px;
@@ -1644,35 +1644,35 @@ with signal_container:
             text-align: center;
             max-width: 900px;
             box-shadow: 0 8px 30px rgba(0,0,0,0.4);
-        '>
-            <div style='font-size: 4rem; color: #cccccc; margin-bottom: 20px;'>
+        ">
+            <div style="font-size: 4rem; color: #cccccc; margin-bottom: 20px;">
                 ⚠️
             </div>
             
-            <div style='font-size: 2.5rem; font-weight: 900; color:#cccccc; line-height: 1.2; margin-bottom: 15px;'>
+            <div style="font-size: 2.5rem; font-weight: 900; color:#cccccc; line-height: 1.2; margin-bottom: 15px;">
                 NO CLEAR ENTRY SIGNAL
             </div>
             
-            <div style='font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin-bottom: 20px;'>
+            <div style="font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin-bottom: 20px;">
                 Wait for Better Setup
             </div>
             
-            <div style='background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; margin: 20px 0;'>
-                <div style='font-size: 2.5rem; color: #ffffff; font-weight: 700;'>
+            <div style="background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; margin: 20px 0;">
+                <div style="font-size: 2.5rem; color: #ffffff; font-weight: 700;">
                     ₹{spot:,.2f}
                 </div>
-                <div style='font-size: 1.2rem; color: #cccccc; margin-top: 5px;'>
+                <div style="font-size: 1.2rem; color: #cccccc; margin-top: 5px;">
                     CURRENT SPOT PRICE
                 </div>
             </div>
             
-            <div style='color: #aaaaaa; font-size: 1.1rem; margin-top: 20px;'>
+            <div style="color: #aaaaaa; font-size: 1.1rem; margin-top: 20px;">
                 Signal Confidence: {entry_signal["confidence"]:.0f}% | Market Bias: {seller_bias_result["bias"]}
             </div>
             
-            <div style='margin-top: 25px; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 10px;'>
-                <div style='font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px;'>🎯 MOMENT STATUS</div>
-                <div style='display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc;'>
+            <div style="margin-top: 25px; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+                <div style="font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px;">🎯 MOMENT STATUS</div>
+                <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc;">
                     <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
                     <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
                     <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
@@ -1680,7 +1680,7 @@ with signal_container:
                 </div>
             </div>
         </div>
-        """
+        '''
         
         st.markdown(no_signal_html, unsafe_allow_html=True)
         
@@ -1720,7 +1720,7 @@ with signal_container:
 # 🎯 SELLER'S BIAS
 # ============================================
 
-st.markdown(f"""
+st.markdown(f'''
 <div class='seller-bias-box'>
     <h3>🎯 SELLER'S MARKET BIAS</h3>
     <div class='bias-value' style='color:{seller_bias_result["color"]}'>
@@ -1728,15 +1728,15 @@ st.markdown(f"""
     </div>
     <p>Polarity Score: {seller_bias_result["polarity"]:.2f}</p>
 </div>
-""", unsafe_allow_html=True)
+''', unsafe_allow_html=True)
 
-st.markdown(f"""
+st.markdown(f'''
 <div class='seller-explanation'>
     <h4>🧠 SELLER'S THINKING:</h4>
     <p><strong>{seller_bias_result["explanation"]}</strong></p>
     <p><strong>Action:</strong> {seller_bias_result["action"]}</p>
 </div>
-""", unsafe_allow_html=True)
+''', unsafe_allow_html=True)
 
 # Core Metrics
 st.markdown("## 📈 SELLER'S MARKET OVERVIEW")
@@ -1758,14 +1758,14 @@ with col4:
 # Max Pain Display
 if seller_max_pain:
     distance_to_max_pain = abs(spot - seller_max_pain)
-    st.markdown(f"""
+    st.markdown(f'''
     <div class='max-pain-box'>
         <h4>🎯 SELLER'S MAX PAIN (Preferred Level)</h4>
         <p style='font-size: 1.5rem; color: #ff9900; font-weight: bold; text-align: center;'>₹{seller_max_pain:,}</p>
         <p style='text-align: center; color: #cccccc;'>Distance from spot: ₹{distance_to_max_pain:.2f} ({distance_to_max_pain/spot*100:.2f}%)</p>
         <p style='text-align: center; color: #ffcc00;'>Sellers want price here to minimize losses</p>
     </div>
-    """, unsafe_allow_html=True)
+    ''', unsafe_allow_html=True)
 
 # SELLER Activity Summary
 st.markdown("### 🔥 SELLER ACTIVITY HEATMAP")
@@ -1793,14 +1793,14 @@ nearest_res = spot_analysis["nearest_resistance"]
 col_spot, col_range = st.columns([1, 1])
 
 with col_spot:
-    st.markdown(f"""
+    st.markdown(f'''
     <div class="spot-card">
         <h3>🎯 CURRENT SPOT</h3>
         <div class="spot-price">₹{spot:,.2f}</div>
         <div class="distance">ATM: ₹{atm_strike:,}</div>
-        <div class="distance">Market Bias: <span style='color:{seller_bias_result["color"]}'>{seller_bias_result["bias"]}</span></div>
+        <div class="distance">Market Bias: <span style="color:{seller_bias_result['color']}">{seller_bias_result["bias"]}</span></div>
     </div>
-    """, unsafe_allow_html=True)
+    ''', unsafe_allow_html=True)
 
 with col_range:
     if nearest_sup and nearest_res:
@@ -1808,15 +1808,15 @@ with col_range:
         spot_position_pct = spot_analysis["spot_position_pct"]
         range_bias = spot_analysis["range_bias"]
         
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="spot-card">
             <h3>📊 SELLER'S DEFENSE RANGE</h3>
             <div class="distance">₹{nearest_sup['strike']:,} ← SPOT → ₹{nearest_res['strike']:,}</div>
             <div class="distance">Position: {spot_position_pct:.1f}% within range</div>
             <div class="distance">Range Width: ₹{range_size:,}</div>
-            <div class="distance" style='color:#ffcc00;'>{range_bias}</div>
+            <div class="distance" style="color:#ffcc00;">{range_bias}</div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -1832,7 +1832,7 @@ with col_ns:
         sup = nearest_sup
         pcr_display = f"{sup['pcr']:.2f}" if not np.isinf(sup['pcr']) else "∞"
         
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="nearest-level">
             <h4>💚 NEAREST SELLER SUPPORT</h4>
             <div class="level-value">₹{sup['strike']:,}</div>
@@ -1843,7 +1843,7 @@ with col_ns:
                 PCR: {pcr_display} | ΔCALL: {sup['chg_oi_ce']:+,} | ΔPUT: {sup['chg_oi_pe']:+,}
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
     else:
         st.info("No seller support level below spot")
 
@@ -1854,7 +1854,7 @@ with col_nr:
         res = nearest_res
         pcr_display = f"{res['pcr']:.2f}" if not np.isinf(res['pcr']) else "∞"
         
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="nearest-level">
             <h4>🧡 NEAREST SELLER RESISTANCE</h4>
             <div class="level-value">₹{res['strike']:,}</div>
@@ -1865,7 +1865,7 @@ with col_nr:
                 PCR: {pcr_display} | ΔCALL: {res['chg_oi_ce']:+,} | ΔPUT: {res['chg_oi_pe']:+,}
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
     else:
         st.info("No seller resistance level above spot")
 
@@ -1902,19 +1902,19 @@ with col_s:
         dist_pct = (dist / spot * 100)
         direction = "⬆️ Above" if strike > spot else "⬇️ Below"
         
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="level-card">
             <h4>Seller Support #{i}</h4>
             <p>₹{strike:,}</p>
             <div class="sub-info">
                 {direction}: ₹{dist:.2f} ({dist_pct:.2f}%)<br>
-                <span style='color:{color}'><strong>{seller_msg}</strong></span><br>
+                <span style="color:{color}"><strong>{seller_msg}</strong></span><br>
                 PUT OI: {oi_pe:,} | ΔPUT: {chg_oi_pe:+,}<br>
                 CALL OI: {oi_ce:,} | ΔCALL: {chg_oi_ce:+,}<br>
                 PCR: {pcr_display}
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
 
 with col_r:
     st.markdown("#### ⚡ STRONGEST SELLER RESISTANCES")
@@ -1942,19 +1942,19 @@ with col_r:
         dist_pct = (dist / spot * 100)
         direction = "⬆️ Above" if strike > spot else "⬇️ Below"
         
-        st.markdown(f"""
+        st.markdown(f'''
         <div class="level-card">
             <h4>Seller Resistance #{i}</h4>
             <p>₹{strike:,}</p>
             <div class="sub-info">
                 {direction}: ₹{dist:.2f} ({dist_pct:.2f}%)<br>
-                <span style='color:{color}'><strong>{seller_msg}</strong></span><br>
+                <span style="color:{color}"><strong>{seller_msg}</strong></span><br>
                 CALL OI: {oi_ce:,} | ΔCALL: {chg_oi_ce:+,}<br>
                 PUT OI: {oi_pe:,} | ΔPUT: {chg_oi_pe:+,}<br>
                 PCR: {pcr_display}
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -2238,7 +2238,7 @@ if moment_metrics["orderbook"]["available"] and abs(moment_metrics["orderbook"][
     direction = "buy" if moment_metrics["orderbook"]["pressure"] > 0 else "sell"
     moment_summary += f"Strong {direction} pressure in orderbook. "
 
-st.markdown(f"""
+st.markdown(f'''
 <div class='seller-explanation'>
     <h3>🎯 FINAL ASSESSMENT (Seller + Moment)</h3>
     <p><strong>Market Makers are telling us:</strong> {seller_bias_result["explanation"]}</p>
@@ -2247,7 +2247,7 @@ st.markdown(f"""
     <p><strong>Key defense levels:</strong> ₹{nearest_sup['strike'] if nearest_sup else 'N/A':,} (Support) | ₹{nearest_res['strike'] if nearest_res else 'N/A':,} (Resistance)</p>
     <p><strong>Preferred price level:</strong> ₹{seller_max_pain if seller_max_pain else 'N/A':,} (Max Pain)</p>
 </div>
-""", unsafe_allow_html=True)
+''', unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")
