@@ -1,7 +1,7 @@
-# nifty_option_screener_v4_immediate_levels.py
+# nifty_option_screener_v4_spot_analysis.py
 """
-Nifty Option Screener v4.0 — IMMEDIATE SUPPORT/RESISTANCE
-Shows levels INSTANTLY from current PCR, trends from snapshots
+Nifty Option Screener v4.0 — SPOT POSITION ANALYSIS
+Shows nearest support/resistance from spot, distance, and next levels
 """
 
 import streamlit as st
@@ -61,7 +61,7 @@ try:
     DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
     DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
 except Exception as e:
-    st.error("❌ Missing credentials in secrets")
+    st.error("❌ Missing credentials")
     st.stop()
 
 try:
@@ -92,6 +92,29 @@ st.markdown("""
     .level-card h4 { margin: 0; color: #00d4aa; font-size: 1.1rem; }
     .level-card p { margin: 5px 0; color: #fafafa; font-size: 1.3rem; font-weight: 700; }
     .level-card .sub-info { font-size: 0.9rem; color: #9ba4b5; margin-top: 5px; }
+    
+    .spot-card {
+        background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid #ff6600;
+        margin: 10px 0;
+        text-align: center;
+    }
+    .spot-card h3 { margin: 0; color: #ff6600; font-size: 1.3rem; }
+    .spot-card .spot-price { font-size: 2.5rem; color: #ffaa00; font-weight: 700; margin: 10px 0; }
+    .spot-card .distance { font-size: 1.1rem; color: #ffcc44; margin: 5px 0; }
+    
+    .nearest-level {
+        background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #00ffcc;
+        margin: 10px 0;
+    }
+    .nearest-level h4 { margin: 0; color: #00ffcc; font-size: 1.2rem; }
+    .nearest-level .level-value { font-size: 1.8rem; color: #00ffcc; font-weight: 700; margin: 5px 0; }
+    .nearest-level .level-distance { font-size: 1rem; color: #66ffdd; margin: 5px 0; }
     
     .alert-box {
         padding: 15px;
@@ -127,7 +150,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Nifty Option Screener v4 - Immediate Levels", layout="wide")
+st.set_page_config(page_title="Nifty Screener v4 - Spot Analysis", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -139,7 +162,7 @@ def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
 auto_refresh()
 
 # -----------------------
-#  UTILITY FUNCTIONS
+#  UTILITY FUNCTIONS (same as before)
 # -----------------------
 def safe_int(x):
     try:
@@ -160,127 +183,69 @@ def strike_gap_from_series(series):
     mode = diffs.mode()
     return int(mode.iloc[0]) if not mode.empty else int(diffs.median())
 
-def bs_d1(S, K, r, sigma, tau):
-    if sigma <= 0 or tau <= 0:
-        return 0.0
-    return (np.log(S / K) + (r + 0.5 * sigma ** 2) * tau) / (sigma * np.sqrt(tau))
+# ... (include all other utility functions from previous script)
 
-def bs_delta(S, K, r, sigma, tau, option_type="call"):
-    if tau <= 0 or sigma <= 0:
-        return 1.0 if (option_type=="call" and S>K) else (-1.0 if (option_type=="put" and S<K) else 0.0)
-    d1 = bs_d1(S,K,r,sigma,tau)
-    if option_type == "call":
-        return norm.cdf(d1)
-    return -norm.cdf(-d1)
-
-def bs_gamma(S, K, r, sigma, tau):
-    if sigma <= 0 or tau <= 0:
-        return 0.0
-    d1 = bs_d1(S,K,r,sigma,tau)
-    return norm.pdf(d1) / (S * sigma * np.sqrt(tau))
-
-def bs_vega(S,K,r,sigma,tau):
-    if sigma <= 0 or tau <= 0:
-        return 0.0
-    d1 = bs_d1(S,K,r,sigma,tau)
-    return S * norm.pdf(d1) * np.sqrt(tau)
-
-def bs_theta(S,K,r,sigma,tau,option_type="call"):
-    if sigma <=0 or tau<=0:
-        return 0.0
-    d1 = bs_d1(S,K,r,sigma,tau)
-    d2 = d1 - sigma*np.sqrt(tau)
-    term1 = - (S * norm.pdf(d1) * sigma) / (2 * np.sqrt(tau))
-    if option_type=="call":
-        term2 = r*K*np.exp(-r*tau)*norm.cdf(d2)
-        return term1 - term2
-    else:
-        term2 = r*K*np.exp(-r*tau)*norm.cdf(-d2)
-        return term1 + term2
-
-def strike_strength_score(row, weights=SCORE_WEIGHTS):
-    chg_oi = safe_float(row.get("Chg_OI_CE",0)) + safe_float(row.get("Chg_OI_PE",0))
-    vol = safe_float(row.get("Vol_CE",0)) + safe_float(row.get("Vol_PE",0))
-    oi = safe_float(row.get("OI_CE",0)) + safe_float(row.get("OI_PE",0))
-    iv_ce = safe_float(row.get("IV_CE", np.nan))
-    iv_pe = safe_float(row.get("IV_PE", np.nan))
-    iv = np.nanmean([v for v in (iv_ce, iv_pe) if not np.isnan(v)]) if (not np.isnan(iv_ce) or not np.isnan(iv_pe)) else 0
-    score = weights["chg_oi"]*chg_oi + weights["volume"]*vol + weights["oi"]*oi + weights["iv"]*iv
-    return score
-
-def price_oi_divergence_label(chg_oi, vol, ltp_change):
-    vol_up = vol>0
-    oi_up = chg_oi>0
-    price_up = (ltp_change is not None and ltp_change>0)
-    if oi_up and vol_up and price_up:
-        return "Fresh Build"
-    if oi_up and vol_up and not price_up:
-        return "Seller Aggressive"
-    if not oi_up and vol_up and price_up:
-        return "Long Covering"
-    if not oi_up and vol_up and not price_up:
-        return "Put Covering"
-    if oi_up and not vol_up:
-        return "Weak Build"
-    if (not oi_up) and not vol_up:
-        return "Weak Unwind"
-    return "Neutral"
-
-def interpret_itm_otm(strike, atm, chg_oi_ce, chg_oi_pe):
-    if strike < atm:
-        ce = "Bullish (ITM CE Unwind)" if chg_oi_ce < 0 else "Bearish (ITM CE Build)" if chg_oi_ce > 0 else "NoSign"
-    elif strike > atm:
-        ce = "Resistance Forming" if chg_oi_ce > 0 else "Resistance Weakening" if chg_oi_ce < 0 else "NoSign"
-    else:
-        ce = "ATM CE"
-
-    if strike > atm:
-        pe = "Bullish (ITM PE Unwind)" if chg_oi_pe < 0 else "Bearish (ITM PE Build)" if chg_oi_pe > 0 else "NoSign"
-    elif strike < atm:
-        pe = "Support Forming" if chg_oi_pe > 0 else "Support Weakening" if chg_oi_pe < 0 else "NoSign"
-    else:
-        pe = "ATM PE"
-
-    return f"{ce} | {pe}"
-
-def gamma_pressure_metric(row, atm, strike_gap):
-    strike = row["strikePrice"]
-    dist = abs(strike - atm) / max(strike_gap, 1)
-    dist = max(dist, 1e-6)
-    chg_oi_sum = safe_float(row.get("Chg_OI_CE",0)) - safe_float(row.get("Chg_OI_PE",0))
-    return chg_oi_sum / dist
-
-def breakout_probability_index(merged_df, atm, strike_gap):
-    near_mask = merged_df["strikePrice"].between(atm-strike_gap, atm+strike_gap)
-    atm_chg_oi = merged_df.loc[near_mask, ["Chg_OI_CE","Chg_OI_PE"]].abs().sum().sum()
-    atm_score = min(atm_chg_oi/50000.0, 1.0)
-    winding_count = (merged_df[["CE_Winding","PE_Winding"]]=="Winding").sum().sum()
-    unwinding_count = (merged_df[["CE_Winding","PE_Winding"]]=="Unwinding").sum().sum()
-    winding_balance = winding_count/(winding_count+unwinding_count) if (winding_count+unwinding_count)>0 else 0.5
-    vol_oi_scores = (merged_df[["Vol_CE","Vol_PE"]].sum(axis=1) * merged_df[["Chg_OI_CE","Chg_OI_PE"]].abs().sum(axis=1)).fillna(0)
-    vol_oi_score = min(vol_oi_scores.sum()/100000.0, 1.0)
-    gamma = merged_df.apply(lambda r: gamma_pressure_metric(r, atm, strike_gap), axis=1).abs().sum()
-    gamma_score = min(gamma/10000.0, 1.0)
-    w = BREAKOUT_INDEX_WEIGHTS
-    combined = (w["atm_oi_shift"]*atm_score) + (w["winding_balance"]*winding_balance) + (w["vol_oi_div"]*vol_oi_score) + (w["gamma_pressure"]*gamma_score)
-    return int(np.clip(combined*100,0,100))
-
-def center_of_mass_oi(df, oi_col):
-    if df.empty or oi_col not in df.columns:
-        return 0
-    total_oi = df[oi_col].sum()
-    if total_oi == 0:
-        return 0
-    weighted_sum = (df["strikePrice"] * df[oi_col]).sum()
-    return weighted_sum / total_oi
-
-def now_in_window(w_key):
-    now = get_ist_now()
-    s_h, s_m = TIME_WINDOWS[w_key]["start"]
-    e_h, e_m = TIME_WINDOWS[w_key]["end"]
-    start = now.replace(hour=s_h, minute=s_m, second=0, microsecond=0)
-    end = now.replace(hour=e_h, minute=e_m, second=0, microsecond=0)
-    return start <= now <= end
+# -----------------------
+# 🔥 NEW: SPOT POSITION ANALYSIS
+# -----------------------
+def analyze_spot_position(spot, ranked_df):
+    """
+    Analyze spot position relative to all support/resistance levels
+    Returns nearest support below, nearest resistance above, and next levels
+    """
+    # Sort by strike price
+    sorted_df = ranked_df.sort_values("strikePrice").reset_index(drop=True)
+    
+    # Separate supports and resistances
+    supports = sorted_df.sort_values("support_score", ascending=False).copy()
+    resistances = sorted_df.sort_values("resistance_score", ascending=False).copy()
+    
+    # All strikes sorted
+    all_strikes = sorted_df["strikePrice"].tolist()
+    
+    # Find nearest support (highest strike below spot)
+    supports_below = [s for s in all_strikes if s < spot]
+    nearest_support = max(supports_below) if supports_below else None
+    
+    # Find next support (second highest below spot)
+    next_support = None
+    if len(supports_below) >= 2:
+        next_support = sorted(supports_below, reverse=True)[1]
+    
+    # Find nearest resistance (lowest strike above spot)
+    resistances_above = [s for s in all_strikes if s > spot]
+    nearest_resistance = min(resistances_above) if resistances_above else None
+    
+    # Find next resistance (second lowest above spot)
+    next_resistance = None
+    if len(resistances_above) >= 2:
+        next_resistance = sorted(resistances_above)[1]
+    
+    # Get details for each level
+    def get_level_details(strike, df):
+        if strike is None:
+            return None
+        row = df[df["strikePrice"] == strike]
+        if row.empty:
+            return None
+        return {
+            "strike": int(strike),
+            "oi_ce": int(row.iloc[0]["OI_CE"]),
+            "oi_pe": int(row.iloc[0]["OI_PE"]),
+            "chg_oi_ce": int(row.iloc[0].get("Chg_OI_CE", 0)),
+            "chg_oi_pe": int(row.iloc[0].get("Chg_OI_PE", 0)),
+            "pcr": row.iloc[0]["PCR"],
+            "distance": abs(spot - strike),
+            "distance_pct": abs(spot - strike) / spot * 100
+        }
+    
+    return {
+        "nearest_support": get_level_details(nearest_support, sorted_df),
+        "next_support": get_level_details(next_support, sorted_df),
+        "nearest_resistance": get_level_details(nearest_resistance, sorted_df),
+        "next_resistance": get_level_details(next_resistance, sorted_df),
+        "spot_in_range": (nearest_support, nearest_resistance)
+    }
 
 # -----------------------
 # PCR FUNCTIONS
@@ -304,24 +269,13 @@ def compute_pcr_df(merged_df):
     return df
 
 def rank_support_resistance_current(pcr_df):
-    """
-    IMMEDIATE support/resistance from CURRENT PCR
-    No snapshots required!
-    """
     eps = 1e-6
     t = pcr_df.copy()
-    
-    # Handle infinity PCR values
     t["PCR_clipped"] = t["PCR"].replace([np.inf, -np.inf], np.nan).fillna(0)
-    
-    # Support score = High PE OI + High PCR
     t["support_score"] = t["OI_PE"] + (t["PCR_clipped"] * 100000.0)
-    
-    # Resistance score = High CE OI + Low PCR (inverse)
     t["resistance_factor"] = t["PCR_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
     t["resistance_score"] = t["OI_CE"] + (t["resistance_factor"] * 100000.0)
     
-    # Get top 3
     top_supports = t.sort_values("support_score", ascending=False).head(3)
     top_resists = t.sort_values("resistance_score", ascending=False).head(3)
     
@@ -452,35 +406,6 @@ def evaluate_trend(current_df, prev_df):
     deltas = deltas.reset_index().rename(columns={"index":"strikePrice"})
     return deltas
 
-def detect_fake_breakout(spot, strong_support, strong_resist, trend_df):
-    fake = None
-    fake_hint = ""
-    
-    if strong_resist is not None and spot > strong_resist:
-        row = trend_df[trend_df["strikePrice"]==strong_resist]
-        if not row.empty and row.iloc[0]["ΔOI_CE"] > 0:
-            fake = "Bull Trap"
-            fake_hint = f"Price above resistance {strong_resist} but CE OI building → possible fake upside."
-    
-    if strong_support is not None and spot < strong_support:
-        row = trend_df[trend_df["strikePrice"]==strong_support]
-        if not row.empty and row.iloc[0]["ΔOI_PE"] > 0:
-            fake = "Bear Trap"
-            fake_hint = f"Price below support {strong_support} but PE OI building → possible fake downside."
-    
-    return fake, fake_hint
-
-def generate_stop_loss_hint(spot, top_supports, top_resists, fake_type):
-    if fake_type == "Bull Trap":
-        return f"Keep SL near support {top_supports[0] if len(top_supports)>0 else 'N/A'}"
-    if fake_type == "Bear Trap":
-        return f"Keep SL near resistance {top_resists[0] if len(top_resists)>0 else 'N/A'}"
-    if len(top_resists) > 0 and spot > top_resists[0]:
-        return f"Real upside: SL near {top_supports[1] if len(top_supports)>1 else top_supports[0] if len(top_supports)>0 else 'N/A'}"
-    if len(top_supports) > 0 and spot < top_supports[0]:
-        return f"Real downside: SL near {top_resists[1] if len(top_resists)>1 else top_resists[0] if len(top_resists)>0 else 'N/A'}"
-    return f"No clear breakout"
-
 # -----------------------
 #  DHAN API
 # -----------------------
@@ -587,7 +512,7 @@ def parse_dhan_option_chain(chain_data):
 # -----------------------
 #  MAIN APP
 # -----------------------
-st.title("🎯 NIFTY Option Screener v4.0 — Immediate Levels (IST)")
+st.title("🎯 NIFTY Option Screener v4.0 — Spot Position Analysis")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -654,84 +579,14 @@ df_pe = df_pe[(df_pe["strikePrice"]>=lower) & (df_pe["strikePrice"]<=upper)].res
 merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
 merged["strikePrice"] = merged["strikePrice"].astype(int)
 
-# Session state
-if "prev_ltps_v3" not in st.session_state:
-    st.session_state["prev_ltps_v3"] = {}
-if "prev_ivs_v3" not in st.session_state:
-    st.session_state["prev_ivs_v3"] = {}
-
-# Compute tau
-try:
-    expiry_dt_ist = IST.localize(datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30))
-    now_ist = get_ist_now()
-    tau = max((expiry_dt_ist - now_ist).total_seconds() / (365.25*24*3600), 1/365.25)
-except:
-    tau = 7.0/365.0
-
-# Compute metrics (shortened version - same as before)
-for i, row in merged.iterrows():
-    strike = int(row["strikePrice"])
-    ltp_ce = safe_float(row.get("LTP_CE",0.0))
-    ltp_pe = safe_float(row.get("LTP_PE",0.0))
-    iv_ce = safe_float(row.get("IV_CE", np.nan))
-    iv_pe = safe_float(row.get("IV_PE", np.nan))
-
-    key_ce = f"{expiry}_{strike}_CE"
-    key_pe = f"{expiry}_{strike}_PE"
-    prev_ce = st.session_state["prev_ltps_v3"].get(key_ce)
-    prev_pe = st.session_state["prev_ltps_v3"].get(key_pe)
-
-    ce_price_delta = None if prev_ce is None else (ltp_ce - prev_ce)
-    pe_price_delta = None if prev_pe is None else (ltp_pe - prev_pe)
-
-    st.session_state["prev_ltps_v3"][key_ce] = ltp_ce
-    st.session_state["prev_ltps_v3"][key_pe] = ltp_pe
-
-    chg_oi_ce = safe_int(row.get("Chg_OI_CE",0))
-    chg_oi_pe = safe_int(row.get("Chg_OI_PE",0))
-
-    merged.at[i,"CE_Winding"] = "Winding" if chg_oi_ce>0 else ("Unwinding" if chg_oi_ce<0 else "NoChange")
-    merged.at[i,"PE_Winding"] = "Winding" if chg_oi_pe>0 else ("Unwinding" if chg_oi_pe<0 else "NoChange")
-    merged.at[i,"CE_Divergence"] = price_oi_divergence_label(chg_oi_ce, safe_int(row.get("Vol_CE",0)), ce_price_delta)
-    merged.at[i,"PE_Divergence"] = price_oi_divergence_label(chg_oi_pe, safe_int(row.get("Vol_PE",0)), pe_price_delta)
-
-# Aggregations
-total_CE_OI = merged["OI_CE"].sum()
-total_PE_OI = merged["OI_PE"].sum()
-total_CE_chg = merged["Chg_OI_CE"].sum()
-total_PE_chg = merged["Chg_OI_PE"].sum()
-
-polarity = 0.0
-for _, r in merged.iterrows():
-    s = r["strikePrice"]
-    chg_ce = safe_int(r.get("Chg_OI_CE",0))
-    chg_pe = safe_int(r.get("Chg_OI_PE",0))
-    if s < atm_strike:
-        if chg_ce < 0: polarity += 1.0
-        elif chg_ce > 0: polarity -= 1.0
-    else:
-        if chg_ce > 0: polarity -= 0.5
-        elif chg_ce < 0: polarity += 0.5
-    if s > atm_strike:
-        if chg_pe < 0: polarity += 1.0
-        elif chg_pe > 0: polarity -= 1.0
-    else:
-        if chg_pe > 0: polarity += 0.5
-        elif chg_pe < 0: polarity -= 0.5
-
-market_bias = "Strong Bullish" if polarity > 5 else "Bullish" if polarity > 1 else "Strong Bearish" if polarity < -5 else "Bearish" if polarity < -1 else "Neutral"
-
-# ========================================
-# 🔥 CRITICAL: COMPUTE PCR & IMMEDIATE LEVELS
-# ========================================
+# Compute PCR
 pcr_df = compute_pcr_df(merged)
 
-# 🔥 GET IMMEDIATE SUPPORT/RESISTANCE (No snapshots needed!)
+# Get support/resistance rankings
 ranked_current, supports_df, resists_df = rank_support_resistance_current(pcr_df)
 
-# Extract strike prices
-immediate_supports = supports_df["strikePrice"].astype(int).tolist()
-immediate_resists = resists_df["strikePrice"].astype(int).tolist()
+# 🔥 ANALYZE SPOT POSITION
+spot_analysis = analyze_spot_position(spot, ranked_current)
 
 # Auto-save PCR
 last_saved = st.session_state.get("last_pcr_auto_saved", 0)
@@ -740,12 +595,9 @@ if time.time() - last_saved > save_interval:
     if ok:
         st.session_state["last_pcr_auto_saved"] = time.time()
 
-# Get trend analysis (from snapshots if available)
+# Get trend analysis
 tags = get_last_two_snapshot_tags()
 trend_df = pd.DataFrame()
-fake_type = None
-fake_hint = ""
-sl_hint = ""
 
 if len(tags) >= 2:
     cur_df = fetch_pcr_snapshot_by_tag(tags[0])
@@ -753,70 +605,148 @@ if len(tags) >= 2:
     
     if not cur_df.empty:
         trend_df = evaluate_trend(cur_df, prev_df)
-        if not trend_df.empty:
-            fake_type, fake_hint = detect_fake_breakout(
-                spot, 
-                immediate_supports[0] if immediate_supports else None, 
-                immediate_resists[0] if immediate_resists else None, 
-                trend_df
-            )
-            sl_hint = generate_stop_loss_hint(spot, immediate_supports, immediate_resists, fake_type)
 
 # ============================================
 # 🎯 MAIN DASHBOARD
 # ============================================
 
-st.markdown("## 🎯 INSTITUTIONAL-GRADE ANALYSIS DASHBOARD")
+st.markdown("## 🎯 SPOT POSITION & KEY LEVELS")
 
-# Row 1: Core Metrics
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("NIFTY Spot", f"₹{spot:.2f}")
-with col2:
-    st.metric("ATM Strike", f"₹{atm_strike}")
-with col3:
-    st.metric("Market Bias", market_bias)
-with col4:
-    breakout_index = breakout_probability_index(merged, atm_strike, strike_gap)
-    st.metric("Breakout Index", f"{breakout_index}%")
+# Row 1: SPOT POSITION CARD
+st.markdown("### 📍 NIFTY SPOT POSITION")
 
-st.markdown("---")
+# Create spot position display
+nearest_sup = spot_analysis["nearest_support"]
+nearest_res = spot_analysis["nearest_resistance"]
 
-# Row 2: TRAP DETECTION
-st.markdown("### 🚨 TRAP & BREAKOUT DETECTION")
+col_spot, col_range = st.columns([1, 1])
 
-if fake_type:
-    if fake_type == "Bull Trap":
-        st.markdown(f"""
-        <div class="alert-box bull-trap">
-            <h3>⚠️ BULL TRAP DETECTED!</h3>
-            <p>{fake_hint}</p>
-            <p><strong>Action:</strong> {sl_hint}</p>
-            <p style='font-size:0.9rem; margin-top:10px;'>⏰ {get_ist_time_str()} IST</p>
-        </div>
-        """, unsafe_allow_html=True)
-    elif fake_type == "Bear Trap":
-        st.markdown(f"""
-        <div class="alert-box bear-trap">
-            <h3>⚠️ BEAR TRAP DETECTED!</h3>
-            <p>{fake_hint}</p>
-            <p><strong>Action:</strong> {sl_hint}</p>
-            <p style='font-size:0.9rem; margin-top:10px;'>⏰ {get_ist_time_str()} IST</p>
-        </div>
-        """, unsafe_allow_html=True)
-else:
+with col_spot:
     st.markdown(f"""
-    <div class="alert-box no-trap">
-        <h3>✅ NO TRAP DETECTED</h3>
-        <p>Market moving genuinely. SL Hint: {sl_hint if sl_hint else "Monitor key levels"}</p>
-        <p style='font-size:0.9rem; margin-top:10px;'>⏰ {get_ist_time_str()} IST</p>
+    <div class="spot-card">
+        <h3>🎯 CURRENT SPOT</h3>
+        <div class="spot-price">₹{spot:,.2f}</div>
+        <div class="distance">ATM Strike: ₹{atm_strike:,}</div>
     </div>
     """, unsafe_allow_html=True)
 
+with col_range:
+    if nearest_sup and nearest_res:
+        range_size = nearest_res["strike"] - nearest_sup["strike"]
+        spot_position_pct = ((spot - nearest_sup["strike"]) / range_size * 100) if range_size > 0 else 50
+        
+        st.markdown(f"""
+        <div class="spot-card">
+            <h3>📊 SPOT IN RANGE</h3>
+            <div class="distance">₹{nearest_sup['strike']:,} ← SPOT → ₹{nearest_res['strike']:,}</div>
+            <div class="distance">Position: {spot_position_pct:.1f}% within range</div>
+            <div class="distance">Range Width: ₹{range_size:,}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
 st.markdown("---")
 
-# Row 3: 🔥 IMMEDIATE SUPPORT & RESISTANCE
-st.markdown("### 🎯 KEY SUPPORT & RESISTANCE LEVELS (LIVE PCR)")
+# Row 2: NEAREST LEVELS FROM SPOT
+st.markdown("### 🎯 NEAREST SUPPORT & RESISTANCE FROM SPOT")
+
+col_ns, col_nr = st.columns(2)
+
+with col_ns:
+    st.markdown("#### 🛡️ SUPPORT BELOW SPOT")
+    
+    if nearest_sup:
+        sup = nearest_sup
+        pcr_display = f"{sup['pcr']:.2f}" if not np.isinf(sup['pcr']) else "∞"
+        
+        # Get trend if available
+        trend_label = ""
+        if not trend_df.empty:
+            trend_row = trend_df[trend_df["strikePrice"] == sup['strike']]
+            if not trend_row.empty:
+                trend = trend_row.iloc[0]["Trend"]
+                if trend == "Support Building":
+                    trend_label = " 🟢 BUILDING"
+                elif trend == "Support Breaking":
+                    trend_label = " 🔴 BREAKING"
+        
+        st.markdown(f"""
+        <div class="nearest-level">
+            <h4>💚 NEAREST SUPPORT{trend_label}</h4>
+            <div class="level-value">₹{sup['strike']:,}</div>
+            <div class="level-distance">⬇️ Distance: ₹{sup['distance']:.2f} ({sup['distance_pct']:.2f}%)</div>
+            <div class="sub-info">
+                PE OI: {sup['oi_pe']:,} | PCR: {pcr_display} | ΔOI: {sup['chg_oi_pe']:+,}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("No support level below spot")
+    
+    # Next support
+    next_sup = spot_analysis["next_support"]
+    if next_sup:
+        pcr_display = f"{next_sup['pcr']:.2f}" if not np.isinf(next_sup['pcr']) else "∞"
+        
+        st.markdown(f"""
+        <div class="level-card">
+            <h4>Next Support</h4>
+            <p>₹{next_sup['strike']:,}</p>
+            <div class="sub-info">
+                ⬇️ Distance: ₹{next_sup['distance']:.2f} ({next_sup['distance_pct']:.2f}%) | PCR: {pcr_display}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+with col_nr:
+    st.markdown("#### ⚡ RESISTANCE ABOVE SPOT")
+    
+    if nearest_res:
+        res = nearest_res
+        pcr_display = f"{res['pcr']:.2f}" if not np.isinf(res['pcr']) else "∞"
+        
+        # Get trend if available
+        trend_label = ""
+        if not trend_df.empty:
+            trend_row = trend_df[trend_df["strikePrice"] == res['strike']]
+            if not trend_row.empty:
+                trend = trend_row.iloc[0]["Trend"]
+                if trend == "Resistance Building":
+                    trend_label = " 🟡 BUILDING"
+                elif trend == "Resistance Breaking":
+                    trend_label = " 🔵 BREAKING"
+        
+        st.markdown(f"""
+        <div class="nearest-level">
+            <h4>🧡 NEAREST RESISTANCE{trend_label}</h4>
+            <div class="level-value">₹{res['strike']:,}</div>
+            <div class="level-distance">⬆️ Distance: ₹{res['distance']:.2f} ({res['distance_pct']:.2f}%)</div>
+            <div class="sub-info">
+                CE OI: {res['oi_ce']:,} | PCR: {pcr_display} | ΔOI: {res['chg_oi_ce']:+,}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("No resistance level above spot")
+    
+    # Next resistance
+    next_res = spot_analysis["next_resistance"]
+    if next_res:
+        pcr_display = f"{next_res['pcr']:.2f}" if not np.isinf(next_res['pcr']) else "∞"
+        
+        st.markdown(f"""
+        <div class="level-card">
+            <h4>Next Resistance</h4>
+            <p>₹{next_res['strike']:,}</p>
+            <div class="sub-info">
+                ⬆️ Distance: ₹{next_res['distance']:.2f} ({next_res['distance_pct']:.2f}%) | PCR: {pcr_display}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# Row 3: ALL SUPPORT & RESISTANCE LEVELS
+st.markdown("### 🎯 ALL KEY LEVELS (Top 3 Each)")
 
 col_s, col_r = st.columns(2)
 
@@ -830,7 +760,12 @@ with col_s:
         pcr_display = f"{pcr:.2f}" if not np.isinf(pcr) else "∞"
         chg_oi_pe = int(row.get("Chg_OI_PE", 0))
         
-        # Get trend if available
+        # Distance from spot
+        dist = abs(spot - strike)
+        dist_pct = (dist / spot * 100)
+        direction = "⬆️ Above" if strike > spot else "⬇️ Below"
+        
+        # Get trend
         trend_label = ""
         if not trend_df.empty:
             trend_row = trend_df[trend_df["strikePrice"] == strike]
@@ -846,7 +781,7 @@ with col_s:
             <h4>Support #{i}{trend_label}</h4>
             <p>₹{strike:,}</p>
             <div class="sub-info">
-                PE OI: {oi_pe:,} | PCR: {pcr_display} | ΔOI: {chg_oi_pe:+,}
+                {direction}: ₹{dist:.2f} ({dist_pct:.2f}%) | PE OI: {oi_pe:,} | PCR: {pcr_display} | ΔOI: {chg_oi_pe:+,}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -861,7 +796,12 @@ with col_r:
         pcr_display = f"{pcr:.2f}" if not np.isinf(pcr) else "∞"
         chg_oi_ce = int(row.get("Chg_OI_CE", 0))
         
-        # Get trend if available
+        # Distance from spot
+        dist = abs(spot - strike)
+        dist_pct = (dist / spot * 100)
+        direction = "⬆️ Above" if strike > spot else "⬇️ Below"
+        
+        # Get trend
         trend_label = ""
         if not trend_df.empty:
             trend_row = trend_df[trend_df["strikePrice"] == strike]
@@ -877,121 +817,70 @@ with col_r:
             <h4>Resistance #{i}{trend_label}</h4>
             <p>₹{strike:,}</p>
             <div class="sub-info">
-                CE OI: {oi_ce:,} | PCR: {pcr_display} | ΔOI: {chg_oi_ce:+,}
+                {direction}: ₹{dist:.2f} ({dist_pct:.2f}%) | CE OI: {oi_ce:,} | PCR: {pcr_display} | ΔOI: {chg_oi_ce:+,}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# Row 4: Trend Signals (if snapshots available)
-st.markdown("### 📊 TREND SIGNALS (Snapshot-based)")
+# Row 4: Trading Insights
+st.markdown("### 💡 TRADING INSIGHTS")
 
-if not trend_df.empty:
-    trend_counts = trend_df["Trend"].value_counts()
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        support_build = trend_counts.get("Support Building", 0)
-        st.markdown(f"""
-        <div class="alert-box support-building">
-            <h4>Support Building</h4>
-            <p style="font-size:2rem; margin:0;">{support_build}</p>
-            <p style="margin:0; font-size:0.8rem;">strikes</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        support_break = trend_counts.get("Support Breaking", 0)
-        st.markdown(f"""
-        <div class="alert-box support-breaking">
-            <h4>Support Breaking</h4>
-            <p style="font-size:2rem; margin:0;">{support_break}</p>
-            <p style="margin:0; font-size:0.8rem;">strikes</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        resist_build = trend_counts.get("Resistance Building", 0)
-        st.markdown(f"""
-        <div class="alert-box resistance-building">
-            <h4>Resistance Building</h4>
-            <p style="font-size:2rem; margin:0;">{resist_build}</p>
-            <p style="margin:0; font-size:0.8rem;">strikes</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        resist_break = trend_counts.get("Resistance Breaking", 0)
-        st.markdown(f"""
-        <div class="alert-box resistance-breaking">
-            <h4>Resistance Breaking</h4>
-            <p style="font-size:2rem; margin:0;">{resist_break}</p>
-            <p style="margin:0; font-size:0.8rem;">strikes</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col5:
-        pcr_rapid = trend_counts.get("PCR Rapid Change", 0)
-        st.markdown(f"""
-        <div class="alert-box pcr-rapid" style="background-color: #2e1a2e; border-left-color: #ff00ff; color: #ff66ff;">
-            <h4>PCR Rapid</h4>
-            <p style="font-size:2rem; margin:0;">{pcr_rapid}</p>
-            <p style="margin:0; font-size:0.8rem;">GAMMA SHOCK</p>
-        </div>
-        """, unsafe_allow_html=True)
-else:
-    st.info("⏳ Collecting snapshots for trend analysis... Auto-saving every 5 minutes")
+col_insight1, col_insight2 = st.columns(2)
+
+with col_insight1:
+    if nearest_sup and nearest_res:
+        mid_point = (nearest_sup["strike"] + nearest_res["strike"]) / 2
+        if spot < mid_point:
+            bias = "🔴 Bearish Bias"
+            insight = f"Spot closer to support. Watch ₹{nearest_sup['strike']:,} for breakdown."
+        else:
+            bias = "🟢 Bullish Bias"
+            insight = f"Spot closer to resistance. Watch ₹{nearest_res['strike']:,} for breakout."
+        
+        st.info(f"**{bias}**: {insight}")
+
+with col_insight2:
+    if nearest_sup and nearest_res:
+        risk_reward = (nearest_res["distance"] / nearest_sup["distance"]) if nearest_sup["distance"] > 0 else 0
+        st.metric("Risk:Reward Ratio", f"1:{risk_reward:.2f}")
 
 st.markdown("---")
 
-# OI Metrics
-st.markdown("### 📈 OPEN INTEREST METRICS")
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("Total CE OI", f"{int(total_CE_OI):,}")
-with col2:
-    st.metric("Total PE OI", f"{int(total_PE_OI):,}")
-with col3:
-    st.metric("CE ΔOI", f"{int(total_CE_chg):,}")
-with col4:
-    st.metric("PE ΔOI", f"{int(total_PE_chg):,}")
-
-st.markdown("---")
-
-# Tabs
-tab1, tab2, tab3 = st.tabs(["📊 Strike Details", "🔥 PCR Table", "🧠 Snapshot Manager"])
+# Tabs for detailed data
+tab1, tab2, tab3 = st.tabs(["📊 All Strikes", "🔥 PCR Analysis", "💾 Snapshots"])
 
 with tab1:
-    st.markdown("### Strike-wise Data")
-    display_cols = ["strikePrice","OI_CE","Chg_OI_CE","Vol_CE","LTP_CE","CE_Winding",
-                    "OI_PE","Chg_OI_PE","Vol_PE","LTP_PE","PE_Winding"]
+    st.markdown("### Complete Strike Table")
+    display_cols = ["strikePrice","OI_CE","Chg_OI_CE","Vol_CE","LTP_CE","OI_PE","Chg_OI_PE","Vol_PE","LTP_PE"]
     st.dataframe(merged[display_cols], use_container_width=True)
 
 with tab2:
-    st.markdown("### PCR Analysis (Current)")
-    st.dataframe(pcr_df[["strikePrice","OI_CE","OI_PE","Chg_OI_CE","Chg_OI_PE","PCR"]], use_container_width=True)
+    st.markdown("### PCR & Score Analysis")
+    analysis_df = ranked_current[["strikePrice","OI_CE","OI_PE","PCR","support_score","resistance_score"]].copy()
+    analysis_df["distance_from_spot"] = abs(analysis_df["strikePrice"] - spot)
+    st.dataframe(analysis_df.sort_values("distance_from_spot"), use_container_width=True)
 
 with tab3:
-    st.markdown("### PCR Snapshot Management")
+    st.markdown("### Snapshot Manager")
     st.markdown(f"**Current IST:** {get_ist_datetime_str()}")
     
-    if st.button("💾 Save PCR Snapshot Manually"):
+    if st.button("💾 Save PCR Snapshot"):
         ok, tag, msg = save_pcr_snapshot_to_supabase(pcr_df, expiry, spot)
         if ok:
-            st.success(f"Saved at {get_ist_time_str()} IST")
+            st.success(f"Saved: {get_ist_time_str()} IST")
         else:
             st.error(f"Failed: {msg}")
     
     if not trend_df.empty:
-        st.markdown("#### Trend Details")
+        st.markdown("#### Trend Analysis")
         trend_display = trend_df.rename(columns={"OI_CE_now":"OI_CE","OI_PE_now":"OI_PE","PCR_now":"PCR"})
-        active = trend_display[trend_display["Trend"] != "Neutral"].head(10)
+        active = trend_display[trend_display["Trend"] != "Neutral"]
         if not active.empty:
-            st.dataframe(active[["strikePrice","OI_CE","OI_PE","ΔOI_CE","ΔOI_PE","PCR","ΔPCR","Trend"]], use_container_width=True)
+            st.dataframe(active[["strikePrice","OI_CE","OI_PE","ΔOI_CE","ΔOI_PE","ΔPCR","Trend"]], use_container_width=True)
 
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | 💾 Auto-save: {save_interval}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🕐 All timestamps in IST | 🎯 Support/Resistance from LIVE PCR")
+st.caption("🎯 **Immediate levels from LIVE PCR** | Trend labels from snapshots")
