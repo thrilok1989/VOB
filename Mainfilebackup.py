@@ -1,7 +1,9 @@
-# nifty_option_screener_v4_complete_spot_analysis.py
+# nifty_option_screener_v4_seller_logic_complete.py
 """
-Nifty Option Screener v4.0 — COMPLETE with Spot Analysis
-Combines all features: Greek calculations, GEX, PCR, Support/Resistance, Spot Position Analysis
+Nifty Option Screener v4.0 — SELLER-CENTRIC LOGIC (COMPLETE)
+Market bias from Option Seller/Market Maker perspective
+CALL building = BEARISH (sellers expecting price to stay below)
+PUT building = BULLISH (sellers expecting price to stay above)
 """
 
 import streamlit as st
@@ -163,10 +165,32 @@ st.markdown("""
     .heatmap-positive { background-color: #1a2e1a; color: #00ff88; }
     .heatmap-negative { background-color: #2e1a1a; color: #ff4444; }
     .heatmap-neutral { background-color: #1a1f2e; color: #cccccc; }
+    
+    .bias-bullish { color: #00ff88 !important; font-weight: 700 !important; }
+    .bias-bearish { color: #ff4444 !important; font-weight: 700 !important; }
+    .bias-neutral { color: #66b3ff !important; font-weight: 700 !important; }
+    
+    .seller-logic {
+        background: linear-gradient(135deg, #2e1a2e 0%, #3e2a3e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #ff66cc;
+        margin: 10px 0;
+    }
+    .seller-logic h4 { margin: 0; color: #ff66cc; }
+    
+    .max-pain-box {
+        background: linear-gradient(135deg, #2e1a2e 0%, #1a2e2e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #ff9900;
+        margin: 10px 0;
+    }
+    .max-pain-box h4 { margin: 0; color: #ff9900; }
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Nifty Screener v4 - Complete Spot Analysis", layout="wide")
+st.set_page_config(page_title="Nifty Screener v4 - Seller Logic", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -267,35 +291,36 @@ def price_oi_divergence_label(chg_oi, vol, ltp_change):
     return "Neutral"
 
 def interpret_itm_otm(strike, atm, chg_oi_ce, chg_oi_pe):
+    # SELLER'S PERSPECTIVE
     if strike < atm:
-        if chg_oi_ce < 0:
-            ce = "Bullish (ITM CE Unwind)"
-        elif chg_oi_ce > 0:
-            ce = "Bearish (ITM CE Build)"
+        if chg_oi_ce > 0:
+            ce = "BEARISH (Selling ITM Calls)"
+        elif chg_oi_ce < 0:
+            ce = "BULLISH (Buying back ITM Calls)"
         else:
             ce = "NoSign (ITM CE)"
     elif strike > atm:
         if chg_oi_ce > 0:
-            ce = "Resistance Forming (OTM CE Build)"
+            ce = "Mild BEARISH (Selling OTM Calls)"
         elif chg_oi_ce < 0:
-            ce = "Resistance Weakening (OTM CE Unwind) → Bullish"
+            ce = "Mild BULLISH (Buying back OTM Calls)"
         else:
             ce = "NoSign (OTM CE)"
     else:
         ce = "ATM CE zone"
 
     if strike > atm:
-        if chg_oi_pe < 0:
-            pe = "Bullish (ITM PE Unwind)"
-        elif chg_oi_pe > 0:
-            pe = "Bearish (ITM PE Build)"
+        if chg_oi_pe > 0:
+            pe = "BULLISH (Selling ITM Puts)"
+        elif chg_oi_pe < 0:
+            pe = "BEARISH (Buying back ITM Puts)"
         else:
             pe = "NoSign (ITM PE)"
     elif strike < atm:
         if chg_oi_pe > 0:
-            pe = "Support Forming (OTM PE Build)"
+            pe = "Mild BULLISH (Selling OTM Puts)"
         elif chg_oi_pe < 0:
-            pe = "Support Weakening (OTM PE Unwind) → Bearish"
+            pe = "Mild BEARISH (Buying back OTM Puts)"
         else:
             pe = "NoSign (OTM PE)"
     else:
@@ -335,8 +360,26 @@ def center_of_mass_oi(df, oi_col):
     weighted_sum = (df["strikePrice"] * df[oi_col]).sum()
     return weighted_sum / total_oi
 
+def calculate_max_pain(df):
+    """Calculate max pain strike (where option writers lose least)"""
+    pain_dict = {}
+    for _, row in df.iterrows():
+        strike = row["strikePrice"]
+        ce_oi = safe_int(row.get("OI_CE", 0))
+        pe_oi = safe_int(row.get("OI_PE", 0))
+        ce_ltp = safe_float(row.get("LTP_CE", 0))
+        pe_ltp = safe_float(row.get("LTP_PE", 0))
+        
+        # Simplified pain calculation
+        pain = (ce_oi * max(0, ce_ltp)) + (pe_oi * max(0, pe_ltp))
+        pain_dict[strike] = pain
+    
+    if pain_dict:
+        return min(pain_dict, key=pain_dict.get)
+    return None
+
 # -----------------------
-# 🔥 NEW: SPOT POSITION ANALYSIS
+# 🔥 SPOT POSITION ANALYSIS
 # -----------------------
 def analyze_spot_position(spot, ranked_df):
     """
@@ -345,10 +388,6 @@ def analyze_spot_position(spot, ranked_df):
     """
     # Sort by strike price
     sorted_df = ranked_df.sort_values("strikePrice").reset_index(drop=True)
-    
-    # Separate supports and resistances
-    supports = sorted_df.sort_values("support_score", ascending=False).copy()
-    resistances = sorted_df.sort_values("resistance_score", ascending=False).copy()
     
     # All strikes sorted
     all_strikes = sorted_df["strikePrice"].tolist()
@@ -395,6 +434,142 @@ def analyze_spot_position(spot, ranked_df):
         "nearest_resistance": get_level_details(nearest_resistance, sorted_df),
         "next_resistance": get_level_details(next_resistance, sorted_df),
         "spot_in_range": (nearest_support, nearest_resistance)
+    }
+
+# -----------------------
+# 🔥 SELLER-CENTRIC MARKET BIAS CALCULATION
+# -----------------------
+def calculate_seller_market_bias(merged_df, spot, atm_strike):
+    """
+    Market bias from SELLER's perspective (Option Writer Logic)
+    CALL building = BEARISH (sellers selling calls, expecting price to stay below)
+    PUT building = BULLISH (sellers selling puts, expecting price to stay above)
+    """
+    polarity = 0.0
+    
+    for _, r in merged_df.iterrows():
+        strike = r["strikePrice"]
+        chg_ce = safe_int(r.get("Chg_OI_CE", 0))  # ΔOI CE
+        chg_pe = safe_int(r.get("Chg_OI_PE", 0))  # ΔOI PE
+        
+        # ============================================
+        # SELLER'S LOGIC: Who's WRITING the options?
+        # ============================================
+        
+        # CALL OPTIONS: When CE OI increases, SELLERS are bearish
+        if strike < atm_strike:  # ITM CALLS (strike BELOW spot)
+            if chg_ce > 0:  # ITM CALL building
+                # Sellers writing ITM calls = VERY BEARISH
+                # They expect price to STAY BELOW these strikes
+                polarity -= 2.0  # STRONG BEARISH
+            elif chg_ce < 0:  # ITM CALL unwinding
+                # Sellers buying back ITM calls = BULLISH
+                # They're covering bearish positions
+                polarity += 1.5  # BULLISH
+        
+        elif strike > atm_strike:  # OTM CALLS (strike ABOVE spot)
+            if chg_ce > 0:  # OTM CALL building
+                # Sellers writing OTM calls = MILD BEARISH
+                # Expecting price to stay below these strikes
+                polarity -= 0.7  # MILD BEARISH
+            elif chg_ce < 0:  # OTM CALL unwinding
+                # Sellers buying back OTM calls = BULLISH
+                # Removing upside resistance
+                polarity += 0.5  # MILD BULLISH
+        
+        # PUT OPTIONS: When PE OI increases, SELLERS are bullish
+        if strike > atm_strike:  # ITM PUTS (strike ABOVE spot)
+            if chg_pe > 0:  # ITM PUT building
+                # Sellers writing ITM puts = VERY BULLISH
+                # They expect price to STAY ABOVE these strikes
+                polarity += 2.0  # STRONG BULLISH
+            elif chg_pe < 0:  # ITM PUT unwinding
+                # Sellers buying back ITM puts = BEARISH
+                # They're covering bullish positions
+                polarity -= 1.5  # BEARISH
+        
+        elif strike < atm_strike:  # OTM PUTS (strike BELOW spot)
+            if chg_pe > 0:  # OTM PUT building
+                # Sellers writing OTM puts = MILD BULLISH
+                # Expecting price to stay above these strikes
+                polarity += 0.7  # MILD BULLISH
+            elif chg_pe < 0:  # OTM PUT unwinding
+                # Sellers buying back OTM puts = BEARISH
+                # Removing downside protection
+                polarity -= 0.5  # MILD BEARISH
+    
+    # ============================================
+    # ADDITIONAL SELLER-CENTRIC METRICS
+    # ============================================
+    
+    # 1. PCR bias (from seller perspective)
+    total_ce_oi = merged_df["OI_CE"].sum()
+    total_pe_oi = merged_df["OI_PE"].sum()
+    if total_ce_oi > 0:
+        pcr = total_pe_oi / total_ce_oi
+        if pcr > 2.0:  # High PCR = More puts sold = BULLISH
+            polarity += 1.0
+        elif pcr < 0.5:  # Low PCR = More calls sold = BEARISH
+            polarity -= 1.0
+    
+    # 2. IV Premium Bias (Seller Confidence)
+    avg_iv_ce = merged_df["IV_CE"].mean()
+    avg_iv_pe = merged_df["IV_PE"].mean()
+    if avg_iv_ce > avg_iv_pe + 5:  # Higher CE IV
+        # Sellers charging more for calls = Bearish confidence
+        polarity -= 0.3
+    elif avg_iv_pe > avg_iv_ce + 5:  # Higher PE IV
+        # Sellers charging more for puts = Bullish confidence
+        polarity += 0.3
+    
+    # 3. GEX bias (seller gamma risk)
+    net_gex = merged_df["GEX_Net"].sum()
+    if net_gex < -1000000:  # Negative GEX = Sellers under pressure
+        polarity -= 0.4  # BEARISH pressure
+    elif net_gex > 1000000:  # Positive GEX = Sellers comfortable
+        polarity += 0.4  # BULLISH comfort
+    
+    # ============================================
+    # FINAL INTERPRETATION
+    # ============================================
+    if polarity > 3.0:
+        bias = "STRONG BULLISH 📈"
+        color = "green"
+        emoji = "🚀"
+        explanation = "Sellers aggressively selling PUTS (bullish conviction)"
+    elif polarity > 1.0:
+        bias = "BULLISH 📈"
+        color = "lightgreen"
+        emoji = "📊"
+        explanation = "Sellers leaning towards PUT selling"
+    elif polarity < -3.0:
+        bias = "STRONG BEARISH 📉"
+        color = "red"
+        emoji = "⚠️"
+        explanation = "Sellers aggressively selling CALLS (bearish conviction)"
+    elif polarity < -1.0:
+        bias = "BEARISH 📉"
+        color = "orange"
+        emoji = "🔻"
+        explanation = "Sellers leaning towards CALL selling"
+    else:
+        bias = "NEUTRAL ↔️"
+        color = "gray"
+        emoji = "⚖️"
+        explanation = "Balanced seller activity on both sides"
+    
+    return {
+        "bias": bias,
+        "polarity": polarity,
+        "color": color,
+        "emoji": emoji,
+        "explanation": explanation,
+        "details": {
+            "pcr": total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0,
+            "avg_iv_ce": avg_iv_ce,
+            "avg_iv_pe": avg_iv_pe,
+            "net_gex": net_gex
+        }
     }
 
 # -----------------------
@@ -580,13 +755,13 @@ def detect_fake_breakout(spot, strong_support, strong_resist, trend_df):
         row = trend_df[trend_df["strikePrice"]==strong_resist]
         if not row.empty and row.iloc[0]["ΔOI_CE"] > 0:
             fake = "Bull Trap"
-            fake_hint = f"Price above resistance {strong_resist} but CE OI building → possible fake upside."
+            fake_hint = f"Price above resistance {strong_resist} but CALL OI building → Sellers bearish (fake upside)."
     
     if strong_support is not None and spot < strong_support:
         row = trend_df[trend_df["strikePrice"]==strong_support]
         if not row.empty and row.iloc[0]["ΔOI_PE"] > 0:
             fake = "Bear Trap"
-            fake_hint = f"Price below support {strong_support} but PE OI building → possible fake downside."
+            fake_hint = f"Price below support {strong_support} but PUT OI building → Sellers bullish (fake downside)."
     
     return fake, fake_hint
 
@@ -603,65 +778,51 @@ def generate_stop_loss_hint(spot, top_supports, top_resists, fake_type):
     return f"No clear breakout — SL inside range between {top_supports[1] if len(top_supports)>1 else 'N/A'} and {top_resists[1] if len(top_resists)>1 else 'N/A'}"
 
 # -----------------------
-#  SUPABASE DATABASE SETUP
+#  SUPABASE SNAPSHOT HELPERS
 # -----------------------
-def create_tables_if_not_exist():
-    """Check if tables exist"""
+def supabase_snapshot_exists(date_str, window):
     try:
-        res1 = supabase.table(SUPABASE_TABLE).select("id").limit(1).execute()
-        res2 = supabase.table(SUPABASE_TABLE_PCR).select("id").limit(1).execute()
-        
-        if res1.status_code == 200 and res2.status_code == 200:
-            return True
+        resp = supabase.table(SUPABASE_TABLE).select("id").eq("date", date_str).eq("time_window", window).limit(1).execute()
+        if resp.status_code == 200:
+            data = resp.data
+            return len(data) > 0
         return False
     except Exception as e:
         return False
 
-def get_sql_for_tables():
-    return """
--- Table 1: option_snapshots (for time-window snapshots)
-CREATE TABLE IF NOT EXISTS option_snapshots (
-    id BIGSERIAL PRIMARY KEY,
-    date DATE NOT NULL,
-    time_window VARCHAR(20) NOT NULL,
-    underlying DECIMAL(10,2) NOT NULL,
-    strike INTEGER NOT NULL,
-    oi_ce BIGINT DEFAULT 0,
-    chg_oi_ce BIGINT DEFAULT 0,
-    vol_ce BIGINT DEFAULT 0,
-    ltp_ce DECIMAL(10,2) DEFAULT 0.0,
-    iv_ce DECIMAL(10,4) DEFAULT 0.0,
-    oi_pe BIGINT DEFAULT 0,
-    chg_oi_pe BIGINT DEFAULT 0,
-    vol_pe BIGINT DEFAULT 0,
-    ltp_pe DECIMAL(10,2) DEFAULT 0.0,
-    iv_pe DECIMAL(10,4) DEFAULT 0.0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Table 2: strike_pcr_snapshots (for PCR batch snapshots)
-CREATE TABLE IF NOT EXISTS strike_pcr_snapshots (
-    id BIGSERIAL PRIMARY KEY,
-    snapshot_tag VARCHAR(50) NOT NULL,
-    date DATE NOT NULL,
-    time VARCHAR(20) NOT NULL,
-    expiry VARCHAR(20) NOT NULL,
-    spot DECIMAL(10,2) NOT NULL,
-    strike INTEGER NOT NULL,
-    oi_ce BIGINT DEFAULT 0,
-    oi_pe BIGINT DEFAULT 0,
-    chg_oi_ce BIGINT DEFAULT 0,
-    chg_oi_pe BIGINT DEFAULT 0,
-    pcr DECIMAL(10,4),
-    ltp_ce DECIMAL(10,2) DEFAULT 0.0,
-    ltp_pe DECIMAL(10,2) DEFAULT 0.0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Indexes
-CREATE INDEX IF NOT EXISTS idx_option_snapshots_date_window ON option_snapshots(date, time_window);
-CREATE INDEX IF NOT EXISTS idx_pcr_snapshot_tag ON strike_pcr_snapshots(snapshot_tag);
-"""
+def save_snapshot_to_supabase(df, window, underlying):
+    """Insert rows (one per strike) into supabase table with date & time_window."""
+    if df is None or df.empty:
+        return False, "no data"
+    date_str = get_ist_date_str()
+    payload = []
+    for _, r in df.iterrows():
+        payload.append({
+            "date": date_str,
+            "time_window": window,
+            "underlying": float(underlying),
+            "strike": int(r.get("strikePrice",0)),
+            "oi_ce": int(safe_int(r.get("OI_CE",0))),
+            "chg_oi_ce": int(safe_int(r.get("Chg_OI_CE",0))),
+            "vol_ce": int(safe_int(r.get("Vol_CE",0))),
+            "ltp_ce": float(safe_float(r.get("LTP_CE", np.nan)) or 0.0),
+            "iv_ce": float(safe_float(r.get("IV_CE", np.nan) or 0.0)),
+            "oi_pe": int(safe_int(r.get("OI_PE",0))),
+            "chg_oi_pe": int(safe_int(r.get("Chg_OI_PE",0))),
+            "vol_pe": int(safe_int(r.get("Vol_PE",0))),
+            "ltp_pe": float(safe_float(r.get("LTP_PE", np.nan) or 0.0)),
+            "iv_pe": float(safe_float(r.get("IV_PE", np.nan) or 0.0))
+        })
+    try:
+        batch_size = 200
+        for i in range(0, len(payload), batch_size):
+            chunk = payload[i:i+batch_size]
+            res = supabase.table(SUPABASE_TABLE).insert(chunk).execute()
+            if res.status_code not in (200,201,204):
+                return False, f"supabase insert returned {res.status_code}"
+        return True, "saved"
+    except Exception as e:
+        return False, str(e)
 
 # -----------------------
 #  DHAN API
@@ -767,56 +928,9 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
-#  SUPABASE SNAPSHOT HELPERS
-# -----------------------
-def supabase_snapshot_exists(date_str, window):
-    try:
-        resp = supabase.table(SUPABASE_TABLE).select("id").eq("date", date_str).eq("time_window", window).limit(1).execute()
-        if resp.status_code == 200:
-            data = resp.data
-            return len(data) > 0
-        return False
-    except Exception as e:
-        return False
-
-def save_snapshot_to_supabase(df, window, underlying):
-    """Insert rows (one per strike) into supabase table with date & time_window."""
-    if df is None or df.empty:
-        return False, "no data"
-    date_str = get_ist_date_str()
-    payload = []
-    for _, r in df.iterrows():
-        payload.append({
-            "date": date_str,
-            "time_window": window,
-            "underlying": float(underlying),
-            "strike": int(r.get("strikePrice",0)),
-            "oi_ce": int(safe_int(r.get("OI_CE",0))),
-            "chg_oi_ce": int(safe_int(r.get("Chg_OI_CE",0))),
-            "vol_ce": int(safe_int(r.get("Vol_CE",0))),
-            "ltp_ce": float(safe_float(r.get("LTP_CE", np.nan)) or 0.0),
-            "iv_ce": float(safe_float(r.get("IV_CE", np.nan) or 0.0)),
-            "oi_pe": int(safe_int(r.get("OI_PE",0))),
-            "chg_oi_pe": int(safe_int(r.get("Chg_OI_PE",0))),
-            "vol_pe": int(safe_int(r.get("Vol_PE",0))),
-            "ltp_pe": float(safe_float(r.get("LTP_PE", np.nan) or 0.0)),
-            "iv_pe": float(safe_float(r.get("IV_PE", np.nan) or 0.0))
-        })
-    try:
-        batch_size = 200
-        for i in range(0, len(payload), batch_size):
-            chunk = payload[i:i+batch_size]
-            res = supabase.table(SUPABASE_TABLE).insert(chunk).execute()
-            if res.status_code not in (200,201,204):
-                return False, f"supabase insert returned {res.status_code}"
-        return True, "saved"
-    except Exception as e:
-        return False, str(e)
-
-# -----------------------
 #  MAIN APP
 # -----------------------
-st.title("🎯 NIFTY Option Screener v4.0 — Complete Spot Analysis")
+st.title("🎯 NIFTY Option Screener v4.0 — SELLER-CENTRIC LOGIC")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -833,17 +947,13 @@ with st.sidebar:
     st.markdown(f"**{get_ist_date_str()}**")
     st.markdown("---")
     
-    # Database setup
-    st.subheader("Database Setup")
-    if st.button("Check Database Connection"):
-        if create_tables_if_not_exist():
-            st.success("✅ Database connection successful!")
-        else:
-            st.warning("⚠️ Some tables may be missing")
-    
-    if st.button("Show SQL for Tables"):
-        sql_commands = get_sql_for_tables()
-        st.code(sql_commands, language="sql")
+    st.markdown("""
+    ### 🎯 SELLER'S LOGIC
+    - **CALL building** = BEARISH (sellers selling calls)
+    - **CALL unwinding** = BULLISH (sellers buying back calls)
+    - **PUT building** = BULLISH (sellers selling puts)
+    - **PUT unwinding** = BEARISH (sellers buying back puts)
+    """)
     
     st.markdown("---")
     save_interval = st.number_input("PCR Auto-save (sec)", value=SAVE_INTERVAL_SEC, min_value=60, step=60)
@@ -1026,11 +1136,8 @@ total_gex_ce = merged["GEX_CE"].sum()
 total_gex_pe = merged["GEX_PE"].sum()
 total_gex_net = merged["GEX_Net"].sum()
 
-max_pain = None
-try:
-    max_pain = int(pd.Series({int(r["strikePrice"]): safe_float(r["LTP_CE"])*safe_int(r["OI_CE"]) + safe_float(r["LTP_PE"])*safe_int(r["OI_PE"]) for _, r in merged.iterrows()}).sort_values().index[0])
-except Exception:
-    max_pain = None
+# Calculate Max Pain
+max_pain = calculate_max_pain(merged)
 
 breakout_index = breakout_probability_index(merged, atm_strike, strike_gap)
 
@@ -1043,30 +1150,8 @@ if pe_com > atm_strike + strike_gap: atm_shift.append("PE build above ATM")
 elif pe_com < atm_strike - strike_gap: atm_shift.append("PE build below ATM")
 atm_shift_str = " | ".join(atm_shift) if atm_shift else "Neutral"
 
-# Market polarity
-polarity = 0.0
-for _, r in merged.iterrows():
-    s = r["strikePrice"]
-    chg_ce = safe_int(r.get("Chg_OI_CE",0))
-    chg_pe = safe_int(r.get("Chg_OI_PE",0))
-    if s < atm_strike:
-        if chg_ce < 0: polarity += 1.0
-        elif chg_ce > 0: polarity -= 1.0
-    else:
-        if chg_ce > 0: polarity -= 0.5
-        elif chg_ce < 0: polarity += 0.5
-    if s > atm_strike:
-        if chg_pe < 0: polarity += 1.0
-        elif chg_pe > 0: polarity -= 1.0
-    else:
-        if chg_pe > 0: polarity += 0.5
-        elif chg_pe < 0: polarity -= 0.5
-
-if polarity > 5: market_bias="Strong Bullish"
-elif polarity > 1: market_bias="Bullish"
-elif polarity < -5: market_bias="Strong Bearish"
-elif polarity < -1: market_bias="Bearish"
-else: market_bias="Neutral"
+# Calculate SELLER-CENTRIC Market Bias
+market_bias_result = calculate_seller_market_bias(merged, spot, atm_strike)
 
 # Compute PCR
 pcr_df = compute_pcr_df(merged)
@@ -1101,6 +1186,13 @@ if len(tags) >= 2:
 
 st.markdown("## 📈 CORE MARKET METRICS")
 
+# SELLER BIAS DISPLAY
+st.markdown("""
+<div class="seller-logic">
+    <h4>🎯 SELLER'S MARKET BIAS (Option Writer Logic)</h4>
+</div>
+""", unsafe_allow_html=True)
+
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Spot", f"₹{spot:.2f}")
@@ -1112,15 +1204,29 @@ with col3:
     st.metric("Total CE ΔOI", f"{int(total_CE_chg):,}")
     st.metric("Total PE ΔOI", f"{int(total_PE_chg):,}")
 with col4:
-    st.metric("Net Delta Exposure", f"{int(net_delta_exposure):,}")
-    st.metric("Market Bias", market_bias)
+    st.markdown(f"**Market Bias:**")
+    st.markdown(f"<h2 style='color:{market_bias_result['color']};text-align:center'>{market_bias_result['emoji']} {market_bias_result['bias']}</h2>", 
+                unsafe_allow_html=True)
+    st.caption(f"Polarity Score: {market_bias_result['polarity']:.2f}")
+
+st.info(f"**Explanation:** {market_bias_result['explanation']}")
+
+# Max Pain Display
+if max_pain:
+    st.markdown(f"""
+    <div class="max-pain-box">
+        <h4>🎯 MAX PAIN (Sellers' Preferred Level)</h4>
+        <p style='font-size: 1.5rem; color: #ff9900; font-weight: bold; text-align: center;'>₹{max_pain:,}</p>
+        <p style='text-align: center; color: #cccccc;'>Distance from spot: ₹{abs(spot - max_pain):.2f} ({abs(spot - max_pain)/spot*100:.2f}%)</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("### 🔎 ITM/OTM Pressure Summary (ATM ± 8)")
 pressure_table = pd.DataFrame([
-    {"Category":"ITM CE OI","Value":int(ITM_CE_OI),"Winding_Count":int(ITM_CE_winding_count),"Winding_%":f"{itm_ce_winding_pct:.1f}%"},
-    {"Category":"OTM CE OI","Value":int(OTM_CE_OI),"Winding_Count":int(OTM_CE_winding_count),"Winding_%":f"{otm_ce_winding_pct:.1f}%"},
-    {"Category":"ITM PE OI","Value":int(ITM_PE_OI),"Winding_Count":int(ITM_PE_winding_count),"Winding_%":f"{itm_pe_winding_pct:.1f}%"},
-    {"Category":"OTM PE OI","Value":int(OTM_PE_OI),"Winding_Count":int(OTM_PE_winding_count),"Winding_%":f"{otm_pe_winding_pct:.1f}%"}
+    {"Category":"ITM CE OI","Value":int(ITM_CE_OI),"Winding_Count":int(ITM_CE_winding_count),"Winding_%":f"{itm_ce_winding_pct:.1f}%","Seller Bias":"BEARISH if building"},
+    {"Category":"OTM CE OI","Value":int(OTM_CE_OI),"Winding_Count":int(OTM_CE_winding_count),"Winding_%":f"{otm_ce_winding_pct:.1f}%","Seller Bias":"Mild BEARISH if building"},
+    {"Category":"ITM PE OI","Value":int(ITM_PE_OI),"Winding_Count":int(ITM_PE_winding_count),"Winding_%":f"{itm_pe_winding_pct:.1f}%","Seller Bias":"BULLISH if building"},
+    {"Category":"OTM PE OI","Value":int(OTM_PE_OI),"Winding_Count":int(OTM_PE_winding_count),"Winding_%":f"{otm_pe_winding_pct:.1f}%","Seller Bias":"Mild BULLISH if building"}
 ])
 st.dataframe(pressure_table, use_container_width=True)
 
@@ -1133,8 +1239,10 @@ with gex_col2:
     st.metric("Total GEX PE", f"₹{int(total_gex_pe):,}")
 with gex_col3:
     st.metric("Net GEX", f"₹{int(total_gex_net):,}")
+    st.caption("Positive = Sellers comfortable | Negative = Sellers under pressure")
 with gex_col4:
     st.metric("Breakout Index", f"{breakout_index}%")
+    st.metric("PCR", f"{market_bias_result['details']['pcr']:.2f}")
 
 st.markdown("---")
 
@@ -1365,11 +1473,11 @@ with col_insight1:
     if nearest_sup and nearest_res:
         mid_point = (nearest_sup["strike"] + nearest_res["strike"]) / 2
         if spot < mid_point:
-            bias = "🔴 Bearish Bias"
-            insight = f"Spot closer to support. Watch ₹{nearest_sup['strike']:,} for breakdown."
+            bias = "🔴 Spot closer to support"
+            insight = f"Watch ₹{nearest_sup['strike']:,} for breakdown."
         else:
-            bias = "🟢 Bullish Bias"
-            insight = f"Spot closer to resistance. Watch ₹{nearest_res['strike']:,} for breakout."
+            bias = "🟢 Spot closer to resistance"
+            insight = f"Watch ₹{nearest_res['strike']:,} for breakout."
         
         st.info(f"**{bias}**: {insight}")
     
@@ -1377,8 +1485,8 @@ with col_insight1:
     if not trend_df.empty:
         fake_type, fake_hint = detect_fake_breakout(
             spot, 
-            top_supports[0] if top_supports else None, 
-            top_resists[0] if top_resists else None, 
+            supports_df.head(3)["strikePrice"].tolist()[0] if not supports_df.empty else None, 
+            resists_df.head(3)["strikePrice"].tolist()[0] if not resists_df.empty else None, 
             trend_df
         )
         if fake_type:
@@ -1398,8 +1506,8 @@ with col_insight2:
 if not trend_df.empty:
     stop_loss_hint = generate_stop_loss_hint(
         spot, 
-        supports_df.head(3)["strikePrice"].tolist(), 
-        resists_df.head(3)["strikePrice"].tolist(), 
+        supports_df.head(3)["strikePrice"].tolist() if not supports_df.empty else [], 
+        resists_df.head(3)["strikePrice"].tolist() if not resists_df.empty else [], 
         fake_type if 'fake_type' in locals() else None
     )
     st.markdown("### 🛡️ Stop-loss Hint")
@@ -1414,7 +1522,7 @@ st.markdown("---")
 tab1, tab2, tab3, tab4 = st.tabs(["📊 All Strikes", "🔥 PCR Analysis", "🧮 Greeks View", "💾 Snapshots"])
 
 with tab1:
-    st.markdown("### Complete Strike Table with Analysis")
+    st.markdown("### Complete Strike Table with Seller Analysis")
     display_cols = [
         "strikePrice", "OI_CE", "Chg_OI_CE", "Vol_CE", "LTP_CE", 
         "CE_Price_Delta", "CE_IV_Delta", "CE_Winding", "CE_Divergence",
@@ -1513,4 +1621,4 @@ with tab4:
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | 💾 Auto-save: {save_interval}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **Complete NIFTY Option Screener v4.0 with Spot Position Analysis** | All rights reserved")
+st.caption("🎯 **NIFTY Option Screener v4.0 — SELLER-CENTRIC LOGIC** | All rights reserved")
