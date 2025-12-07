@@ -11,7 +11,7 @@ NEW FEATURES ADDED:
 3. Gamma Cluster Concentration
 4. OI Velocity/Acceleration
 5. Telegram Signal Generation
-6. AI-Powered Market Analysis (Groq)
+6. AI-Powered Market Analysis (Perplexity)
 """
 
 import streamlit as st
@@ -26,6 +26,7 @@ from scipy.stats import norm
 from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
+import json
 
 # -----------------------
 #  IST TIMEZONE SETUP
@@ -57,7 +58,7 @@ SAVE_INTERVAL_SEC = 300
 
 # NEW: Moment detector weights
 MOMENT_WEIGHTS = {
-    "momentum_burst": 0.40,        # Vol * IV * |ΔOI|
+    "momentum_burst": 0.40,        # Vol × IV × |ΔOI|
     "orderbook_pressure": 0.20,    # buy/sell depth imbalance
     "gamma_cluster": 0.25,         # ATM ±2 gamma concentration
     "oi_acceleration": 0.15        # OI speed-up (break/hold)
@@ -83,8 +84,8 @@ try:
     # Telegram credentials (optional)
     TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
-    # Groq AI credentials (optional)
-    GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+    # Perplexity AI credentials (optional)
+    PERPLEXITY_API_KEY = st.secrets.get("PERPLEXITY_API_KEY", "")
     ENABLE_AI_ANALYSIS = st.secrets.get("ENABLE_AI_ANALYSIS", "false").lower() == "true"
 except Exception as e:
     st.error("❌ Missing credentials")
@@ -101,26 +102,33 @@ NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
 
 # -----------------------
-#  AI ANALYSIS CLASS
+#  AI ANALYSIS CLASS - UPDATED FOR PERPLEXITY
 # -----------------------
 class TradingAI:
-    """AI-powered trading analysis using Groq"""
+    """AI-powered trading analysis using Perplexity (Sonar model)"""
     
     def __init__(self, api_key=None):
-        self.api_key = api_key or GROQ_API_KEY
+        # Set up Perplexity API
+        self.api_key = api_key or PERPLEXITY_API_KEY
         self.enabled = bool(self.api_key) and ENABLE_AI_ANALYSIS
         
         if self.enabled:
             try:
-                # Try to import Groq
+                # Try to import Perplexity
                 try:
-                    from groq import Groq
-                    self.client = Groq(api_key=self.api_key)
-                    self.model = "llama-3.1-70b-versatile"  # Updated from deprecated model
-                    # Alternative models: 
-                    # "llama-3.1-8b-instant", "llama-3.1-70b-instant", "gemma2-9b-it"
+                    from perplexity import Perplexity
+                    
+                    # Set the API key
+                    if not os.environ.get("PERPLEXITY_API_KEY"):
+                        os.environ["PERPLEXITY_API_KEY"] = self.api_key
+                    
+                    self.client = Perplexity()
+                    self.model = "sonar-pro"  # Using Perplexity's Sonar Pro model
                 except ImportError:
-                    st.warning("⚠️ Groq package not installed. Install with: pip install groq")
+                    st.warning("⚠️ Perplexity package not installed. Install with: pip install perplexity-client")
+                    self.enabled = False
+                except Exception as e:
+                    st.warning(f"⚠️ Perplexity initialization error: {e}")
                     self.enabled = False
             except Exception as e:
                 st.warning(f"⚠️ AI Analysis Disabled: {e}")
@@ -129,105 +137,138 @@ class TradingAI:
     def is_enabled(self):
         return self.enabled
     
+    def format_market_data_for_analysis(self, market_data, signal_data, moment_metrics):
+        """Format trading data for AI analysis"""
+        
+        # Create a structured data dictionary
+        formatted_data = {
+            "timestamp": get_ist_datetime_str(),
+            "market_data": market_data,
+            "signal_data": {
+                "position_type": signal_data["position_type"],
+                "signal_strength": signal_data["signal_strength"],
+                "confidence": signal_data["confidence"],
+                "optimal_entry_price": signal_data["optimal_entry_price"],
+                "stop_loss": signal_data.get("stop_loss", "N/A"),
+                "target": signal_data.get("target", "N/A"),
+                "max_pain": signal_data.get("max_pain", "N/A"),
+                "nearest_support": signal_data.get("nearest_support", "N/A"),
+                "nearest_resistance": signal_data.get("nearest_resistance", "N/A")
+            },
+            "moment_metrics": moment_metrics
+        }
+        
+        return json.dumps(formatted_data, indent=2)
+    
     def generate_analysis(self, market_data, signal_data, moment_metrics):
         """
-        Generate AI analysis of current market conditions
+        Generate AI analysis of current market conditions using Perplexity
         """
         if not self.enabled:
             return None
         
         try:
-            # Prepare data for AI
-            analysis_prompt = self._create_analysis_prompt(market_data, signal_data, moment_metrics)
+            # Format data for analysis
+            formatted_data = self.format_market_data_for_analysis(market_data, signal_data, moment_metrics)
             
-            # Call Groq API with updated model
+            # Prepare analysis prompt
+            analysis_prompt = f"""
+            You are an expert options trader and market analyst specializing in Nifty options. 
+            Analyze the following real-time trading data and provide actionable insights:
+            
+            ====== MARKET DATA ======
+            Spot Price: ₹{market_data['spot']:,.2f}
+            ATM Strike: ₹{market_data['atm_strike']:,}
+            Seller Bias: {market_data['seller_bias']}
+            Max Pain: ₹{market_data['max_pain']:,}
+            Breakout Index: {market_data['breakout_index']}%
+            PCR: {market_data['total_pcr']:.2f}
+            Total GEX: ₹{market_data['total_gex']:,}
+            
+            ====== SIGNAL DATA ======
+            Position: {signal_data['position_type']} ({signal_data['signal_strength']})
+            Confidence: {signal_data['confidence']:.0f}%
+            Entry Price: ₹{signal_data['optimal_entry_price']:,.2f}
+            Stop Loss: ₹{signal_data.get('stop_loss', 'N/A'):,.2f}
+            Target: ₹{signal_data.get('target', 'N/A'):,.2f}
+            
+            ====== KEY LEVELS ======
+            Support: ₹{market_data['nearest_support']:,}
+            Resistance: ₹{market_data['nearest_resistance']:,}
+            Range Size: ₹{market_data['range_size']:,}
+            
+            ====== MOMENT DETECTOR ======
+            Momentum Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100
+            Orderbook Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}
+            Gamma Cluster: {moment_metrics['gamma_cluster'].get('score', 0)}/100
+            OI Acceleration: {moment_metrics['oi_accel'].get('score', 0)}/100
+            
+            ====== TIME CONTEXT ======
+            Current Time: {get_ist_datetime_str()}
+            Expiry: {market_data['expiry']}
+            Days to Expiry: {market_data['days_to_expiry']:.1f}
+            
+            Please analyze this setup and provide:
+            1. Key observations from seller activity and market structure
+            2. Probability assessment of the trade signal
+            3. Risk factors to watch (gamma, PCR, moment indicators)
+            4. Recommended adjustments to stop loss/target based on levels
+            5. Market context and macro factors to consider
+            
+            Be concise, professional, and data-driven. Focus on actionable insights for an options trader.
+            """
+            
+            # Call Perplexity API
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are an expert options trader and market analyst specializing in Nifty options.
-                        Analyze the given market data and provide:
-                        1. Key observations from seller activity
-                        2. Probability assessment of the trade signal
-                        3. Risk factors to watch
-                        4. Recommended adjustments to stop loss/target
-                        5. Market context and macro factors to consider
-                        
-                        Be concise, professional, and data-driven."""
+                        "content": "You are an expert options trader and market analyst with 20+ years of experience in Nifty options. Provide actionable, data-driven insights."
                     },
                     {
                         "role": "user", 
                         "content": analysis_prompt
                     }
                 ],
-                temperature=0.7,
-                max_tokens=800,
-                top_p=0.9
+                max_tokens=2000
             )
             
-            return response.choices[0].message.content
+            analysis_result = response.choices[0].message.content
+            
+            # Save analysis to file
+            self.save_analysis(analysis_result, market_data, signal_data)
+            
+            return analysis_result
             
         except Exception as e:
             st.error(f"AI Analysis Error: {e}")
             return None
     
-    def _create_analysis_prompt(self, market_data, signal_data, moment_metrics):
-        """Create structured prompt for AI analysis"""
-        
-        prompt = f"""
-        NIFTY OPTIONS MARKET ANALYSIS REQUEST:
-        
-        ====== MARKET DATA ======
-        Spot Price: ₹{market_data['spot']:,.2f}
-        ATM Strike: ₹{market_data['atm_strike']:,}
-        Seller Bias: {market_data['seller_bias']}
-        Max Pain: ₹{market_data['max_pain']:,}
-        Breakout Index: {market_data['breakout_index']}%
-        
-        ====== SIGNAL DATA ======
-        Position: {signal_data['position_type']}
-        Signal Strength: {signal_data['signal_strength']}
-        Confidence: {signal_data['confidence']:.0f}%
-        Entry Price: ₹{signal_data['optimal_entry_price']:,.2f}
-        Stop Loss: ₹{signal_data.get('stop_loss', 'N/A'):,.2f}
-        Target: ₹{signal_data.get('target', 'N/A'):,.2f}
-        
-        ====== SUPPORT/RESISTANCE ======
-        Nearest Support: ₹{market_data['nearest_support']:,}
-        Nearest Resistance: ₹{market_data['nearest_resistance']:,}
-        Range Size: ₹{market_data['range_size']:,}
-        
-        ====== MOMENT DETECTOR ======
-        Momentum Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100
-        Orderbook Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}
-        Gamma Cluster: {moment_metrics['gamma_cluster'].get('score', 0)}/100
-        OI Acceleration: {moment_metrics['oi_accel'].get('score', 0)}/100
-        
-        ====== PCR DATA ======
-        Total PCR: {market_data['total_pcr']:.2f}
-        CALL OI Total: {market_data['total_ce_oi']:,}
-        PUT OI Total: {market_data['total_pe_oi']:,}
-        CALL Writing: {market_data['ce_selling']} strikes
-        PUT Writing: {market_data['pe_selling']} strikes
-        
-        ====== GREEKS ======
-        Total GEX: ₹{market_data['total_gex']:,}
-        Gamma Exposure: {'POSITIVE' if market_data['total_gex'] > 0 else 'NEGATIVE'}
-        
-        ====== TIME CONTEXT ======
-        Current Time: {get_ist_datetime_str()}
-        Expiry: {market_data['expiry']}
-        Days to Expiry: {market_data['days_to_expiry']:.1f}
-        
-        Please analyze this setup and provide actionable insights for an options trader.
-        """
-        
-        return prompt
+    def save_analysis(self, analysis, market_data, signal_data):
+        """Save AI analysis to a timestamped file"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"trading_analysis_{timestamp}.txt"
+            
+            with open(filename, "w") as f:
+                f.write(f"Timestamp: {get_ist_datetime_str()}\n")
+                f.write(f"Position: {signal_data['position_type']}\n")
+                f.write(f"Confidence: {signal_data['confidence']:.0f}%\n")
+                f.write(f"Spot: ₹{market_data['spot']:,.2f}\n")
+                f.write(f"Entry: ₹{signal_data['optimal_entry_price']:,.2f}\n")
+                f.write("\n" + "="*50 + "\n")
+                f.write("AI ANALYSIS:\n")
+                f.write("="*50 + "\n\n")
+                f.write(analysis)
+            
+            st.session_state["last_analysis_file"] = filename
+        except Exception as e:
+            st.warning(f"Could not save analysis: {e}")
     
     def generate_trade_plan(self, signal_data, risk_capital=100000):
         """
-        Generate detailed trade plan with position sizing
+        Generate detailed trade plan with position sizing using Perplexity
         """
         if not self.enabled:
             return None
@@ -243,16 +284,18 @@ class TradingAI:
             Confidence: {signal_data['confidence']:.0f}%
             
             Risk Capital: ₹{risk_capital:,.2f}
+            Nifty Lot Size: 50
             
-            Create a trade plan with:
-            1. Recommended position size (lots)
-            2. Entry strategy (market vs limit)
-            3. Stop loss placement and adjustments
-            4. Profit booking strategy
-            5. Contingency plans
-            6. Risk per trade (% of capital)
+            Create a detailed trade plan including:
+            1. Recommended position size (number of lots) with calculation
+            2. Entry strategy (market vs limit order timing)
+            3. Stop loss placement rationale and adjustment rules
+            4. Profit booking strategy (partial vs full exits)
+            5. Risk per trade (% of capital) and maximum drawdown limits
+            6. Contingency plans for gap openings or news events
+            7. Position management during market hours
             
-            Be specific and practical.
+            Be specific and practical for Nifty options trading.
             """
             
             response = self.client.chat.completions.create(
@@ -260,8 +303,7 @@ class TradingAI:
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.8,
-                max_tokens=600
+                max_tokens=1500
             )
             
             return response.choices[0].message.content
@@ -272,14 +314,14 @@ class TradingAI:
     
     def analyze_market_sentiment(self, market_data):
         """
-        Analyze overall market sentiment
+        Analyze overall market sentiment using Perplexity
         """
         if not self.enabled:
             return None
         
         try:
             prompt = f"""
-            Analyze Nifty options market sentiment:
+            Analyze Nifty options market sentiment based on:
             
             Spot: ₹{market_data['spot']:,.2f}
             Seller Activity: {market_data['seller_bias']}
@@ -288,11 +330,15 @@ class TradingAI:
             Max Pain: ₹{market_data['max_pain']:,}
             
             Provide sentiment analysis covering:
-            1. Institutional positioning
+            1. Institutional positioning (FII/DII flows context)
             2. Retail sentiment indicators
-            3. Volatility outlook
-            4. Key risk events
-            5. Market structure analysis
+            3. Volatility outlook (IV vs HV comparison)
+            4. Key risk events for the session
+            5. Market structure analysis (support/resistance validity)
+            6. Gamma exposure implications
+            7. PCR interpretation for next session
+            
+            Focus on practical implications for intraday options traders.
             """
             
             response = self.client.chat.completions.create(
@@ -300,8 +346,7 @@ class TradingAI:
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7,
-                max_tokens=500
+                max_tokens=1200
             )
             
             return response.choices[0].message.content
@@ -309,9 +354,48 @@ class TradingAI:
         except Exception as e:
             st.error(f"Sentiment Analysis Error: {e}")
             return None
+    
+    def analyze_historical_patterns(self, historical_data=None):
+        """
+        Analyze historical patterns for similar setups
+        """
+        if not self.enabled:
+            return None
+        
+        try:
+            # You can integrate historical data analysis here
+            prompt = """
+            Based on historical Nifty options data patterns, analyze:
+            
+            1. Similar seller bias setups and their outcomes
+            2. PCR extremes and mean reversion patterns
+            3. Gamma cluster formations and price behavior
+            4. Max Pain theory effectiveness in current expiry
+            5. Historical win rates for similar signal configurations
+            
+            Provide insights on:
+            - Probability of success for current setup
+            - Historical risk:reward ratios
+            - Best time of day for entry
+            - Common failure modes to avoid
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1000
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            st.error(f"Historical Analysis Error: {e}")
+            return None
 
 # Initialize AI
-trading_ai = TradingAI(GROQ_API_KEY)
+trading_ai = TradingAI(PERPLEXITY_API_KEY)
 
 # -----------------------
 #  TELEGRAM FUNCTIONS
@@ -1653,7 +1737,7 @@ def parse_dhan_option_chain(chain_data):
 # -----------------------
 #  MAIN APP - SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI
 # -----------------------
-st.title("🎯 NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS")
+st.title("🎯 NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS (Perplexity)")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -1702,10 +1786,10 @@ with st.sidebar:
     st.markdown("### 🧠 AI ANALYSIS")
     if trading_ai.is_enabled():
         st.success("✅ AI Analysis ENABLED")
-        st.metric("AI Model", "Llama-3.1-70B")  # Updated model name
+        st.metric("AI Model", "Perplexity Sonar-Pro")
     else:
         st.warning("⚠️ AI Analysis DISABLED")
-        st.info("Add GROQ_API_KEY to secrets to enable")
+        st.info("Add PERPLEXITY_API_KEY to secrets to enable")
     
     st.markdown("---")
     st.markdown(f"**Current IST:** {get_ist_time_str()}")
@@ -1724,7 +1808,7 @@ with st.sidebar:
     st.markdown("### 🤖 AI SETTINGS")
     enable_ai_analysis = st.checkbox("Enable AI Analysis", value=trading_ai.is_enabled())
     if enable_ai_analysis and not trading_ai.is_enabled():
-        st.warning("AI requires GROQ_API_KEY in secrets")
+        st.warning("AI requires PERPLEXITY_API_KEY in secrets")
     
     if st.button("Clear Caches"):
         st.cache_data.clear()
@@ -1958,12 +2042,12 @@ telegram_signal = check_and_send_signal(
 )
 
 # ============================================
-# 🧠 AI ANALYSIS SECTION
+# 🧠 AI ANALYSIS SECTION (PERPLEXITY)
 # ============================================
 
 if trading_ai.is_enabled() and enable_ai_analysis:
     st.markdown("---")
-    st.markdown("## 🧠 AI-POWERED MARKET ANALYSIS")
+    st.markdown("## 🧠 AI-POWERED MARKET ANALYSIS (Perplexity)")
     
     # Prepare data for AI
     market_data_for_ai = {
@@ -1989,7 +2073,7 @@ if trading_ai.is_enabled() and enable_ai_analysis:
     ai_tab1, ai_tab2, ai_tab3 = st.tabs(["📊 Market Analysis", "🎯 Trade Plan", "📈 Sentiment"])
     
     with ai_tab1:
-        st.markdown("### 🤖 AI Market Analysis")
+        st.markdown("### 🤖 AI Market Analysis (Perplexity Sonar-Pro)")
         
         if st.button("🔄 Generate AI Analysis", key="ai_analyze"):
             with st.spinner("🤖 AI is analyzing market conditions..."):
@@ -2183,26 +2267,27 @@ else:
         st.info("""
         ### ⚙️ To Enable AI Analysis:
         
-        1. **Install Groq package:**
+        1. **Install Perplexity package:**
         ```bash
-        pip install groq python-dotenv
+        pip install perplexity-client python-dotenv
         ```
         
-        2. **Get Groq API Key:**
-           - Visit [console.groq.com](https://console.groq.com)
-           - Sign up and get your API key
+        2. **Get Perplexity API Key:**
+           - Visit [perplexity.ai](https://www.perplexity.ai)
+           - Sign up and get your API key from dashboard
            
         3. **Add to Streamlit Secrets:**
         ```toml
         # .streamlit/secrets.toml
-        GROQ_API_KEY = "your_groq_api_key_here"
+        PERPLEXITY_API_KEY = "your_perplexity_api_key_here"
         ENABLE_AI_ANALYSIS = "true"
         ```
         
         4. **Restart the app**
         
         ### 🎯 AI Features:
-        - Real-time market analysis
+        - Real-time market analysis (Perplexity Sonar-Pro)
+        - Web-enhanced market context
         - Trade plan generation
         - Sentiment analysis
         - Risk assessment
@@ -3226,14 +3311,14 @@ st.markdown(f'''
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS** | All features enabled")
+st.caption("🎯 **NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS (Perplexity)** | All features enabled")
 
 # Requirements note
 st.markdown("""
 <small>
 **Requirements:** 
-`streamlit pandas numpy requests pytz scipy supabase groq python-dotenv` | 
-**AI:** Groq API key required | 
+`streamlit pandas numpy requests pytz scipy supabase perplexity-client python-dotenv` | 
+**AI:** Perplexity API key required | 
 **Data:** Dhan API required
 </small>
 """, unsafe_allow_html=True)
