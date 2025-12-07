@@ -467,7 +467,8 @@ def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pai
 # -----------------------
 #  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES
 # -----------------------
-st.markdown("""
+# Using raw string to avoid tokenization errors
+st.markdown(r"""
 <style>
     .main { background-color: #0e1117; color: #fafafa; }
     
