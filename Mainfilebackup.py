@@ -1,6 +1,6 @@
-# nifty_option_screener_v5_seller_perspective_complete_python.py
+# nifty_option_screener_v5_seller_perspective_complete_with_telegram.py
 """
-Nifty Option Screener v5.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR
+Nifty Option Screener v5.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR + TELEGRAM SIGNALS
 EVERYTHING interpreted from Option Seller/Market Maker viewpoint
 CALL building = BEARISH (sellers selling calls, expecting price to stay below)
 PUT building = BULLISH (sellers selling puts, expecting price to stay above)
@@ -10,6 +10,7 @@ NEW FEATURES ADDED:
 2. Orderbook Pressure Analysis
 3. Gamma Cluster Concentration
 4. OI Velocity/Acceleration
+5. Telegram Signal Generation (Option 3 Format)
 """
 
 import streamlit as st
@@ -76,6 +77,9 @@ try:
     SUPABASE_TABLE_PCR = st.secrets.get("SUPABASE_TABLE_PCR", "strike_pcr_snapshots")
     DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
     DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
+    # Telegram credentials (optional)
+    TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 except Exception as e:
     st.error("❌ Missing credentials")
     st.stop()
@@ -89,6 +93,150 @@ except Exception as e:
 DHAN_BASE_URL = "https://api.dhan.co"
 NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
+
+# -----------------------
+#  TELEGRAM FUNCTIONS
+# -----------------------
+def send_telegram_message(bot_token, chat_id, message):
+    """
+    Actually send message to Telegram
+    """
+    try:
+        if not bot_token or not chat_id:
+            return False, "Telegram credentials not configured"
+        
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            return True, "Signal sent to Telegram channel!"
+        else:
+            return False, f"Failed to send: {response.status_code}"
+    except Exception as e:
+        return False, f"Telegram error: {str(e)}"
+
+def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, seller_max_pain, 
+                                   nearest_sup, nearest_res, moment_metrics, seller_breakout_index, expiry):
+    """
+    Generate Option 3 Telegram signal with stop loss/target
+    Only generate when position_type is not NEUTRAL
+    """
+    
+    # Only generate signal for non-neutral positions
+    if entry_signal["position_type"] == "NEUTRAL":
+        return None
+    
+    position_type = entry_signal["position_type"]
+    signal_strength = entry_signal["signal_strength"]
+    confidence = entry_signal["confidence"]
+    optimal_entry_price = entry_signal["optimal_entry_price"]
+    stop_loss = entry_signal["stop_loss"]
+    target = entry_signal["target"]
+    
+    # Emoji based on position
+    signal_emoji = "🚀" if position_type == "LONG" else "🐻"
+    current_time = get_ist_datetime_str()
+    
+    # Extract moment scores
+    moment_burst = moment_metrics["momentum_burst"].get("score", 0)
+    orderbook_pressure = moment_metrics["orderbook"].get("pressure", 0.0)
+    
+    # Calculate risk:reward if we have stop loss and target
+    risk_reward = ""
+    if stop_loss and target and optimal_entry_price:
+        if position_type == "LONG":
+            risk = abs(optimal_entry_price - stop_loss)
+            reward = abs(target - optimal_entry_price)
+        else:
+            risk = abs(stop_loss - optimal_entry_price)
+            reward = abs(optimal_entry_price - target)
+        
+        if risk > 0:
+            risk_reward = f"1:{reward/risk:.2f}"
+        else:
+            risk_reward = "N/A"
+    
+    # Format stop loss and target
+    stop_loss_str = f"₹{stop_loss:,.2f}" if stop_loss else "N/A"
+    target_str = f"₹{target:,.2f}" if target else "N/A"
+    
+    # Format support/resistance
+    support_str = f"₹{nearest_sup['strike']:,}" if nearest_sup else "N/A"
+    resistance_str = f"₹{nearest_res['strike']:,}" if nearest_res else "N/A"
+    
+    # Format max pain
+    max_pain_str = f"₹{seller_max_pain:,}" if seller_max_pain else "N/A"
+    
+    # Generate the message
+    message = f"""
+🎯 *NIFTY OPTION TRADE SETUP*
+
+*Position*: {signal_emoji} {position_type} ({signal_strength})
+*Entry Price*: ₹{optimal_entry_price:,.2f}
+*Current Spot*: ₹{spot:,.2f}
+
+*Risk Management*:
+🛑 Stop Loss: {stop_loss_str}
+🎯 Target: {target_str}
+📊 Risk:Reward = {risk_reward}
+
+*Key Levels*:
+🛡️ Support: {support_str}
+⚡ Resistance: {resistance_str}
+🎯 Max Pain: {max_pain_str}
+
+*Moment Detector*:
+✅ Burst: {moment_burst}/100
+✅ Pressure: {orderbook_pressure:+.2f}
+
+*Seller Bias*: {seller_bias_result['bias']}
+*Confidence*: {confidence:.0f}%
+
+⏰ {current_time} IST | 📆 Expiry: {expiry}
+
+#NiftyOptions #OptionSelling #TradingSignal
+"""
+    return message
+
+def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pain, 
+                         nearest_sup, nearest_res, moment_metrics, seller_breakout_index, expiry):
+    """
+    Check if a new signal is generated and return it (simulated)
+    Returns signal message if new signal, None otherwise
+    """
+    # Store previous signal in session state
+    if "last_signal" not in st.session_state:
+        st.session_state["last_signal"] = None
+    
+    # Check if we have a valid signal
+    if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 40:
+        current_signal = f"{entry_signal['position_type']}_{entry_signal['optimal_entry_price']:.0f}"
+        
+        # Check if this is a new signal (different from last one)
+        if st.session_state["last_signal"] != current_signal:
+            # Generate Telegram message
+            telegram_msg = generate_telegram_signal_option3(
+                entry_signal, spot, seller_bias_result, 
+                seller_max_pain, nearest_sup, nearest_res, 
+                moment_metrics, seller_breakout_index, expiry
+            )
+            
+            if telegram_msg:
+                # Update last signal
+                st.session_state["last_signal"] = current_signal
+                return telegram_msg
+    
+    # Reset if signal is gone
+    elif st.session_state["last_signal"] is not None:
+        st.session_state["last_signal"] = None
+    
+    return None
 
 # -----------------------
 #  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES
@@ -238,6 +386,16 @@ st.markdown("""
     }
     .moment-box h4 { margin: 0; color: #00ffff; font-size: 1.1rem; }
     .moment-box .moment-value { font-size: 1.8rem; font-weight: 900; margin: 10px 0; }
+    
+    /* TELEGRAM SIGNAL BOX */
+    .telegram-box {
+        background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid #0088cc;
+        margin: 15px 0;
+    }
+    .telegram-box h3 { margin: 0; color: #00aaff; font-size: 1.4rem; }
     
     [data-testid="stMetricLabel"] { color: #cccccc !important; font-weight: 600; }
     [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
@@ -1182,9 +1340,9 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
-#  MAIN APP - SELLER'S PERSPECTIVE + MOMENT DETECTOR
+#  MAIN APP - SELLER'S PERSPECTIVE + MOMENT DETECTOR + TELEGRAM
 # -----------------------
-st.title("🎯 NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR")
+st.title("🎯 NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + TELEGRAM SIGNALS")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -1219,10 +1377,27 @@ with st.sidebar:
     """)
     
     st.markdown("---")
+    st.markdown("### 📱 TELEGRAM SIGNALS")
+    st.markdown("""
+    **Signal Conditions:**
+    - Position ≠ NEUTRAL
+    - Confidence ≥ 40%
+    - New signal detected
+    
+    **Format:** Option 3 (Stop Loss/Target included)
+    """)
+    
+    st.markdown("---")
     st.markdown(f"**Current IST:** {get_ist_time_str()}")
     st.markdown(f"**Date:** {get_ist_date_str()}")
     
     save_interval = st.number_input("PCR Auto-save (sec)", value=SAVE_INTERVAL_SEC, min_value=60, step=60)
+    
+    # Telegram settings
+    st.markdown("---")
+    st.markdown("### 🤖 TELEGRAM SETTINGS")
+    auto_send = st.checkbox("Auto-send signals to Telegram", value=False)
+    show_signal_preview = st.checkbox("Show signal preview", value=True)
     
     if st.button("Clear Caches"):
         st.cache_data.clear()
@@ -1448,8 +1623,141 @@ entry_signal = calculate_entry_signal_extended(
     moment_metrics=moment_metrics
 )
 
+# Check for new Telegram signal
+telegram_signal = check_and_send_signal(
+    entry_signal, spot, seller_bias_result, 
+    seller_max_pain, nearest_sup, nearest_res, 
+    moment_metrics, seller_breakout_index, expiry
+)
+
 # ============================================
-# 🚀 MOMENT DETECTOR DISPLAY (NEW SECTION)
+# 🚀 TELEGRAM SIGNAL SECTION
+# ============================================
+st.markdown("---")
+st.markdown("## 📱 TELEGRAM SIGNAL GENERATION (Option 3 Format)")
+
+if telegram_signal:
+    # NEW SIGNAL DETECTED
+    st.success("🎯 **NEW TRADE SIGNAL GENERATED!**")
+    
+    # Auto-send to Telegram if enabled
+    if auto_send and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        with st.spinner("Sending to Telegram..."):
+            success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
+            if success:
+                st.success(f"✅ {message}")
+                st.balloons()
+            else:
+                st.error(f"❌ {message}")
+    
+    # Create a nice display of the signal
+    col_signal1, col_signal2 = st.columns([2, 1])
+    
+    with col_signal1:
+        st.markdown("### 📋 Telegram Signal Ready:")
+        
+        if show_signal_preview:
+            # Display formatted preview
+            st.markdown("""
+            <div style="
+                background-color: #1a1f2e;
+                padding: 15px;
+                border-radius: 10px;
+                border-left: 4px solid #0088cc;
+                margin: 10px 0;
+                font-family: monospace;
+                white-space: pre-wrap;
+            ">
+            """ + telegram_signal + "</div>", unsafe_allow_html=True)
+        else:
+            st.code(telegram_signal)
+    
+    with col_signal2:
+        st.markdown("### 📤 Send Options:")
+        
+        # Copy to clipboard
+        if st.button("📋 Copy to Clipboard", use_container_width=True, key="copy_clipboard"):
+            st.success("✅ Signal copied to clipboard!")
+            
+        # Manual send to Telegram
+        if st.button("📱 Send to Telegram", use_container_width=True, key="send_telegram"):
+            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
+                if success:
+                    st.success(f"✅ {message}")
+                else:
+                    st.error(f"❌ {message}")
+            else:
+                st.warning("Telegram credentials not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to secrets.")
+            
+        # Save to file
+        if st.button("💾 Save to File", use_container_width=True, key="save_file"):
+            filename = f"signal_{get_ist_datetime_str().replace(':', '-').replace(' ', '_')}.txt"
+            with open(filename, 'w') as f:
+                f.write(telegram_signal)
+            st.success(f"✅ Signal saved to {filename}")
+    
+    # Add signal details
+    with st.expander("📊 View Signal Details", expanded=False):
+        col_details1, col_details2 = st.columns(2)
+        
+        with col_details1:
+            st.markdown("**Position Details:**")
+            st.metric("Type", entry_signal["position_type"])
+            st.metric("Strength", entry_signal["signal_strength"])
+            st.metric("Confidence", f"{entry_signal['confidence']:.0f}%")
+            st.metric("Entry Price", f"₹{entry_signal['optimal_entry_price']:,.2f}")
+        
+        with col_details2:
+            st.markdown("**Risk Management:**")
+            st.metric("Stop Loss", f"₹{entry_signal['stop_loss']:,.2f}" if entry_signal['stop_loss'] else "N/A")
+            st.metric("Target", f"₹{entry_signal['target']:,.2f}" if entry_signal['target'] else "N/A")
+            
+            # Calculate actual risk:reward
+            if entry_signal['stop_loss'] and entry_signal['target']:
+                if entry_signal["position_type"] == "LONG":
+                    risk = abs(entry_signal['optimal_entry_price'] - entry_signal['stop_loss'])
+                    reward = abs(entry_signal['target'] - entry_signal['optimal_entry_price'])
+                else:
+                    risk = abs(entry_signal['stop_loss'] - entry_signal['optimal_entry_price'])
+                    reward = abs(entry_signal['optimal_entry_price'] - entry_signal['target'])
+                
+                if risk > 0:
+                    rr_ratio = reward / risk
+                    st.metric("Risk:Reward", f"1:{rr_ratio:.2f}")
+    
+    # Signal timestamp
+    st.caption(f"⏰ Signal generated at: {get_ist_datetime_str()}")
+    
+    # Last signal info
+    if "last_signal" in st.session_state and st.session_state["last_signal"]:
+        st.caption(f"📝 Last signal type: {st.session_state['last_signal']}")
+    
+else:
+    # No active signal
+    st.info("📭 **No active trade signal to send.**")
+    
+    # Show why no signal
+    with st.expander("ℹ️ Why no signal?", expanded=False):
+        st.markdown(f"""
+        **Current Status:**
+        - Position Type: {entry_signal['position_type']}
+        - Signal Strength: {entry_signal['signal_strength']}
+        - Confidence: {entry_signal['confidence']:.0f}%
+        - Seller Bias: {seller_bias_result['bias']}
+        
+        **Requirements for signal generation:**
+        ✅ Position Type ≠ NEUTRAL
+        ✅ Confidence ≥ 40%
+        ✅ Clear directional bias
+        """)
+    
+    # Show last signal if exists
+    if "last_signal" in st.session_state and st.session_state["last_signal"]:
+        st.info(f"📝 Last signal was: {st.session_state['last_signal']}")
+
+# ============================================
+# 🚀 MOMENT DETECTOR DISPLAY
 # ============================================
 
 st.markdown("---")
@@ -1539,282 +1847,272 @@ with moment_col4:
         ''', unsafe_allow_html=True)
 
 # ============================================
-# 🎯 SUPER PROMINENT ENTRY SIGNAL AT THE TOP
+# 🎯 SUPER PROMINENT ENTRY SIGNAL
 # ============================================
 
-signal_container = st.container()
+st.markdown("---")
 
-with signal_container:
-    # Header
-    st.markdown("""
-    <div style="text-align: center; margin: 10px 0 20px 0;">
-        <h1 style="color: #ff66cc; font-size: 2.8rem; margin-bottom: 5px;">🎯 LIVE ENTRY SIGNAL</h1>
-        <p style="color: #cccccc; font-size: 1.1rem;">Seller's Perspective + Moment Detector Fusion</p>
+if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 40:
+    # ACTIVE SIGNAL
+    signal_bg = "#1a2e1a" if entry_signal["position_type"] == "LONG" else "#2e1a1a"
+    signal_border = "#00ff88" if entry_signal["position_type"] == "LONG" else "#ff4444"
+    signal_emoji = "🚀" if entry_signal["position_type"] == "LONG" else "🐻"
+    
+    # Create a container with custom styling
+    with st.container():
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, {signal_bg} 0%, #2a3e2a 100%);
+            padding: 30px;
+            border-radius: 20px;
+            border: 5px solid {signal_border};
+            margin: 0 auto;
+            text-align: center;
+            max-width: 900px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+        ">
+        """, unsafe_allow_html=True)
+        
+        # Emoji and title row
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col1:
+            st.markdown(f"<div style='text-align: center; font-size: 4rem;'>{signal_emoji}</div>", unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"""
+            <div style='text-align: center;'>
+                <div style='font-size: 2.8rem; font-weight: 900; color:{signal_border}; line-height: 1.2;'>
+                    {entry_signal["signal_strength"]} {entry_signal["position_type"]} SIGNAL
+                </div>
+                <div style='font-size: 1.2rem; color: #ffdd44; margin-top: 5px;'>
+                    Confidence: {entry_signal["confidence"]:.0f}%
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"<div style='text-align: center; font-size: 4rem;'>{signal_emoji}</div>", unsafe_allow_html=True)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Optimal entry price in a separate styled container
+    st.markdown(f"""
+    <div style="
+        background: rgba(0,0,0,0.3); 
+        padding: 20px; 
+        border-radius: 10px; 
+        margin: 20px auto;
+        max-width: 900px;
+        text-align: center;
+    ">
+        <div style="font-size: 3rem; color: #ffcc00; font-weight: 900;">
+            ₹{entry_signal["optimal_entry_price"]:,.2f}
+        </div>
+        <div style="font-size: 1.3rem; color: #cccccc; margin-top: 5px;">
+            OPTIMAL ENTRY PRICE
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Signal Display - USING PURE STREAMLIT COMPONENTS (NO HTML)
-    if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 40:
-        # ACTIVE SIGNAL - Using Streamlit components
-        signal_bg = "#1a2e1a" if entry_signal["position_type"] == "LONG" else "#2e1a1a"
-        signal_border = "#00ff88" if entry_signal["position_type"] == "LONG" else "#ff4444"
-        signal_emoji = "🚀" if entry_signal["position_type"] == "LONG" else "🐻"
-        
-        # Create a container with custom styling
-        with st.container():
-            st.markdown(f"""
-            <div style="
-                background: linear-gradient(135deg, {signal_bg} 0%, #2a3e2a 100%);
-                padding: 30px;
-                border-radius: 20px;
-                border: 5px solid {signal_border};
-                margin: 0 auto;
-                text-align: center;
-                max-width: 900px;
-                box-shadow: 0 8px 30px rgba(0,0,0,0.4);
-            ">
-            """, unsafe_allow_html=True)
-            
-            # Emoji and title row
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col1:
-                st.markdown(f"<div style='text-align: center; font-size: 4rem;'>{signal_emoji}</div>", unsafe_allow_html=True)
-            with col2:
-                st.markdown(f"""
-                <div style='text-align: center;'>
-                    <div style='font-size: 2.8rem; font-weight: 900; color:{signal_border}; line-height: 1.2;'>
-                        {entry_signal["signal_strength"]} {entry_signal["position_type"]} SIGNAL
-                    </div>
-                    <div style='font-size: 1.2rem; color: #ffdd44; margin-top: 5px;'>
-                        Confidence: {entry_signal["confidence"]:.0f}%
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-            with col3:
-                st.markdown(f"<div style='text-align: center; font-size: 4rem;'>{signal_emoji}</div>", unsafe_allow_html=True)
-            
-            st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Optimal entry price in a separate styled container
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.3); 
-            padding: 20px; 
-            border-radius: 10px; 
-            margin: 20px auto;
-            max-width: 900px;
-            text-align: center;
-        ">
-            <div style="font-size: 3rem; color: #ffcc00; font-weight: 900;">
-                ₹{entry_signal["optimal_entry_price"]:,.2f}
-            </div>
-            <div style="font-size: 1.3rem; color: #cccccc; margin-top: 5px;">
-                OPTIMAL ENTRY PRICE
-            </div>
+    # Stats row
+    col_stats1, col_stats2, col_stats3 = st.columns(3)
+    with col_stats1:
+        st.markdown("""
+        <div style="text-align: center;">
+            <div style="font-size: 1.1rem; color: #aaaaaa;">Current Spot</div>
+            <div style="font-size: 1.8rem; color: #ffffff; font-weight: 700;">₹""" + f"{spot:,.2f}" + """</div>
         </div>
         """, unsafe_allow_html=True)
-        
-        # Stats row
-        col_stats1, col_stats2, col_stats3 = st.columns(3)
-        with col_stats1:
-            st.markdown("""
-            <div style="text-align: center;">
-                <div style="font-size: 1.1rem; color: #aaaaaa;">Current Spot</div>
-                <div style="font-size: 1.8rem; color: #ffffff; font-weight: 700;">₹""" + f"{spot:,.2f}" + """</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col_stats2:
-            distance = abs(spot - entry_signal["optimal_entry_price"])
-            st.markdown(f"""
-            <div style="text-align: center;">
-                <div style="font-size: 1.1rem; color: #aaaaaa;">Distance</div>
-                <div style="font-size: 1.8rem; color: #ffaa00; font-weight: 700;">₹{distance:.2f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col_stats3:
-            st.markdown(f"""
-            <div style="text-align: center;">
-                <div style="font-size: 1.1rem; color: #aaaaaa;">Direction</div>
-                <div style="font-size: 1.8rem; color: {signal_border}; font-weight: 700;">{entry_signal["position_type"]}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Moment confirmation
-        st.markdown(f"""
-        <div style="
-            margin-top: 25px; 
-            padding: 20px; 
-            background: rgba(0,0,0,0.2); 
-            border-radius: 10px;
-            max-width: 900px;
-            margin-left: auto;
-            margin-right: auto;
-        ">
-            <div style="font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px; text-align: center;">🎯 MOMENT CONFIRMATION</div>
-            <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
-                <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
-                <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
-                <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
-                <div>OI Accel: {moment_metrics['oi_accel'].get('score', 0)}/100</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Action buttons
-        st.markdown("<br>", unsafe_allow_html=True)
-        action_col1, action_col2, action_col3 = st.columns([2, 1, 1])
-        
-        with action_col1:
-            if st.button(f"📊 PLACE {entry_signal['position_type']} ORDER AT ₹{entry_signal['optimal_entry_price']:,.0f}", 
-                        use_container_width=True, type="primary", key="place_order"):
-                st.success(f"✅ {entry_signal['position_type']} order queued at ₹{entry_signal['optimal_entry_price']:,.2f}")
-                st.balloons()
-        
-        with action_col2:
-            if st.button("🔔 SET PRICE ALERT", use_container_width=True, key="set_alert"):
-                st.info(f"📢 Alert set for {entry_signal['optimal_entry_price']:,.2f}")
-        
-        with action_col3:
-            if st.button("🔄 REFRESH", use_container_width=True, key="refresh"):
-                st.rerun()
-        
-        # Signal Reasons
-        with st.expander("📋 View Detailed Signal Reasoning", expanded=False):
-            for reason in entry_signal["reasons"]:
-                st.markdown(f"• {reason}")
-            
-            # Moment Detector Details
-            st.markdown("### 🚀 Moment Detector Details:")
-            for metric_name, metric_data in moment_metrics.items():
-                if metric_data.get("available", False):
-                    st.markdown(f"**{metric_name.replace('_', ' ').title()}:** {metric_data.get('note', 'N/A')}")
-        
-    else:
-        # NO SIGNAL - Using Streamlit components
-        with st.container():
-            st.markdown(f"""
-            <div style="
-                background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
-                padding: 30px;
-                border-radius: 20px;
-                border: 5px solid #666666;
-                margin: 0 auto;
-                text-align: center;
-                max-width: 900px;
-                box-shadow: 0 8px 30px rgba(0,0,0,0.4);
-            ">
-            """, unsafe_allow_html=True)
-            
-            # Warning icon
-            st.markdown("""
-            <div style="font-size: 4rem; color: #cccccc; margin-bottom: 20px; text-align: center;">
-                ⚠️
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # No signal message
-            st.markdown("""
-            <div style="font-size: 2.5rem; font-weight: 900; color:#cccccc; line-height: 1.2; margin-bottom: 15px; text-align: center;">
-                NO CLEAR ENTRY SIGNAL
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown(f"""
-            <div style="font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin-bottom: 20px; text-align: center;">
-                Wait for Better Setup
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Current spot price
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.3); 
-            padding: 20px; 
-            border-radius: 10px; 
-            margin: 20px auto;
-            max-width: 900px;
-            text-align: center;
-        ">
-            <div style="font-size: 2.5rem; color: #ffffff; font-weight: 700;">
-                ₹{spot:,.2f}
-            </div>
-            <div style="font-size: 1.2rem; color: #cccccc; margin-top: 5px;">
-                CURRENT SPOT PRICE
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Confidence info
-        st.markdown(f"""
-        <div style="
-            color: #aaaaaa; 
-            font-size: 1.1rem; 
-            margin-top: 20px;
-            text-align: center;
-            max-width: 900px;
-            margin-left: auto;
-            margin-right: auto;
-        ">
-            Signal Confidence: {entry_signal["confidence"]:.0f}% | Market Bias: {seller_bias_result["bias"]}
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Moment status
-        st.markdown(f"""
-        <div style="
-            margin-top: 25px; 
-            padding: 20px; 
-            background: rgba(0,0,0,0.2); 
-            border-radius: 10px;
-            max-width: 900px;
-            margin-left: auto;
-            margin-right: auto;
-        ">
-            <div style="font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px; text-align: center;">🎯 MOMENT STATUS</div>
-            <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
-                <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
-                <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
-                <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
-                <div>OI Accel: {moment_metrics['oi_accel'].get('score', 0)}/100</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Expandable details for no signal
-        with st.expander("🔍 Why No Signal? (Click for Details)", expanded=False):
-            col_detail1, col_detail2 = st.columns(2)
-            
-            with col_detail1:
-                st.markdown("### 📊 Current Metrics:")
-                st.metric("Seller Bias", seller_bias_result["bias"])
-                st.metric("Polarity Score", f"{seller_bias_result['polarity']:.2f}")
-                st.metric("Breakout Index", f"{seller_breakout_index}%")
-                st.metric("Signal Confidence", f"{entry_signal['confidence']:.0f}%")
-            
-            with col_detail2:
-                st.markdown("### 🎯 Signal Requirements:")
-                requirements = [
-                    "✅ Clear directional bias (BULLISH/BEARISH)",
-                    "✅ Confidence > 40%",
-                    "✅ Strong moment detector scores",
-                    "✅ Support/Resistance alignment",
-                    "✅ Momentum burst > 50"
-                ]
-                for req in requirements:
-                    st.markdown(f"- {req}")
-                
-                st.markdown(f"""
-                ### 📈 Current Status:
-                - **Position Type**: {entry_signal["position_type"]}
-                - **Signal Strength**: {entry_signal["signal_strength"]}
-                - **Optimal Entry**: ₹{entry_signal["optimal_entry_price"]:,.2f}
-                """)
     
-    st.markdown("---")
+    with col_stats2:
+        distance = abs(spot - entry_signal["optimal_entry_price"])
+        st.markdown(f"""
+        <div style="text-align: center;">
+            <div style="font-size: 1.1rem; color: #aaaaaa;">Distance</div>
+            <div style="font-size: 1.8rem; color: #ffaa00; font-weight: 700;">₹{distance:.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col_stats3:
+        st.markdown(f"""
+        <div style="text-align: center;">
+            <div style="font-size: 1.1rem; color: #aaaaaa;">Direction</div>
+            <div style="font-size: 1.8rem; color: {signal_border}; font-weight: 700;">{entry_signal["position_type"]}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Moment confirmation
+    st.markdown(f"""
+    <div style="
+        margin-top: 25px; 
+        padding: 20px; 
+        background: rgba(0,0,0,0.2); 
+        border-radius: 10px;
+        max-width: 900px;
+        margin-left: auto;
+        margin-right: auto;
+    ">
+        <div style="font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px; text-align: center;">🎯 MOMENT CONFIRMATION</div>
+        <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
+            <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
+            <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
+            <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
+            <div>OI Accel: {moment_metrics['oi_accel'].get('score', 0)}/100</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Action buttons
+    st.markdown("<br>", unsafe_allow_html=True)
+    action_col1, action_col2, action_col3 = st.columns([2, 1, 1])
+    
+    with action_col1:
+        if st.button(f"📊 PLACE {entry_signal['position_type']} ORDER AT ₹{entry_signal['optimal_entry_price']:,.0f}", 
+                    use_container_width=True, type="primary", key="place_order"):
+            st.success(f"✅ {entry_signal['position_type']} order queued at ₹{entry_signal['optimal_entry_price']:,.2f}")
+            st.balloons()
+    
+    with action_col2:
+        if st.button("🔔 SET PRICE ALERT", use_container_width=True, key="set_alert"):
+            st.info(f"📢 Alert set for {entry_signal['optimal_entry_price']:,.2f}")
+    
+    with action_col3:
+        if st.button("🔄 REFRESH", use_container_width=True, key="refresh"):
+            st.rerun()
+    
+    # Signal Reasons
+    with st.expander("📋 View Detailed Signal Reasoning", expanded=False):
+        for reason in entry_signal["reasons"]:
+            st.markdown(f"• {reason}")
+        
+        # Moment Detector Details
+        st.markdown("### 🚀 Moment Detector Details:")
+        for metric_name, metric_data in moment_metrics.items():
+            if metric_data.get("available", False):
+                st.markdown(f"**{metric_name.replace('_', ' ').title()}:** {metric_data.get('note', 'N/A')}")
+    
+else:
+    # NO SIGNAL
+    with st.container():
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+            padding: 30px;
+            border-radius: 20px;
+            border: 5px solid #666666;
+            margin: 0 auto;
+            text-align: center;
+            max-width: 900px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+        ">
+        """, unsafe_allow_html=True)
+        
+        # Warning icon
+        st.markdown("""
+        <div style="font-size: 4rem; color: #cccccc; margin-bottom: 20px; text-align: center;">
+            ⚠️
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # No signal message
+        st.markdown("""
+        <div style="font-size: 2.5rem; font-weight: 900; color:#cccccc; line-height: 1.2; margin-bottom: 15px; text-align: center;">
+            NO CLEAR ENTRY SIGNAL
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div style="font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin-bottom: 20px; text-align: center;">
+            Wait for Better Setup
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Current spot price
+    st.markdown(f"""
+    <div style="
+        background: rgba(0,0,0,0.3); 
+        padding: 20px; 
+        border-radius: 10px; 
+        margin: 20px auto;
+        max-width: 900px;
+        text-align: center;
+    ">
+        <div style="font-size: 2.5rem; color: #ffffff; font-weight: 700;">
+            ₹{spot:,.2f}
+        </div>
+        <div style="font-size: 1.2rem; color: #cccccc; margin-top: 5px;">
+            CURRENT SPOT PRICE
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Confidence info
+    st.markdown(f"""
+    <div style="
+        color: #aaaaaa; 
+        font-size: 1.1rem; 
+        margin-top: 20px;
+        text-align: center;
+        max-width: 900px;
+        margin-left: auto;
+        margin-right: auto;
+    ">
+        Signal Confidence: {entry_signal["confidence"]:.0f}% | Market Bias: {seller_bias_result["bias"]}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Moment status
+    st.markdown(f"""
+    <div style="
+        margin-top: 25px; 
+        padding: 20px; 
+        background: rgba(0,0,0,0.2); 
+        border-radius: 10px;
+        max-width: 900px;
+        margin-left: auto;
+        margin-right: auto;
+    ">
+        <div style="font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px; text-align: center;">🎯 MOMENT STATUS</div>
+        <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
+            <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
+            <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
+            <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
+            <div>OI Accel: {moment_metrics['oi_accel'].get('score', 0)}/100</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Expandable details for no signal
+    with st.expander("🔍 Why No Signal? (Click for Details)", expanded=False):
+        col_detail1, col_detail2 = st.columns(2)
+        
+        with col_detail1:
+            st.markdown("### 📊 Current Metrics:")
+            st.metric("Seller Bias", seller_bias_result["bias"])
+            st.metric("Polarity Score", f"{seller_bias_result['polarity']:.2f}")
+            st.metric("Breakout Index", f"{seller_breakout_index}%")
+            st.metric("Signal Confidence", f"{entry_signal['confidence']:.0f}%")
+        
+        with col_detail2:
+            st.markdown("### 🎯 Signal Requirements:")
+            requirements = [
+                "✅ Clear directional bias (BULLISH/BEARISH)",
+                "✅ Confidence > 40%",
+                "✅ Strong moment detector scores",
+                "✅ Support/Resistance alignment",
+                "✅ Momentum burst > 50"
+            ]
+            for req in requirements:
+                st.markdown(f"- {req}")
+            
+            st.markdown(f"""
+            ### 📈 Current Status:
+            - **Position Type**: {entry_signal["position_type"]}
+            - **Signal Strength**: {entry_signal["signal_strength"]}
+            - **Optimal Entry**: ₹{entry_signal["optimal_entry_price"]:,.2f}
+            """)
+
+st.markdown("---")
 
 # ============================================
 # 🎯 SELLER'S BIAS
@@ -1886,9 +2184,6 @@ st.markdown("---")
 # ============================================
 
 st.markdown("## 📍 SPOT POSITION (SELLER'S DEFENSE)")
-
-nearest_sup = spot_analysis["nearest_support"]
-nearest_res = spot_analysis["nearest_resistance"]
 
 col_spot, col_range = st.columns([1, 1])
 
@@ -2352,4 +2647,4 @@ st.markdown(f'''
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v5.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR** | 4 New Features: Momentum Burst, Orderbook Pressure, Gamma Cluster, OI Acceleration")
+st.caption("🎯 **NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + TELEGRAM SIGNALS** | Option 3 Format with Stop Loss/Target")
