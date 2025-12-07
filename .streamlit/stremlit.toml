@@ -1,23 +1,47 @@
-# Supabase Configuration
-SUPABASE_URL = "https://your-project-id.supabase.co"
-SUPABASE_ANON_KEY = "your-supabase-anon-key-here"
+# .streamlit/secrets.toml
+
+# ============================================
+# 🔐 MANDATORY SECRETS (Required for app to run)
+# ============================================
+
+# Supabase Database Configuration
+SUPABASE_URL = "https://your-project.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.your_anon_key_here"
 SUPABASE_TABLE = "option_snapshots"
 SUPABASE_TABLE_PCR = "strike_pcr_snapshots"
 
-# DhanHQ API Configuration
-DHAN_CLIENT_ID = "your-dhan-client-id"
-DHAN_ACCESS_TOKEN = "your-dhan-access-token"
+# Dhan API Configuration (NIFTY Trading)
+DHAN_CLIENT_ID = "DHAN_CLIENT_ID_FROM_DHAN"
+DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.your_dhan_token_here"
 
-# API Keys
-SUPABASE_URL = "your_supabase_url"
-SUPABASE_ANON_KEY = "your_supabase_key"
-DHAN_CLIENT_ID = "your_dhan_client_id"
-DHAN_ACCESS_TOKEN = "your_dhan_token"
+# ============================================
+# 🤖 OPTIONAL SECRETS (AI Features)
+# ============================================
 
-# Optional: Telegram
-TELEGRAM_BOT_TOKEN = "your_telegram_bot_token"
-TELEGRAM_CHAT_ID = "your_chat_id"
-
-# Optional: AI Analysis
-GROQ_API_KEY = "your_groq_api_key"
+# Groq AI Configuration (for AI analysis)
+GROQ_API_KEY = "gsk_your_groq_api_key_here"
 ENABLE_AI_ANALYSIS = "true"
+
+# ============================================
+# 📱 OPTIONAL SECRETS (Telegram Alerts)
+# ============================================
+
+# Telegram Bot Configuration
+TELEGRAM_BOT_TOKEN = "1234567890:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+TELEGRAM_CHAT_ID = "-1001234567890"
+
+# ============================================
+# ⚙️ APP CONFIGURATION (Optional Settings)
+# ============================================
+
+# Auto-refresh interval in seconds
+AUTO_REFRESH_SECONDS = "60"
+
+# Risk Management Settings
+DEFAULT_RISK_PERCENTAGE = "1.5"
+DEFAULT_RISK_CAPITAL = "100000"
+
+# Display Settings
+SHOW_AI_ANALYSIS = "true"
+SHOW_TELEGRAM_SIGNALS = "true"
+ENABLE_SOUND_ALERTS = "false"
