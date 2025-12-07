@@ -7,3 +7,17 @@ SUPABASE_TABLE_PCR = "strike_pcr_snapshots"
 # DhanHQ API Configuration
 DHAN_CLIENT_ID = "your-dhan-client-id"
 DHAN_ACCESS_TOKEN = "your-dhan-access-token"
+
+# API Keys
+SUPABASE_URL = "your_supabase_url"
+SUPABASE_ANON_KEY = "your_supabase_key"
+DHAN_CLIENT_ID = "your_dhan_client_id"
+DHAN_ACCESS_TOKEN = "your_dhan_token"
+
+# Optional: Telegram
+TELEGRAM_BOT_TOKEN = "your_telegram_bot_token"
+TELEGRAM_CHAT_ID = "your_chat_id"
+
+# Optional: AI Analysis
+GROQ_API_KEY = "your_groq_api_key"
+ENABLE_AI_ANALYSIS = "true"
