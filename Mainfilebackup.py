@@ -1,6 +1,6 @@
-# nifty_option_screener_v5_seller_perspective_complete_with_telegram.py
+# nifty_option_screener_v5_seller_perspective_complete_with_ai.py
 """
-Nifty Option Screener v5.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR + TELEGRAM SIGNALS
+Nifty Option Screener v5.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS
 EVERYTHING interpreted from Option Seller/Market Maker viewpoint
 CALL building = BEARISH (sellers selling calls, expecting price to stay below)
 PUT building = BULLISH (sellers selling puts, expecting price to stay above)
@@ -10,7 +10,8 @@ NEW FEATURES ADDED:
 2. Orderbook Pressure Analysis
 3. Gamma Cluster Concentration
 4. OI Velocity/Acceleration
-5. Telegram Signal Generation (Option 3 Format)
+5. Telegram Signal Generation
+6. AI-Powered Market Analysis (Groq)
 """
 
 import streamlit as st
@@ -23,6 +24,8 @@ import pytz
 from math import log, sqrt
 from scipy.stats import norm
 from supabase import create_client, Client
+import os
+from dotenv import load_dotenv
 
 # -----------------------
 #  IST TIMEZONE SETUP
@@ -80,6 +83,9 @@ try:
     # Telegram credentials (optional)
     TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
+    # Groq AI credentials (optional)
+    GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+    ENABLE_AI_ANALYSIS = st.secrets.get("ENABLE_AI_ANALYSIS", "false").lower() == "true"
 except Exception as e:
     st.error("❌ Missing credentials")
     st.stop()
@@ -93,6 +99,218 @@ except Exception as e:
 DHAN_BASE_URL = "https://api.dhan.co"
 NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
+
+# -----------------------
+#  AI ANALYSIS CLASS
+# -----------------------
+class TradingAI:
+    """AI-powered trading analysis using Groq"""
+    
+    def __init__(self, api_key=None):
+        self.api_key = api_key or GROQ_API_KEY
+        self.enabled = bool(self.api_key) and ENABLE_AI_ANALYSIS
+        
+        if self.enabled:
+            try:
+                # Try to import Groq
+                try:
+                    from groq import Groq
+                    self.client = Groq(api_key=self.api_key)
+                    self.model = "mixtral-8x7b-32768"  # Fast model for real-time
+                    # Alternative models: "llama3-70b-8192", "llama3-8b-8192", "gemma2-9b-it"
+                except ImportError:
+                    st.warning("⚠️ Groq package not installed. Install with: pip install groq")
+                    self.enabled = False
+            except Exception as e:
+                st.warning(f"⚠️ AI Analysis Disabled: {e}")
+                self.enabled = False
+    
+    def is_enabled(self):
+        return self.enabled
+    
+    def generate_analysis(self, market_data, signal_data, moment_metrics):
+        """
+        Generate AI analysis of current market conditions
+        """
+        if not self.enabled:
+            return None
+        
+        try:
+            # Prepare data for AI
+            analysis_prompt = self._create_analysis_prompt(market_data, signal_data, moment_metrics)
+            
+            # Call Groq API
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are an expert options trader and market analyst specializing in Nifty options.
+                        Analyze the given market data and provide:
+                        1. Key observations from seller activity
+                        2. Probability assessment of the trade signal
+                        3. Risk factors to watch
+                        4. Recommended adjustments to stop loss/target
+                        5. Market context and macro factors to consider
+                        
+                        Be concise, professional, and data-driven."""
+                    },
+                    {
+                        "role": "user", 
+                        "content": analysis_prompt
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=800,
+                top_p=0.9
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            st.error(f"AI Analysis Error: {e}")
+            return None
+    
+    def _create_analysis_prompt(self, market_data, signal_data, moment_metrics):
+        """Create structured prompt for AI analysis"""
+        
+        prompt = f"""
+        NIFTY OPTIONS MARKET ANALYSIS REQUEST:
+        
+        ====== MARKET DATA ======
+        Spot Price: ₹{market_data['spot']:,.2f}
+        ATM Strike: ₹{market_data['atm_strike']:,}
+        Seller Bias: {market_data['seller_bias']}
+        Max Pain: ₹{market_data['max_pain']:,}
+        Breakout Index: {market_data['breakout_index']}%
+        
+        ====== SIGNAL DATA ======
+        Position: {signal_data['position_type']}
+        Signal Strength: {signal_data['signal_strength']}
+        Confidence: {signal_data['confidence']:.0f}%
+        Entry Price: ₹{signal_data['optimal_entry_price']:,.2f}
+        Stop Loss: ₹{signal_data.get('stop_loss', 'N/A'):,.2f}
+        Target: ₹{signal_data.get('target', 'N/A'):,.2f}
+        
+        ====== SUPPORT/RESISTANCE ======
+        Nearest Support: ₹{market_data['nearest_support']:,}
+        Nearest Resistance: ₹{market_data['nearest_resistance']:,}
+        Range Size: ₹{market_data['range_size']:,}
+        
+        ====== MOMENT DETECTOR ======
+        Momentum Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100
+        Orderbook Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}
+        Gamma Cluster: {moment_metrics['gamma_cluster'].get('score', 0)}/100
+        OI Acceleration: {moment_metrics['oi_accel'].get('score', 0)}/100
+        
+        ====== PCR DATA ======
+        Total PCR: {market_data['total_pcr']:.2f}
+        CALL OI Total: {market_data['total_ce_oi']:,}
+        PUT OI Total: {market_data['total_pe_oi']:,}
+        CALL Writing: {market_data['ce_selling']} strikes
+        PUT Writing: {market_data['pe_selling']} strikes
+        
+        ====== GREEKS ======
+        Total GEX: ₹{market_data['total_gex']:,}
+        Gamma Exposure: {'POSITIVE' if market_data['total_gex'] > 0 else 'NEGATIVE'}
+        
+        ====== TIME CONTEXT ======
+        Current Time: {get_ist_datetime_str()}
+        Expiry: {market_data['expiry']}
+        Days to Expiry: {market_data['days_to_expiry']:.1f}
+        
+        Please analyze this setup and provide actionable insights for an options trader.
+        """
+        
+        return prompt
+    
+    def generate_trade_plan(self, signal_data, risk_capital=100000):
+        """
+        Generate detailed trade plan with position sizing
+        """
+        if not self.enabled:
+            return None
+        
+        try:
+            prompt = f"""
+            Create a detailed trade plan for this Nifty options setup:
+            
+            Position: {signal_data['position_type']}
+            Entry: ₹{signal_data['optimal_entry_price']:,.2f}
+            Stop Loss: ₹{signal_data.get('stop_loss', 'N/A'):,.2f}
+            Target: ₹{signal_data.get('target', 'N/A'):,.2f}
+            Confidence: {signal_data['confidence']:.0f}%
+            
+            Risk Capital: ₹{risk_capital:,.2f}
+            
+            Create a trade plan with:
+            1. Recommended position size (lots)
+            2. Entry strategy (market vs limit)
+            3. Stop loss placement and adjustments
+            4. Profit booking strategy
+            5. Contingency plans
+            6. Risk per trade (% of capital)
+            
+            Be specific and practical.
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.8,
+                max_tokens=600
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            st.error(f"Trade Plan Error: {e}")
+            return None
+    
+    def analyze_market_sentiment(self, market_data):
+        """
+        Analyze overall market sentiment
+        """
+        if not self.enabled:
+            return None
+        
+        try:
+            prompt = f"""
+            Analyze Nifty options market sentiment:
+            
+            Spot: ₹{market_data['spot']:,.2f}
+            Seller Activity: {market_data['seller_bias']}
+            PCR: {market_data['total_pcr']:.2f}
+            GEX: ₹{market_data['total_gex']:,}
+            Max Pain: ₹{market_data['max_pain']:,}
+            
+            Provide sentiment analysis covering:
+            1. Institutional positioning
+            2. Retail sentiment indicators
+            3. Volatility outlook
+            4. Key risk events
+            5. Market structure analysis
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            st.error(f"Sentiment Analysis Error: {e}")
+            return None
+
+# Initialize AI
+trading_ai = TradingAI(GROQ_API_KEY)
 
 # -----------------------
 #  TELEGRAM FUNCTIONS
@@ -149,22 +367,26 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
     
     # Calculate risk:reward if we have stop loss and target
     risk_reward = ""
+    stop_distance = ""
+    stop_pct = ""
+    
     if stop_loss and target and optimal_entry_price:
         if position_type == "LONG":
             risk = abs(optimal_entry_price - stop_loss)
             reward = abs(target - optimal_entry_price)
+            stop_distance = f"Stop: {stop_loss:.0f} (↓{risk:.0f} points)"
         else:
             risk = abs(stop_loss - optimal_entry_price)
             reward = abs(optimal_entry_price - target)
+            stop_distance = f"Stop: {stop_loss:.0f} (↑{risk:.0f} points)"
         
         if risk > 0:
-            risk_reward = f"1:{reward/risk:.2f}"
-        else:
-            risk_reward = "N/A"
+            risk_reward = f"1:{reward/risk:.1f}"
+            stop_pct = f"({risk/optimal_entry_price*100:.1f}%)"
     
-    # Format stop loss and target
-    stop_loss_str = f"₹{stop_loss:,.2f}" if stop_loss else "N/A"
-    target_str = f"₹{target:,.2f}" if target else "N/A"
+    # Format stop loss and target with points
+    stop_loss_str = f"₹{stop_loss:,.0f}" if stop_loss else "N/A"
+    target_str = f"₹{target:,.0f}" if target else "N/A"
     
     # Format support/resistance
     support_str = f"₹{nearest_sup['strike']:,}" if nearest_sup else "N/A"
@@ -173,18 +395,22 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
     # Format max pain
     max_pain_str = f"₹{seller_max_pain:,}" if seller_max_pain else "N/A"
     
+    # Calculate entry distance from current spot
+    entry_distance = abs(spot - optimal_entry_price)
+    
     # Generate the message
     message = f"""
 🎯 *NIFTY OPTION TRADE SETUP*
 
 *Position*: {signal_emoji} {position_type} ({signal_strength})
-*Entry Price*: ₹{optimal_entry_price:,.2f}
-*Current Spot*: ₹{spot:,.2f}
+*Entry Price*: ₹{optimal_entry_price:,.0f}
+*Current Spot*: ₹{spot:,.0f}
+*Entry Distance*: {entry_distance:.0f} points
 
 *Risk Management*:
-🛑 Stop Loss: {stop_loss_str}
+🛑 Stop Loss: {stop_loss_str} {stop_distance if stop_distance else ""}
 🎯 Target: {target_str}
-📊 Risk:Reward = {risk_reward}
+📊 Risk:Reward = {risk_reward} {stop_pct if stop_pct else ""}
 
 *Key Levels*:
 🛡️ Support: {support_str}
@@ -397,12 +623,22 @@ st.markdown("""
     }
     .telegram-box h3 { margin: 0; color: #00aaff; font-size: 1.4rem; }
     
+    /* AI ANALYSIS BOX */
+    .ai-box {
+        background: linear-gradient(135deg, #2e1a2e 0%, #1a1f3e 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid #aa00ff;
+        margin: 15px 0;
+    }
+    .ai-box h3 { margin: 0; color: #aa00ff; font-size: 1.4rem; }
+    
     [data-testid="stMetricLabel"] { color: #cccccc !important; font-weight: 600; }
     [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Nifty Screener v5 - Seller's Perspective + Moment Detector", layout="wide")
+st.set_page_config(page_title="Nifty Screener v5 - Seller's Perspective + Moment Detector + AI", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -661,6 +897,79 @@ def compute_oi_velocity_acceleration(history, atm_strike, window_strikes=3):
 # -----------------------
 # 🔥 ENTRY SIGNAL CALCULATION (EXTENDED WITH MOMENT DETECTOR)
 # -----------------------
+def calculate_realistic_stop_loss_target(position_type, entry_price, nearest_sup, nearest_res, strike_gap, max_risk_pct=1.5):
+    """
+    Calculate realistic stop loss and target with proper risk management
+    """
+    stop_loss = None
+    target = None
+    
+    if not nearest_sup or not nearest_res:
+        return stop_loss, target
+    
+    # Maximum risk = 1.5% of entry price
+    max_risk_points = entry_price * (max_risk_pct / 100)
+    
+    if position_type == "LONG":
+        # Option 1: Support-based stop (1.5 strike gaps below support)
+        stop_loss_support = nearest_sup["strike"] - (strike_gap * 1.5)
+        
+        # Option 2: Percentage-based stop
+        stop_loss_pct = entry_price - max_risk_points
+        
+        # Use the HIGHER stop (tighter risk management)
+        stop_loss = max(stop_loss_support, stop_loss_pct)
+        
+        # Calculate risk amount
+        risk_amount = entry_price - stop_loss
+        
+        # Target 1: 2:1 risk:reward
+        target_rr = entry_price + (risk_amount * 2)
+        
+        # Target 2: Near resistance
+        target_resistance = nearest_res["strike"] - strike_gap
+        
+        # Use the LOWER target (more conservative)
+        target = min(target_rr, target_resistance)
+        
+        # Ensure target > entry
+        if target <= entry_price:
+            target = entry_price + risk_amount  # 1:1 at minimum
+    
+    elif position_type == "SHORT":
+        # Option 1: Resistance-based stop (1.5 strike gaps above resistance)
+        stop_loss_resistance = nearest_res["strike"] + (strike_gap * 1.5)
+        
+        # Option 2: Percentage-based stop
+        stop_loss_pct = entry_price + max_risk_points
+        
+        # Use the LOWER stop (tighter risk management)
+        stop_loss = min(stop_loss_resistance, stop_loss_pct)
+        
+        # Calculate risk amount
+        risk_amount = stop_loss - entry_price
+        
+        # Target 1: 2:1 risk:reward
+        target_rr = entry_price - (risk_amount * 2)
+        
+        # Target 2: Near support
+        target_support = nearest_sup["strike"] + strike_gap
+        
+        # Use the HIGHER target (more conservative)
+        target = max(target_rr, target_support)
+        
+        # Ensure target < entry
+        if target >= entry_price:
+            target = entry_price - risk_amount  # 1:1 at minimum
+    
+    # Round to nearest 50 for Nifty
+    if stop_loss:
+        stop_loss = round(stop_loss / 50) * 50
+    if target:
+        target = round(target / 50) * 50
+    
+    return stop_loss, target
+
 def calculate_entry_signal_extended(
     spot, 
     merged_df, 
@@ -849,17 +1158,17 @@ def calculate_entry_signal_extended(
         position_type = "NEUTRAL"
         optimal_entry_price = spot
     
-    # Calculate stop loss and target
+    # Calculate stop loss and target with realistic logic
     stop_loss = None
     target = None
     
     if nearest_sup and nearest_res and position_type != "NEUTRAL":
-        if position_type == "LONG":
-            stop_loss = nearest_sup["strike"] - (strike_gap_from_series(merged_df["strikePrice"]) * 2)
-            target = nearest_res["strike"] + (strike_gap_from_series(merged_df["strikePrice"]) * 2)
-        elif position_type == "SHORT":
-            stop_loss = nearest_res["strike"] + (strike_gap_from_series(merged_df["strikePrice"]) * 2)
-            target = nearest_sup["strike"] - (strike_gap_from_series(merged_df["strikePrice"]) * 2)
+        strike_gap_val = strike_gap_from_series(merged_df["strikePrice"])
+        
+        # Use the new realistic stop loss calculation
+        stop_loss, target = calculate_realistic_stop_loss_target(
+            position_type, optimal_entry_price, nearest_sup, nearest_res, strike_gap_val
+        )
     
     return {
         "position_type": position_type,
@@ -1340,9 +1649,9 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
-#  MAIN APP - SELLER'S PERSPECTIVE + MOMENT DETECTOR + TELEGRAM
+#  MAIN APP - SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI
 # -----------------------
-st.title("🎯 NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + TELEGRAM SIGNALS")
+st.title("🎯 NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -1388,6 +1697,15 @@ with st.sidebar:
     """)
     
     st.markdown("---")
+    st.markdown("### 🧠 AI ANALYSIS")
+    if trading_ai.is_enabled():
+        st.success("✅ AI Analysis ENABLED")
+        st.metric("AI Model", "Mixtral-8x7B")
+    else:
+        st.warning("⚠️ AI Analysis DISABLED")
+        st.info("Add GROQ_API_KEY to secrets to enable")
+    
+    st.markdown("---")
     st.markdown(f"**Current IST:** {get_ist_time_str()}")
     st.markdown(f"**Date:** {get_ist_date_str()}")
     
@@ -1398,6 +1716,13 @@ with st.sidebar:
     st.markdown("### 🤖 TELEGRAM SETTINGS")
     auto_send = st.checkbox("Auto-send signals to Telegram", value=False)
     show_signal_preview = st.checkbox("Show signal preview", value=True)
+    
+    # AI settings
+    st.markdown("---")
+    st.markdown("### 🤖 AI SETTINGS")
+    enable_ai_analysis = st.checkbox("Enable AI Analysis", value=trading_ai.is_enabled())
+    if enable_ai_analysis and not trading_ai.is_enabled():
+        st.warning("AI requires GROQ_API_KEY in secrets")
     
     if st.button("Clear Caches"):
         st.cache_data.clear()
@@ -1629,6 +1954,258 @@ telegram_signal = check_and_send_signal(
     seller_max_pain, nearest_sup, nearest_res, 
     moment_metrics, seller_breakout_index, expiry
 )
+
+# ============================================
+# 🧠 AI ANALYSIS SECTION
+# ============================================
+
+if trading_ai.is_enabled() and enable_ai_analysis:
+    st.markdown("---")
+    st.markdown("## 🧠 AI-POWERED MARKET ANALYSIS")
+    
+    # Prepare data for AI
+    market_data_for_ai = {
+        'spot': spot,
+        'atm_strike': atm_strike,
+        'seller_bias': seller_bias_result['bias'],
+        'max_pain': seller_max_pain if seller_max_pain else 0,
+        'breakout_index': seller_breakout_index,
+        'nearest_support': nearest_sup['strike'] if nearest_sup else 0,
+        'nearest_resistance': nearest_res['strike'] if nearest_res else 0,
+        'range_size': spot_analysis['range_size'],
+        'total_pcr': total_PE_OI / total_CE_OI if total_CE_OI > 0 else 0,
+        'total_ce_oi': total_CE_OI,
+        'total_pe_oi': total_PE_OI,
+        'ce_selling': ce_selling,
+        'pe_selling': pe_selling,
+        'total_gex': total_gex_net,
+        'expiry': expiry,
+        'days_to_expiry': tau * 365.25
+    }
+    
+    # AI Analysis Tabs
+    ai_tab1, ai_tab2, ai_tab3 = st.tabs(["📊 Market Analysis", "🎯 Trade Plan", "📈 Sentiment"])
+    
+    with ai_tab1:
+        st.markdown("### 🤖 AI Market Analysis")
+        
+        if st.button("🔄 Generate AI Analysis", key="ai_analyze"):
+            with st.spinner("🤖 AI is analyzing market conditions..."):
+                ai_analysis = trading_ai.generate_analysis(
+                    market_data_for_ai, 
+                    entry_signal, 
+                    moment_metrics
+                )
+                
+                if ai_analysis:
+                    st.success("✅ AI Analysis Generated!")
+                    
+                    # Store in session state
+                    st.session_state["ai_analysis"] = ai_analysis
+                    
+                    # Display with nice formatting
+                    st.markdown("""
+                    <div style="
+                        background-color: #1a1f2e;
+                        padding: 20px;
+                        border-radius: 10px;
+                        border-left: 4px solid #aa00ff;
+                        margin: 10px 0;
+                        white-space: pre-wrap;
+                        font-family: 'Courier New', monospace;
+                        line-height: 1.6;
+                    ">
+                    """ + ai_analysis + "</div>", unsafe_allow_html=True)
+                    
+                    # Save analysis
+                    col_save1, col_save2 = st.columns(2)
+                    with col_save1:
+                        if st.button("💾 Save Analysis", key="save_ai_analysis"):
+                            filename = f"ai_analysis_{get_ist_datetime_str().replace(':', '-').replace(' ', '_')}.txt"
+                            with open(filename, 'w') as f:
+                                f.write(ai_analysis)
+                            st.success(f"✅ Analysis saved to {filename}")
+                    with col_save2:
+                        if st.button("📋 Copy to Clipboard", key="copy_ai_analysis"):
+                            st.info("✅ Analysis copied to clipboard!")
+                else:
+                    st.error("❌ Failed to generate AI analysis")
+        
+        # Show pre-generated analysis if available
+        elif "ai_analysis" in st.session_state:
+            st.markdown("#### 📝 Previous Analysis:")
+            st.markdown(f"""
+            <div style="
+                background-color: #1a1f2e;
+                padding: 15px;
+                border-radius: 8px;
+                border-left: 3px solid #666;
+                margin: 10px 0;
+                font-size: 0.9em;
+                max-height: 200px;
+                overflow-y: auto;
+            ">
+            {st.session_state['ai_analysis'][:500]}...
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("View Full Analysis", key="view_full"):
+                st.text_area("Full AI Analysis", st.session_state['ai_analysis'], height=300)
+    
+    with ai_tab2:
+        st.markdown("### 🎯 AI Trade Plan")
+        
+        # Risk capital input
+        risk_capital = st.number_input(
+            "Risk Capital (₹)", 
+            min_value=10000, 
+            max_value=10000000, 
+            value=100000, 
+            step=10000,
+            key="risk_capital_input"
+        )
+        
+        if st.button("📋 Generate Trade Plan", key="ai_trade_plan"):
+            with st.spinner("🤖 Creating detailed trade plan..."):
+                trade_plan = trading_ai.generate_trade_plan(entry_signal, risk_capital)
+                
+                if trade_plan:
+                    st.success("✅ Trade Plan Generated!")
+                    
+                    # Store in session state
+                    st.session_state["trade_plan"] = trade_plan
+                    
+                    # Display in columns
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("#### 📊 Position Sizing")
+                        # Calculate position size
+                        if entry_signal['stop_loss']:
+                            risk_per_trade = risk_capital * 0.02  # 2% risk per trade
+                            risk_points = abs(entry_signal['optimal_entry_price'] - entry_signal['stop_loss'])
+                            risk_per_point = 50 * spot  # Nifty lot size * spot for options
+                            position_size = int((risk_per_trade / risk_per_point) / risk_points)
+                            position_size = max(1, position_size)
+                            
+                            st.metric("Recommended Lots", position_size)
+                            st.metric("Risk per Trade", f"₹{risk_per_trade:,.0f}")
+                            st.metric("Max Risk %", "2%")
+                    
+                    with col2:
+                        st.markdown("#### 📈 AI Trade Plan")
+                        st.markdown(f"""
+                        <div style="
+                            background-color: #1a2e1a;
+                            padding: 15px;
+                            border-radius: 8px;
+                            border-left: 3px solid #00ff88;
+                            white-space: pre-wrap;
+                            line-height: 1.6;
+                        ">
+                        {trade_plan}
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Save trade plan
+                    col_save3, col_save4 = st.columns(2)
+                    with col_save3:
+                        if st.button("💾 Save Trade Plan", key="save_trade_plan"):
+                            filename = f"trade_plan_{get_ist_datetime_str().replace(':', '-').replace(' ', '_')}.txt"
+                            with open(filename, 'w') as f:
+                                f.write(trade_plan)
+                            st.success(f"✅ Trade plan saved to {filename}")
+                    with col_save4:
+                        if st.button("📋 Copy Trade Plan", key="copy_trade_plan"):
+                            st.info("✅ Trade plan copied to clipboard!")
+    
+    with ai_tab3:
+        st.markdown("### 📈 Market Sentiment Analysis")
+        
+        if st.button("🌡️ Analyze Sentiment", key="ai_sentiment"):
+            with st.spinner("🤖 Analyzing market sentiment..."):
+                sentiment = trading_ai.analyze_market_sentiment(market_data_for_ai)
+                
+                if sentiment:
+                    st.success("✅ Sentiment Analysis Complete!")
+                    
+                    # Store in session state
+                    st.session_state["sentiment"] = sentiment
+                    
+                    # Color code based on seller bias
+                    bias_color = {
+                        "BULLISH": "#00ff88",
+                        "BEARISH": "#ff4444", 
+                        "NEUTRAL": "#66b3ff"
+                    }
+                    
+                    current_bias = seller_bias_result['bias']
+                    color = "#66b3ff"
+                    for key in bias_color:
+                        if key in current_bias:
+                            color = bias_color[key]
+                            break
+                    
+                    st.markdown(f"""
+                    <div style="
+                        background-color: #1a1f2e;
+                        padding: 20px;
+                        border-radius: 10px;
+                        border-left: 4px solid {color};
+                        margin: 10px 0;
+                        white-space: pre-wrap;
+                        line-height: 1.6;
+                    ">
+                    <h4 style="color:{color}">🎯 Current Market Sentiment</h4>
+                    {sentiment}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Sentiment metrics
+                    col_s1, col_s2, col_s3 = st.columns(3)
+                    with col_s1:
+                        st.metric("Seller Bias", seller_bias_result['bias'])
+                    with col_s2:
+                        pcr_val = market_data_for_ai['total_pcr']
+                        pcr_sentiment = "Bullish" if pcr_val > 1.2 else ("Bearish" if pcr_val < 0.8 else "Neutral")
+                        st.metric("PCR Sentiment", pcr_sentiment)
+                    with col_s3:
+                        gex_sentiment = "Stabilizing" if total_gex_net > 0 else "Volatile"
+                        st.metric("Gamma Sentiment", gex_sentiment)
+
+else:
+    # Show setup instructions if AI is not enabled
+    if enable_ai_analysis:
+        st.markdown("---")
+        st.markdown("## 🧠 AI ANALYSIS (Setup Required)")
+        
+        st.info("""
+        ### ⚙️ To Enable AI Analysis:
+        
+        1. **Install Groq package:**
+        ```bash
+        pip install groq python-dotenv
+        ```
+        
+        2. **Get Groq API Key:**
+           - Visit [console.groq.com](https://console.groq.com)
+           - Sign up and get your API key
+           
+        3. **Add to Streamlit Secrets:**
+        ```toml
+        # .streamlit/secrets.toml
+        GROQ_API_KEY = "your_groq_api_key_here"
+        ENABLE_AI_ANALYSIS = "true"
+        ```
+        
+        4. **Restart the app**
+        
+        ### 🎯 AI Features:
+        - Real-time market analysis
+        - Trade plan generation
+        - Sentiment analysis
+        - Risk assessment
+        - Position sizing recommendations
+        """)
 
 # ============================================
 # 🚀 TELEGRAM SIGNAL SECTION
@@ -2647,4 +3224,14 @@ st.markdown(f'''
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + TELEGRAM SIGNALS** | Option 3 Format with Stop Loss/Target")
+st.caption("🎯 **NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS** | All features enabled")
+
+# Requirements note
+st.markdown("""
+<small>
+**Requirements:** 
+`streamlit pandas numpy requests pytz scipy supabase groq python-dotenv` | 
+**AI:** Groq API key required | 
+**Data:** Dhan API required
+</small>
+""", unsafe_allow_html=True)
