@@ -214,3 +214,9 @@ prometheus-client>=0.17.0
 # For distributed computing
 # dask>=2023.0.0
 # ray>=2.0.0
+
+# For Perplexity AI (RECOMMENDED)
+perplexity-client>=0.1.0
+
+# OR if you want to keep Groq as backup
+groq>=0.3.0
