@@ -45,3 +45,11 @@ DEFAULT_RISK_CAPITAL = "100000"
 SHOW_AI_ANALYSIS = "true"
 SHOW_TELEGRAM_SIGNALS = "true"
 ENABLE_SOUND_ALERTS = "false"
+
+# .streamlit/secrets.toml
+# OLD:
+# GROQ_API_KEY = "your_groq_api_key_here"
+
+# NEW:
+PERPLEXITY_API_KEY = "your_perplexity_api_key_here"
+ENABLE_AI_ANALYSIS = "true"
