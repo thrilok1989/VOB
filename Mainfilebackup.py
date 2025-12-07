@@ -116,8 +116,9 @@ class TradingAI:
                 try:
                     from groq import Groq
                     self.client = Groq(api_key=self.api_key)
-                    self.model = "mixtral-8x7b-32768"  # Fast model for real-time
-                    # Alternative models: "llama3-70b-8192", "llama3-8b-8192", "gemma2-9b-it"
+                    self.model = "llama-3.1-70b-versatile"  # Updated from deprecated model
+                    # Alternative models: 
+                    # "llama-3.1-8b-instant", "llama-3.1-70b-instant", "gemma2-9b-it"
                 except ImportError:
                     st.warning("⚠️ Groq package not installed. Install with: pip install groq")
                     self.enabled = False
@@ -139,7 +140,7 @@ class TradingAI:
             # Prepare data for AI
             analysis_prompt = self._create_analysis_prompt(market_data, signal_data, moment_metrics)
             
-            # Call Groq API
+            # Call Groq API with updated model
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -1701,7 +1702,7 @@ with st.sidebar:
     st.markdown("### 🧠 AI ANALYSIS")
     if trading_ai.is_enabled():
         st.success("✅ AI Analysis ENABLED")
-        st.metric("AI Model", "Mixtral-8x7B")
+        st.metric("AI Model", "Llama-3.1-70B")  # Updated model name
     else:
         st.warning("⚠️ AI Analysis DISABLED")
         st.info("Add GROQ_API_KEY to secrets to enable")
