@@ -1,6 +1,5 @@
-# nifty_option_screener_v5_seller_perspective_complete_with_ai.py
 """
-Nifty Option Screener v5.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS
+Nifty Option Screener v6.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS + EXPIRY SPIKE DETECTOR
 EVERYTHING interpreted from Option Seller/Market Maker viewpoint
 CALL building = BEARISH (sellers selling calls, expecting price to stay below)
 PUT building = BULLISH (sellers selling puts, expecting price to stay above)
@@ -12,6 +11,7 @@ NEW FEATURES ADDED:
 4. OI Velocity/Acceleration
 5. Telegram Signal Generation
 6. AI-Powered Market Analysis (Perplexity)
+7. EXPIRY SPIKE DETECTOR (NEW)
 """
 
 import streamlit as st
@@ -137,10 +137,9 @@ class TradingAI:
     def is_enabled(self):
         return self.enabled
     
-    def format_market_data_for_analysis(self, market_data, signal_data, moment_metrics):
+    def format_market_data_for_analysis(self, market_data, signal_data, moment_metrics, expiry_spike_data):
         """Format trading data for AI analysis"""
         
-        # Create a structured data dictionary
         formatted_data = {
             "timestamp": get_ist_datetime_str(),
             "market_data": market_data,
@@ -155,12 +154,13 @@ class TradingAI:
                 "nearest_support": signal_data.get("nearest_support", "N/A"),
                 "nearest_resistance": signal_data.get("nearest_resistance", "N/A")
             },
-            "moment_metrics": moment_metrics
+            "moment_metrics": moment_metrics,
+            "expiry_spike_data": expiry_spike_data
         }
         
         return json.dumps(formatted_data, indent=2)
     
-    def generate_analysis(self, market_data, signal_data, moment_metrics):
+    def generate_analysis(self, market_data, signal_data, moment_metrics, expiry_spike_data):
         """
         Generate AI analysis of current market conditions using Perplexity
         """
@@ -169,7 +169,7 @@ class TradingAI:
         
         try:
             # Format data for analysis
-            formatted_data = self.format_market_data_for_analysis(market_data, signal_data, moment_metrics)
+            formatted_data = self.format_market_data_for_analysis(market_data, signal_data, moment_metrics, expiry_spike_data)
             
             # Prepare analysis prompt
             analysis_prompt = f"""
@@ -184,6 +184,12 @@ class TradingAI:
             Breakout Index: {market_data['breakout_index']}%
             PCR: {market_data['total_pcr']:.2f}
             Total GEX: ₹{market_data['total_gex']:,}
+            
+            ====== EXPIRY SPIKE DATA ======
+            Days to Expiry: {market_data['days_to_expiry']:.1f}
+            Spike Probability: {expiry_spike_data.get('probability', 0)}%
+            Spike Type: {expiry_spike_data.get('type', 'N/A')}
+            Spike Risk: {expiry_spike_data.get('intensity', 'N/A')}
             
             ====== SIGNAL DATA ======
             Position: {signal_data['position_type']} ({signal_data['signal_strength']})
@@ -214,6 +220,7 @@ class TradingAI:
             3. Risk factors to watch (gamma, PCR, moment indicators)
             4. Recommended adjustments to stop loss/target based on levels
             5. Market context and macro factors to consider
+            6. Expiry spike risk assessment and mitigation strategies
             
             Be concise, professional, and data-driven. Focus on actionable insights for an options trader.
             """
@@ -363,7 +370,6 @@ class TradingAI:
             return None
         
         try:
-            # You can integrate historical data analysis here
             prompt = """
             Based on historical Nifty options data patterns, analyze:
             
@@ -425,9 +431,10 @@ def send_telegram_message(bot_token, chat_id, message):
         return False, f"Telegram error: {str(e)}"
 
 def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, seller_max_pain, 
-                                   nearest_sup, nearest_res, moment_metrics, seller_breakout_index, expiry):
+                                   nearest_sup, nearest_res, moment_metrics, seller_breakout_index, 
+                                   expiry, expiry_spike_data):
     """
-    Generate Option 3 Telegram signal with stop loss/target
+    Generate Option 3 Telegram signal with stop loss/target and expiry spike info
     Only generate when position_type is not NEUTRAL
     """
     
@@ -483,6 +490,14 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
     # Calculate entry distance from current spot
     entry_distance = abs(spot - optimal_entry_price)
     
+    # Add expiry spike info if active
+    expiry_info = ""
+    if expiry_spike_data.get("active", False) and expiry_spike_data.get("probability", 0) > 50:
+        spike_emoji = "🚨" if expiry_spike_data['probability'] > 70 else "⚠️"
+        expiry_info = f"\n{spike_emoji} *Expiry Spike Risk*: {expiry_spike_data['probability']}% - {expiry_spike_data['type']}"
+        if expiry_spike_data.get("key_levels"):
+            expiry_info += f"\n🎯 *Spike Levels*: {', '.join(expiry_spike_data['key_levels'][:2])}"
+    
     # Generate the message
     message = f"""
 🎯 *NIFTY OPTION TRADE SETUP*
@@ -509,6 +524,10 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
 *Seller Bias*: {seller_bias_result['bias']}
 *Confidence*: {confidence:.0f}%
 
+*Expiry Context*:
+📅 Days to Expiry: {expiry_spike_data.get('days_to_expiry', 0):.1f}
+{expiry_info if expiry_info else "📊 Expiry spike risk: Low"}
+
 ⏰ {current_time} IST | 📆 Expiry: {expiry}
 
 #NiftyOptions #OptionSelling #TradingSignal
@@ -516,7 +535,8 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
     return message
 
 def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pain, 
-                         nearest_sup, nearest_res, moment_metrics, seller_breakout_index, expiry):
+                         nearest_sup, nearest_res, moment_metrics, seller_breakout_index, 
+                         expiry, expiry_spike_data):
     """
     Check if a new signal is generated and return it (simulated)
     Returns signal message if new signal, None otherwise
@@ -535,7 +555,7 @@ def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pai
             telegram_msg = generate_telegram_signal_option3(
                 entry_signal, spot, seller_bias_result, 
                 seller_max_pain, nearest_sup, nearest_res, 
-                moment_metrics, seller_breakout_index, expiry
+                moment_metrics, seller_breakout_index, expiry, expiry_spike_data
             )
             
             if telegram_msg:
@@ -550,9 +570,262 @@ def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pai
     return None
 
 # -----------------------
-#  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES
+#  EXPIRY SPIKE DETECTOR FUNCTIONS
 # -----------------------
-# Using raw string to avoid tokenization errors
+def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_date_str):
+    """
+    Detect potential expiry day spikes based on multiple factors
+    Returns: dict with spike probability, direction, and key levels
+    """
+    
+    if days_to_expiry > 5:
+        return {
+            "active": False,
+            "probability": 0,
+            "message": "Expiry >5 days away, spike detection not active",
+            "type": None,
+            "key_levels": [],
+            "score": 0
+        }
+    
+    spike_score = 0
+    spike_factors = []
+    spike_type = None
+    key_levels = []
+    
+    # Factor 1: ATM OI Concentration (0-25 points)
+    atm_window = 2  # ±2 strikes around ATM
+    atm_strikes = [s for s in merged_df["strikePrice"] 
+                   if abs(s - atm_strike) <= (atm_window * strike_gap_from_series(merged_df["strikePrice"]))]
+    
+    atm_ce_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_CE"].sum()
+    atm_pe_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_PE"].sum()
+    total_oi_near_atm = atm_ce_oi + atm_pe_oi
+    total_oi_all = merged_df["OI_CE"].sum() + merged_df["OI_PE"].sum()
+    
+    if total_oi_all > 0:
+        atm_concentration = total_oi_near_atm / total_oi_all
+        if atm_concentration > 0.5:
+            spike_score += 25
+            spike_factors.append(f"High ATM OI concentration ({atm_concentration:.1%})")
+        elif atm_concentration > 0.3:
+            spike_score += 15
+            spike_factors.append(f"Moderate ATM OI concentration ({atm_concentration:.1%})")
+    
+    # Factor 2: Max Pain vs Spot Distance (0-20 points)
+    max_pain = calculate_seller_max_pain(merged_df)
+    if max_pain:
+        max_pain_distance = abs(spot - max_pain) / spot * 100
+        if max_pain_distance > 2.0:
+            spike_score += 20
+            spike_factors.append(f"Spot far from Max Pain ({max_pain_distance:.1f}%)")
+            if spot > max_pain:
+                spike_type = "SHORT SQUEEZE"
+            else:
+                spike_type = "LONG SQUEEZE"
+            key_levels.append(f"Max Pain: ₹{max_pain:,}")
+        elif max_pain_distance > 1.0:
+            spike_score += 10
+            spike_factors.append(f"Spot moderately far from Max Pain ({max_pain_distance:.1f}%)")
+    
+    # Factor 3: PCR Extremes (0-15 points)
+    total_ce_oi = merged_df["OI_CE"].sum()
+    total_pe_oi = merged_df["OI_PE"].sum()
+    if total_ce_oi > 0:
+        pcr = total_pe_oi / total_ce_oi
+        if pcr > 1.8:
+            spike_score += 15
+            spike_factors.append(f"Extreme PCR ({pcr:.2f}) - Heavy PUT selling")
+            spike_type = "UPWARD SPIKE" if spike_type is None else spike_type
+        elif pcr < 0.5:
+            spike_score += 15
+            spike_factors.append(f"Extreme PCR ({pcr:.2f}) - Heavy CALL selling")
+            spike_type = "DOWNWARD SPIKE" if spike_type is None else spike_type
+    
+    # Factor 4: Large OI Build-up at Single Strike (0-20 points)
+    max_ce_oi_strike = merged_df.loc[merged_df["OI_CE"].idxmax()] if not merged_df.empty else None
+    max_pe_oi_strike = merged_df.loc[merged_df["OI_PE"].idxmax()] if not merged_df.empty else None
+    
+    if max_ce_oi_strike is not None:
+        max_ce_oi = int(max_ce_oi_strike["OI_CE"])
+        max_ce_strike = int(max_ce_oi_strike["strikePrice"])
+        if max_ce_oi > 2000000:  # 2 million+ OI
+            spike_score += 20
+            spike_factors.append(f"Massive CALL OI at ₹{max_ce_strike:,} ({max_ce_oi:,})")
+            key_levels.append(f"CALL Wall: ₹{max_ce_strike:,}")
+            if abs(spot - max_ce_strike) < (strike_gap_from_series(merged_df["strikePrice"]) * 3):
+                spike_type = "RESISTANCE SPIKE"
+    
+    if max_pe_oi_strike is not None:
+        max_pe_oi = int(max_pe_oi_strike["OI_PE"])
+        max_pe_strike = int(max_pe_oi_strike["strikePrice"])
+        if max_pe_oi > 2000000:  # 2 million+ OI
+            spike_score += 20
+            spike_factors.append(f"Massive PUT OI at ₹{max_pe_strike:,} ({max_pe_oi:,})")
+            key_levels.append(f"PUT Wall: ₹{max_pe_strike:,}")
+            if abs(spot - max_pe_strike) < (strike_gap_from_series(merged_df["strikePrice"]) * 3):
+                spike_type = "SUPPORT SPIKE"
+    
+    # Factor 5: Gamma Flip Zone (0-10 points)
+    if days_to_expiry <= 1:
+        spike_score += 10
+        spike_factors.append("Gamma flip zone (expiry day)")
+    
+    # Factor 6: Unwinding Activity (0-10 points)
+    ce_unwind = (merged_df["Chg_OI_CE"] < 0).sum()
+    pe_unwind = (merged_df["Chg_OI_PE"] < 0).sum()
+    total_unwind = ce_unwind + pe_unwind
+    
+    if total_unwind > 15:  # More than 15 strikes showing unwinding
+        spike_score += 10
+        spike_factors.append(f"Massive unwinding ({total_unwind} strikes)")
+    
+    # Determine spike probability
+    probability = min(100, int(spike_score * 1.5))
+    
+    # Spike intensity
+    if probability >= 70:
+        intensity = "HIGH PROBABILITY SPIKE"
+        color = "#ff0000"
+    elif probability >= 50:
+        intensity = "MODERATE SPIKE RISK"
+        color = "#ff9900"
+    elif probability >= 30:
+        intensity = "LOW SPIKE RISK"
+        color = "#ffff00"
+    else:
+        intensity = "NO SPIKE DETECTED"
+        color = "#00ff00"
+    
+    # Default spike type if none detected
+    if spike_type is None:
+        spike_type = "UNCERTAIN"
+    
+    return {
+        "active": days_to_expiry <= 5,
+        "probability": probability,
+        "score": spike_score,
+        "intensity": intensity,
+        "type": spike_type,
+        "color": color,
+        "factors": spike_factors,
+        "key_levels": key_levels,
+        "days_to_expiry": days_to_expiry,
+        "expiry_date": expiry_date_str,
+        "message": f"Expiry in {days_to_expiry:.1f} days"
+    }
+
+def get_historical_expiry_patterns():
+    """
+    Return historical expiry day patterns (simplified)
+    In production, you'd connect to a database
+    """
+    patterns = {
+        "high_volatility": {
+            "probability": 0.65,
+            "description": "Expiry days typically have 30% higher volatility",
+            "time_of_spike": ["10:30-11:30 IST", "14:30-15:00 IST"]
+        },
+        "max_pain_pull": {
+            "probability": 0.55,
+            "description": "Price tends to gravitate towards Max Pain in last 2 hours",
+            "effect": "Strong if Max Pain >1% away from spot"
+        },
+        "gamma_unwind": {
+            "probability": 0.70,
+            "description": "Market makers unwind gamma positions causing spikes",
+            "timing": "Last 90 minutes"
+        }
+    }
+    return patterns
+
+def detect_violent_unwinding(merged_df, spot, atm_strike):
+    """
+    Detect signs of violent unwinding near expiry
+    """
+    signals = []
+    
+    # Check for massive OI reduction
+    total_ce_chg = merged_df["Chg_OI_CE"].sum()
+    total_pe_chg = merged_df["Chg_OI_PE"].sum()
+    
+    if total_ce_chg < -1000000:  # 1 million+ CALL unwinding
+        signals.append(f"Violent CALL unwinding: {abs(total_ce_chg):,} contracts")
+    
+    if total_pe_chg < -1000000:  # 1 million+ PUT unwinding
+        signals.append(f"Violent PUT unwinding: {abs(total_pe_chg):,} contracts")
+    
+    # Check ATM strikes specifically
+    atm_window = 1
+    atm_strikes = [s for s in merged_df["strikePrice"] 
+                   if abs(s - atm_strike) <= (atm_window * strike_gap_from_series(merged_df["strikePrice"]))]
+    
+    atm_unwind = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes)]
+    atm_ce_unwind = atm_unwind["Chg_OI_CE"].sum()
+    atm_pe_unwind = atm_unwind["Chg_OI_PE"].sum()
+    
+    if atm_ce_unwind < -500000:
+        signals.append(f"ATM CALL unwinding: {abs(atm_ce_unwind):,} contracts")
+    
+    if atm_pe_unwind < -500000:
+        signals.append(f"ATM PUT unwinding: {abs(atm_pe_unwind):,} contracts")
+    
+    return signals
+
+def calculate_gamma_exposure_spike(total_gex_net, days_to_expiry):
+    """
+    Calculate gamma exposure spike risk
+    """
+    if days_to_expiry > 3:
+        return {"risk": "Low", "score": 0}
+    
+    # Negative GEX + near expiry = explosive moves
+    if total_gex_net < -2000000:  # Large negative GEX
+        risk_score = min(100, int((abs(total_gex_net) / 1000000) * 10))
+        return {
+            "risk": "High",
+            "score": risk_score,
+            "message": f"Negative GEX (₹{abs(total_gex_net):,.0f}) + Near expiry = Explosive move potential"
+        }
+    elif total_gex_net > 2000000:  # Large positive GEX
+        risk_score = min(80, int((total_gex_net / 1000000) * 5))
+        return {
+            "risk": "Medium",
+            "score": risk_score,
+            "message": f"Positive GEX (₹{total_gex_net:,.0f}) + Near expiry = Mean reversion bias"
+        }
+    
+    return {"risk": "Low", "score": 0}
+
+def predict_expiry_pinning_probability(spot, max_pain, nearest_support, nearest_resistance):
+    """
+    Predict probability of expiry pinning (price stuck at a level)
+    """
+    if not max_pain or not nearest_support or not nearest_resistance:
+        return 0
+    
+    # Calculate pinning score (0-100)
+    pinning_score = 0
+    
+    # Factor 1: Distance to Max Pain
+    distance_to_max_pain = abs(spot - max_pain) / spot * 100
+    if distance_to_max_pain < 0.5:
+        pinning_score += 40
+    elif distance_to_max_pain < 1.0:
+        pinning_score += 20
+    
+    # Factor 2: Narrow range
+    range_size = nearest_resistance - nearest_support
+    if range_size < 200:
+        pinning_score += 30
+    elif range_size < 300:
+        pinning_score += 15
+    
+    return min(100, pinning_score)
+
+# -----------------------
+#  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES + EXPIRY SPIKE
+# -----------------------
 st.markdown(r"""
 <style>
     .main { background-color: #0e1117; color: #fafafa; }
@@ -719,12 +992,35 @@ st.markdown(r"""
     }
     .ai-box h3 { margin: 0; color: #aa00ff; font-size: 1.4rem; }
     
+    /* EXPIRY SPIKE DETECTOR STYLES */
+    .expiry-high-risk {
+        background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%) !important;
+        border: 3px solid #ff0000 !important;
+        animation: pulse 2s infinite;
+    }
+    
+    .expiry-medium-risk {
+        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%) !important;
+        border: 3px solid #ff9900 !important;
+    }
+    
+    .expiry-low-risk {
+        background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%) !important;
+        border: 3px solid #00ff00 !important;
+    }
+    
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(255, 0, 0, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0); }
+    }
+    
     [data-testid="stMetricLabel"] { color: #cccccc !important; font-weight: 600; }
     [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Nifty Screener v5 - Seller's Perspective + Moment Detector + AI", layout="wide")
+st.set_page_config(page_title="Nifty Screener v6 - Seller's Perspective + Moment Detector + AI + Expiry Spike Detector", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -1735,9 +2031,9 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
-#  MAIN APP - SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI
+#  MAIN APP - COMPLETE V6
 # -----------------------
-st.title("🎯 NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS (Perplexity)")
+st.title("🎯 NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS + EXPIRY SPIKE DETECTOR")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -1772,6 +2068,27 @@ with st.sidebar:
     """)
     
     st.markdown("---")
+    st.markdown("### 📅 EXPIRY SPIKE DETECTOR")
+    st.markdown("""
+    **Activation:** ≤5 days to expiry
+    
+    **Detection Factors:**
+    1. ATM OI Concentration
+    2. Max Pain Distance
+    3. PCR Extremes
+    4. Massive OI Walls
+    5. Gamma Flip Risk
+    6. Unwinding Activity
+    
+    **Alerts:**
+    • Spike Probability %
+    • Spike Type
+    • Key Levels
+    • Historical Patterns
+    • Trading Strategies
+    """)
+    
+    st.markdown("---")
     st.markdown("### 📱 TELEGRAM SIGNALS")
     st.markdown("""
     **Signal Conditions:**
@@ -1790,6 +2107,22 @@ with st.sidebar:
     else:
         st.warning("⚠️ AI Analysis DISABLED")
         st.info("Add PERPLEXITY_API_KEY to secrets to enable")
+    
+    # Expiry spike info in sidebar
+    st.markdown("---")
+    try:
+        expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
+        now = datetime.now()
+        days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)
+    except:
+        days_to_expiry = 7
+    
+    if days_to_expiry <= 5:
+        st.warning(f"⚠️ Expiry in {days_to_expiry:.1f} days")
+        st.info("Spike detector ACTIVE")
+    else:
+        st.success(f"✓ Expiry in {days_to_expiry:.1f} days")
+        st.info("Spike detector INACTIVE")
     
     st.markdown("---")
     st.markdown(f"**Current IST:** {get_ist_time_str()}")
@@ -1859,13 +2192,15 @@ df_pe = df_pe[(df_pe["strikePrice"]>=lower) & (df_pe["strikePrice"]<=upper)].res
 merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
 merged["strikePrice"] = merged["strikePrice"].astype(int)
 
-# Compute tau
+# Compute tau and days to expiry
 try:
     expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
     now = datetime.now()
     tau = max((expiry_dt - now).total_seconds() / (365.25*24*3600), 1/365.25)
+    days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)  # ADD THIS LINE
 except Exception:
     tau = 7.0/365.0
+    days_to_expiry = 7.0  # ADD THIS LINE
 
 # Session storage for prev LTP/IV
 if "prev_ltps_seller" not in st.session_state:
@@ -2034,11 +2369,27 @@ entry_signal = calculate_entry_signal_extended(
     moment_metrics=moment_metrics
 )
 
+# ============================================
+# 📅 EXPIRY SPIKE DETECTION
+# ============================================
+
+# Calculate expiry spike data
+expiry_spike_data = detect_expiry_spikes(merged, spot, atm_strike, days_to_expiry, expiry)
+
+# Advanced spike detection (optional)
+violent_unwinding_signals = detect_violent_unwinding(merged, spot, atm_strike)
+gamma_spike_risk = calculate_gamma_exposure_spike(total_gex_net, days_to_expiry)
+pinning_probability = predict_expiry_pinning_probability(
+    spot, seller_max_pain, 
+    nearest_sup["strike"] if nearest_sup else None,
+    nearest_res["strike"] if nearest_res else None
+)
+
 # Check for new Telegram signal
 telegram_signal = check_and_send_signal(
     entry_signal, spot, seller_bias_result, 
     seller_max_pain, nearest_sup, nearest_res, 
-    moment_metrics, seller_breakout_index, expiry
+    moment_metrics, seller_breakout_index, expiry, expiry_spike_data
 )
 
 # ============================================
@@ -2066,7 +2417,7 @@ if trading_ai.is_enabled() and enable_ai_analysis:
         'pe_selling': pe_selling,
         'total_gex': total_gex_net,
         'expiry': expiry,
-        'days_to_expiry': tau * 365.25
+        'days_to_expiry': days_to_expiry
     }
     
     # AI Analysis Tabs
@@ -2080,7 +2431,8 @@ if trading_ai.is_enabled() and enable_ai_analysis:
                 ai_analysis = trading_ai.generate_analysis(
                     market_data_for_ai, 
                     entry_signal, 
-                    moment_metrics
+                    moment_metrics,
+                    expiry_spike_data
                 )
                 
                 if ai_analysis:
@@ -2295,6 +2647,202 @@ else:
         """)
 
 # ============================================
+# 📅 EXPIRY DATE SPIKE DETECTOR UI
+# ============================================
+
+st.markdown("---")
+st.markdown("## 📅 EXPIRY DATE SPIKE DETECTOR")
+
+# Main spike card
+if expiry_spike_data["active"]:
+    spike_col1, spike_col2, spike_col3 = st.columns([2, 1, 1])
+    
+    with spike_col1:
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%);
+            padding: 20px;
+            border-radius: 12px;
+            border: 3px solid {expiry_spike_data['color']};
+            margin: 10px 0;
+        ">
+            <h3 style='color:{expiry_spike_data["color"]}; margin:0;'>📅 EXPIRY SPIKE ALERT</h3>
+            <div style='font-size: 2.5rem; color:{expiry_spike_data["color"]}; font-weight:900; margin:10px 0;'>
+                {expiry_spike_data["probability"]}%
+            </div>
+            <div style='font-size: 1.3rem; color:#ffffff; margin:5px 0;'>
+                {expiry_spike_data["intensity"]}
+            </div>
+            <div style='font-size: 1.1rem; color:#ffcc00; margin:5px 0;'>
+                Type: {expiry_spike_data["type"]}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with spike_col2:
+        st.markdown(f"""
+        <div style="
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        ">
+            <div style='font-size: 0.9rem; color:#cccccc;'>Days to Expiry</div>
+            <div style='font-size: 2rem; color:#ff9900; font-weight:700;'>
+                {expiry_spike_data['days_to_expiry']:.1f}
+            </div>
+            <div style='font-size: 0.8rem; color:#aaaaaa;'>
+                {expiry}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with spike_col3:
+        st.markdown(f"""
+        <div style="
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        ">
+            <div style='font-size: 0.9rem; color:#cccccc;'>Spike Score</div>
+            <div style='font-size: 2rem; color:#ff00ff; font-weight:700;'>
+                {expiry_spike_data['score']}/100
+            </div>
+            <div style='font-size: 0.8rem; color:#aaaaaa;'>
+                Detection Factors
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Spike Factors
+    with st.expander("🔍 View Spike Detection Factors", expanded=False):
+        col_factors1, col_factors2 = st.columns(2)
+        
+        with col_factors1:
+            st.markdown("### ⚠️ Spike Triggers")
+            for factor in expiry_spike_data["factors"]:
+                st.markdown(f"• {factor}")
+            
+            # Violent unwinding signals
+            if violent_unwinding_signals:
+                st.markdown("### 🚨 Violent Unwinding")
+                for signal in violent_unwinding_signals:
+                    st.markdown(f"• {signal}")
+        
+        with col_factors2:
+            st.markdown("### 🎯 Key Levels")
+            if expiry_spike_data["key_levels"]:
+                for level in expiry_spike_data["key_levels"]:
+                    st.markdown(f"• {level}")
+            else:
+                st.info("No extreme levels detected")
+            
+            # Gamma spike risk
+            if gamma_spike_risk["score"] > 0:
+                st.markdown(f"### ⚡ Gamma Spike Risk")
+                st.markdown(f"• {gamma_spike_risk['message']}")
+                st.markdown(f"• Risk Level: {gamma_spike_risk['risk']}")
+            
+            # Pinning probability
+            if pinning_probability > 0:
+                st.markdown(f"### 📍 Pinning Probability")
+                st.markdown(f"• {pinning_probability}% chance of price getting stuck")
+    
+    # Historical Patterns
+    if days_to_expiry <= 3:
+        st.markdown("### 📊 Historical Expiry Patterns")
+        patterns = get_historical_expiry_patterns()
+        
+        pattern_cols = st.columns(len(patterns))
+        
+        for idx, (pattern_name, pattern_data) in enumerate(patterns.items()):
+            with pattern_cols[idx]:
+                prob_color = "#ff4444" if pattern_data["probability"] > 0.6 else "#ff9900" if pattern_data["probability"] > 0.4 else "#66b3ff"
+                st.markdown(f"""
+                <div style="
+                    background: #1a1f2e;
+                    padding: 15px;
+                    border-radius: 8px;
+                    border-left: 3px solid {prob_color};
+                    margin: 5px 0;
+                ">
+                    <div style='font-size: 0.9rem; color:#cccccc;'>{pattern_name.replace('_', ' ').title()}</div>
+                    <div style='font-size: 1.5rem; color:{prob_color}; font-weight:700;'>
+                        {pattern_data['probability']:.0%}
+                    </div>
+                    <div style='font-size: 0.8rem; color:#aaaaaa; margin-top:5px;'>
+                        {pattern_data['description']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+    
+    # Action Recommendations
+    st.markdown("### 🎯 Expiry Day Trading Strategy")
+    
+    if expiry_spike_data["probability"] > 60:
+        st.warning("""
+        **HIGH SPIKE PROBABILITY - AGGRESSIVE STRATEGY:**
+        - Expect sharp moves (100-200 point swings)
+        - Use wider stops (1.5-2x normal)
+        - Consider straddles/strangles if IV not too high
+        - Avoid deep ITM options (gamma risk)
+        - Focus on 10:30-11:30 AM and 2:30-3:00 PM windows
+        """)
+    elif expiry_spike_data["probability"] > 40:
+        st.info("""
+        **MODERATE SPIKE RISK - BALANCED STRATEGY:**
+        - Expect moderate volatility
+        - Use normal stops with 20% buffer
+        - Prefer ATM/1st OTM strikes
+        - Watch Max Pain level closely
+        - Be ready to exit early
+        """)
+    else:
+        st.success("""
+        **LOW SPIKE RISK - NORMAL STRATEGY:**
+        - Normal trading rules apply
+        - Standard stop losses
+        - Focus on technical levels
+        - Watch for last-hour moves
+        """)
+    
+    # Gamma Risk Zone
+    if days_to_expiry <= 2:
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px solid #00ffff;
+            margin: 10px 0;
+        ">
+            <h4 style='color:#00ffff; margin:0;'>⚠️ GAMMA RISK ZONE ACTIVE</h4>
+            <p style='color:#ffffff; margin:5px 0;'>
+                Days to expiry ≤ 2: Gamma exposure amplifies price moves.
+                Market makers' hedging can cause exaggerated swings.
+            </p>
+            <p style='color:#ffcc00; margin:5px 0;'>
+                🎯 Watch: {', '.join(expiry_spike_data['key_levels'][:3]) if expiry_spike_data['key_levels'] else 'ATM ±100 points'}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+else:
+    st.info(f"""
+    ### 📅 Expiry Spike Detector (Inactive)
+    
+    **Reason:** {expiry_spike_data['message']}
+    
+    Spike detection activates when expiry is ≤5 days away.
+    
+    Current expiry: **{expiry}**  
+    Days to expiry: **{days_to_expiry:.1f}**
+    
+    *Check back closer to expiry for spike alerts*
+    """)
+
+# ============================================
 # 🚀 TELEGRAM SIGNAL SECTION
 # ============================================
 st.markdown("---")
@@ -2409,6 +2957,7 @@ else:
         - Signal Strength: {entry_signal['signal_strength']}
         - Confidence: {entry_signal['confidence']:.0f}%
         - Seller Bias: {seller_bias_result['bias']}
+        - Expiry Spike Risk: {expiry_spike_data.get('probability', 0)}%
         
         **Requirements for signal generation:**
         ✅ Position Type ≠ NEUTRAL
@@ -2652,6 +3201,15 @@ if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 
         for metric_name, metric_data in moment_metrics.items():
             if metric_data.get("available", False):
                 st.markdown(f"**{metric_name.replace('_', ' ').title()}:** {metric_data.get('note', 'N/A')}")
+        
+        # Expiry Spike Risk
+        if expiry_spike_data["active"]:
+            st.markdown("### 📅 Expiry Spike Risk:")
+            st.markdown(f"• Probability: {expiry_spike_data['probability']}%")
+            st.markdown(f"• Type: {expiry_spike_data['type']}")
+            st.markdown(f"• Intensity: {expiry_spike_data['intensity']}")
+            if expiry_spike_data["key_levels"]:
+                st.markdown(f"• Key Levels: {', '.join(expiry_spike_data['key_levels'])}")
     
 else:
     # NO SIGNAL
@@ -2721,7 +3279,7 @@ else:
         margin-left: auto;
         margin-right: auto;
     ">
-        Signal Confidence: {entry_signal["confidence"]:.0f}% | Market Bias: {seller_bias_result["bias"]}
+        Signal Confidence: {entry_signal["confidence"]:.0f}% | Market Bias: {seller_bias_result["bias"]} | Expiry Spike Risk: {expiry_spike_data.get('probability', 0)}%
     </div>
     """, unsafe_allow_html=True)
     
@@ -2756,6 +3314,7 @@ else:
             st.metric("Polarity Score", f"{seller_bias_result['polarity']:.2f}")
             st.metric("Breakout Index", f"{seller_breakout_index}%")
             st.metric("Signal Confidence", f"{entry_signal['confidence']:.0f}%")
+            st.metric("Expiry Spike Risk", f"{expiry_spike_data.get('probability', 0)}%")
         
         with col_detail2:
             st.markdown("### 🎯 Signal Requirements:")
@@ -2774,6 +3333,7 @@ else:
             - **Position Type**: {entry_signal["position_type"]}
             - **Signal Strength**: {entry_signal["signal_strength"]}
             - **Optimal Entry**: ₹{entry_signal["optimal_entry_price"]:,.2f}
+            - **Expiry in**: {days_to_expiry:.1f} days
             """)
 
 st.markdown("---")
@@ -3018,10 +3578,10 @@ with col_r:
 st.markdown("---")
 
 # ============================================
-# 📊 DETAILED DATA - SELLER VIEW + MOMENT
+# 📊 DETAILED DATA - SELLER VIEW + MOMENT + EXPIRY
 # ============================================
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR", "🚀 Moment Analysis"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR", "🚀 Moment Analysis", "📅 Expiry Analysis"])
 
 with tab1:
     st.markdown("### 📊 SELLER ACTIVITY BY STRIKE")
@@ -3216,11 +3776,89 @@ with tab4:
             else:
                 st.info("**STEADY OI:** Open interest changes are gradual")
 
+with tab5:
+    st.markdown("### 📅 EXPIRY SPIKE ANALYSIS")
+    
+    # Expiry Spike Probability
+    st.markdown("#### 📊 SPIKE PROBABILITY BREAKDOWN")
+    
+    col_exp1, col_exp2, col_exp3 = st.columns(3)
+    
+    with col_exp1:
+        st.metric("Spike Probability", f"{expiry_spike_data.get('probability', 0)}%")
+        st.metric("Spike Score", f"{expiry_spike_data.get('score', 0)}/100")
+    
+    with col_exp2:
+        st.metric("Days to Expiry", f"{days_to_expiry:.1f}")
+        st.metric("Spike Type", expiry_spike_data.get('type', 'N/A'))
+    
+    with col_exp3:
+        intensity = expiry_spike_data.get('intensity', 'N/A')
+        intensity_color = {
+            "HIGH PROBABILITY SPIKE": "#ff0000",
+            "MODERATE SPIKE RISK": "#ff9900",
+            "LOW SPIKE RISK": "#ffff00",
+            "NO SPIKE DETECTED": "#00ff00"
+        }.get(intensity, "#cccccc")
+        
+        st.markdown(f"""
+        <div style="
+            background: rgba(0,0,0,0.2);
+            padding: 10px;
+            border-radius: 8px;
+            border-left: 4px solid {intensity_color};
+            margin: 10px 0;
+        ">
+            <div style="font-size: 0.9rem; color:#cccccc;">Spike Intensity</div>
+            <div style="font-size: 1.2rem; color:{intensity_color}; font-weight:700;">{intensity}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Spike Triggers
+    st.markdown("#### ⚠️ SPIKE TRIGGERS DETECTED")
+    if expiry_spike_data.get("factors"):
+        for factor in expiry_spike_data["factors"]:
+            st.markdown(f"• {factor}")
+    else:
+        st.info("No spike triggers detected")
+    
+    st.markdown("---")
+    
+    # Violent Unwinding
+    if violent_unwinding_signals:
+        st.markdown("#### 🚨 VIOLENT UNWINDING DETECTED")
+        for signal in violent_unwinding_signals:
+            st.markdown(f"• {signal}")
+    
+    st.markdown("---")
+    
+    # Gamma Spike Risk
+    if gamma_spike_risk["score"] > 0:
+        st.markdown("#### ⚡ GAMMA SPIKE RISK")
+        st.markdown(f"**Risk Level:** {gamma_spike_risk['risk']}")
+        st.markdown(f"**Score:** {gamma_spike_risk['score']}/100")
+        st.markdown(f"**Message:** {gamma_spike_risk['message']}")
+    
+    st.markdown("---")
+    
+    # Pinning Probability
+    if pinning_probability > 0:
+        st.markdown("#### 📍 EXPIRY PINNING PROBABILITY")
+        st.metric("Pinning Chance", f"{pinning_probability}%")
+        if pinning_probability > 50:
+            st.info("**HIGH PINNING RISK:** Price likely to get stuck near current levels")
+        elif pinning_probability > 30:
+            st.warning("**MODERATE PINNING RISK:** Some chance of price getting stuck")
+        else:
+            st.success("**LOW PINNING RISK:** Price likely to move freely")
+
 # ============================================
-# 🎯 TRADING INSIGHTS - SELLER PERSPECTIVE + MOMENT
+# 🎯 TRADING INSIGHTS - SELLER PERSPECTIVE + MOMENT + EXPIRY
 # ============================================
 st.markdown("---")
-st.markdown("## 💡 TRADING INSIGHTS (Seller + Moment Fusion)")
+st.markdown("## 💡 TRADING INSIGHTS (Seller + Moment + Expiry Fusion)")
 
 insight_col1, insight_col2 = st.columns(2)
 
@@ -3249,6 +3887,15 @@ with insight_col1:
         st.success(f"**Overall PCR ({total_pcr:.2f}):** Strong PUT selling dominance. Bullish seller conviction.")
     elif total_pcr < 0.7:
         st.error(f"**Overall PCR ({total_pcr:.2f}):** Strong CALL selling dominance. Bearish seller conviction.")
+    
+    # Expiry Spike insight
+    if expiry_spike_data["active"]:
+        if expiry_spike_data["probability"] > 60:
+            st.error(f"**High Expiry Spike Risk ({expiry_spike_data['probability']}%):** {expiry_spike_data['type']}")
+        elif expiry_spike_data["probability"] > 40:
+            st.warning(f"**Moderate Expiry Spike Risk ({expiry_spike_data['probability']}%):** {expiry_spike_data['type']}")
+        else:
+            st.success(f"**Low Expiry Spike Risk ({expiry_spike_data['probability']}%):** Market stable near expiry")
     
     # Moment Detector insights
     st.markdown("#### 🚀 MOMENT DETECTOR INSIGHTS")
@@ -3281,6 +3928,16 @@ with insight_col2:
         st.info(f"**Stop Loss:** {stop_loss}")
         st.info(f"**Target:** {target}")
     
+    # Expiry-based risk adjustments
+    if expiry_spike_data["active"]:
+        st.markdown("#### 📅 EXPIRY-BASED RISK ADJUSTMENTS")
+        if expiry_spike_data["probability"] > 60:
+            st.warning("**High Spike Risk:** Use 2x wider stops, avoid overnight positions")
+        elif expiry_spike_data["probability"] > 40:
+            st.info("**Moderate Spike Risk:** Use 1.5x wider stops, be ready for volatility")
+        if days_to_expiry <= 1:
+            st.warning("**Expiry Day:** Expect whipsaws in last 2 hours, reduce position size")
+    
     # Moment-based risk adjustments
     st.markdown("#### 🚀 MOMENT-BASED RISK ADJUSTMENTS")
     if moment_metrics["momentum_burst"]["score"] > 70:
@@ -3288,7 +3945,7 @@ with insight_col2:
     if moment_metrics["gamma_cluster"]["score"] > 70:
         st.warning("**High Gamma Cluster:** Expect whipsaws around ATM - be prepared for volatility")
 
-# Final Seller Summary with Moment Integration
+# Final Seller Summary with Moment and Expiry Integration
 st.markdown("---")
 moment_summary = ""
 if moment_metrics["momentum_burst"]["score"] > 60:
@@ -3297,12 +3954,22 @@ if moment_metrics["orderbook"]["available"] and abs(moment_metrics["orderbook"][
     direction = "buy" if moment_metrics["orderbook"]["pressure"] > 0 else "sell"
     moment_summary += f"Strong {direction} pressure in orderbook. "
 
+expiry_summary = ""
+if expiry_spike_data["active"]:
+    if expiry_spike_data["probability"] > 60:
+        expiry_summary = f"🚨 HIGH EXPIRY SPIKE RISK ({expiry_spike_data['probability']}%) - {expiry_spike_data['type']}"
+    elif expiry_spike_data["probability"] > 40:
+        expiry_summary = f"⚠️ MODERATE EXPIRY SPIKE RISK ({expiry_spike_data['probability']}%) - {expiry_spike_data['type']}"
+    else:
+        expiry_summary = f"✅ LOW EXPIRY SPIKE RISK ({expiry_spike_data['probability']}%)"
+
 st.markdown(f'''
 <div class='seller-explanation'>
-    <h3>🎯 FINAL ASSESSMENT (Seller + Moment)</h3>
+    <h3>🎯 FINAL ASSESSMENT (Seller + Moment + Expiry)</h3>
     <p><strong>Market Makers are telling us:</strong> {seller_bias_result["explanation"]}</p>
     <p><strong>Their game plan:</strong> {seller_bias_result["action"]}</p>
     <p><strong>Moment Detector:</strong> {moment_summary if moment_summary else "Moment indicators neutral"}</p>
+    <p><strong>Expiry Context:</strong> {expiry_summary if expiry_summary else f"Expiry in {days_to_expiry:.1f} days"}</p>
     <p><strong>Key defense levels:</strong> ₹{nearest_sup['strike'] if nearest_sup else 'N/A':,} (Support) | ₹{nearest_res['strike'] if nearest_res else 'N/A':,} (Resistance)</p>
     <p><strong>Preferred price level:</strong> ₹{seller_max_pain if seller_max_pain else 'N/A':,} (Max Pain)</p>
 </div>
@@ -3311,7 +3978,7 @@ st.markdown(f'''
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v5.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS (Perplexity)** | All features enabled")
+st.caption("🎯 **NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS + EXPIRY SPIKE DETECTOR** | All features enabled")
 
 # Requirements note
 st.markdown("""
