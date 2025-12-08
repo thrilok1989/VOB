@@ -1,18 +1,6 @@
 """
-Nifty Option Screener v6.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS
-EVERYTHING interpreted from Option Seller/Market Maker viewpoint
-CALL building = BEARISH (sellers selling calls, expecting price to stay below)
-PUT building = BULLISH (sellers selling puts, expecting price to stay above)
-
-NEW FEATURES ADDED:
-1. Momentum Burst Detection
-2. Orderbook Pressure Analysis
-3. Gamma Cluster Concentration
-4. OI Velocity/Acceleration
-5. Telegram Signal Generation
-6. AI-Powered Market Analysis (Perplexity)
-7. EXPIRY SPIKE DETECTOR (NEW)
-8. ENHANCED OI/PCR ANALYTICS (NEW)
+Nifty Option Screener v6.0 — Streamlined Trader-Focused Interface
+Reorganized with priority-based display, collapsible sections, and better UX
 """
 
 import streamlit as st
@@ -1028,240 +1016,6 @@ def analyze_pcr_for_expiry(pcr_value, days_to_expiry):
     return "PCR analysis standard"
 
 # -----------------------
-#  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES + EXPIRY SPIKE + OI/PCR
-# -----------------------
-st.markdown(r"""
-<style>
-    .main { background-color: #0e1117; color: #fafafa; }
-    
-    /* SELLER THEME COLORS */
-    .seller-bullish { color: #00ff88 !important; font-weight: 700 !important; }
-    .seller-bearish { color: #ff4444 !important; font-weight: 700 !important; }
-    .seller-neutral { color: #66b3ff !important; font-weight: 700 !important; }
-    
-    .seller-bullish-bg { background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%); }
-    .seller-bearish-bg { background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%); }
-    .seller-neutral-bg { background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%); }
-    
-    /* MOMENT DETECTOR COLORS */
-    .moment-high { color: #ff00ff !important; font-weight: 800 !important; }
-    .moment-medium { color: #ff9900 !important; font-weight: 700 !important; }
-    .moment-low { color: #66b3ff !important; font-weight: 600 !important; }
-    
-    /* OI/PCR COLORS */
-    .pcr-extreme-bullish { color: #00ff88 !important; }
-    .pcr-bullish { color: #00cc66 !important; }
-    .pcr-mild-bullish { color: #66ff66 !important; }
-    .pcr-neutral { color: #66b3ff !important; }
-    .pcr-mild-bearish { color: #ff9900 !important; }
-    .pcr-bearish { color: #ff4444 !important; }
-    .pcr-extreme-bearish { color: #ff0000 !important; }
-    
-    h1, h2, h3 { color: #ff66cc !important; } /* Seller theme pink */
-    
-    .level-card {
-        background: linear-gradient(135deg, #2e1a2e 0%, #3e2a3e 100%);
-        padding: 15px;
-        border-radius: 10px;
-        border: 2px solid #ff66cc;
-        margin: 5px 0;
-    }
-    .level-card h4 { margin: 0; color: #ff66cc; font-size: 1.1rem; }
-    .level-card p { margin: 5px 0; color: #fafafa; font-size: 1.3rem; font-weight: 700; }
-    .level-card .sub-info { font-size: 0.9rem; color: #cccccc; margin-top: 5px; }
-    
-    .spot-card {
-        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%);
-        padding: 20px;
-        border-radius: 12px;
-        border: 3px solid #ff9900;
-        margin: 10px 0;
-        text-align: center;
-    }
-    .spot-card h3 { margin: 0; color: #ff9900; font-size: 1.3rem; }
-    .spot-card .spot-price { font-size: 2.5rem; color: #ffcc00; font-weight: 700; margin: 10px 0; }
-    .spot-card .distance { font-size: 1.1rem; color: #ffdd44; margin: 5px 0; }
-    
-    .nearest-level {
-        background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
-        padding: 15px;
-        border-radius: 10px;
-        border: 2px solid #00ffcc;
-        margin: 10px 0;
-    }
-    .nearest-level h4 { margin: 0; color: #00ffcc; font-size: 1.2rem; }
-    .nearest-level .level-value { font-size: 1.8rem; color: #00ffcc; font-weight: 700; margin: 5px 0; }
-    .nearest-level .level-distance { font-size: 1rem; color: #66ffdd; margin: 5px 0; }
-    
-    .seller-bias-box {
-        background: linear-gradient(135deg, #2e1a2e 0%, #1a2e2e 100%);
-        padding: 20px;
-        border-radius: 12px;
-        border: 3px solid #ff66cc;
-        margin: 15px 0;
-        text-align: center;
-    }
-    .seller-bias-box h3 { margin: 0; color: #ff66cc; font-size: 1.4rem; }
-    .seller-bias-box .bias-value { font-size: 2.2rem; font-weight: 900; margin: 10px 0; }
-    
-    .alert-box {
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
-        border-left: 4px solid;
-    }
-    .seller-support-building { background-color: #1a2e1a; border-left-color: #00ff88; color: #00ff88; }
-    .seller-support-breaking { background-color: #2e1a1a; border-left-color: #ff4444; color: #ff6666; }
-    .seller-resistance-building { background-color: #2e2a1a; border-left-color: #ffaa00; color: #ffcc44; }
-    .seller-resistance-breaking { background-color: #1a1f2e; border-left-color: #00aaff; color: #00ccff; }
-    .seller-bull-trap { background-color: #3e1a1a; border-left-color: #ff0000; color: #ff4444; font-weight: 700; }
-    .seller-bear-trap { background-color: #1a3e1a; border-left-color: #00ff00; color: #00ff66; font-weight: 700; }
-    
-    .ist-time {
-        background-color: #1a1f2e;
-        color: #ff66cc;
-        padding: 8px 15px;
-        border-radius: 20px;
-        border: 2px solid #ff66cc;
-        font-weight: 700;
-        font-size: 1.1rem;
-    }
-    
-    .stButton > button {
-        background-color: #ff66cc !important;
-        color: #0e1117 !important;
-        border: none !important;
-        font-weight: 600 !important;
-    }
-    .stButton > button:hover { background-color: #ff99dd !important; }
-    
-    .greeks-box {
-        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #444;
-        margin: 5px 0;
-    }
-    
-    .max-pain-box {
-        background: linear-gradient(135deg, #2e1a2e 0%, #1a2e2e 100%);
-        padding: 15px;
-        border-radius: 10px;
-        border: 2px solid #ff9900;
-        margin: 10px 0;
-    }
-    .max-pain-box h4 { margin: 0; color: #ff9900; }
-    
-    .seller-explanation {
-        background: linear-gradient(135deg, #2e1a2e 0%, #3e2a3e 100%);
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 4px solid #ff66cc;
-        margin: 10px 0;
-    }
-    
-    .entry-signal-box {
-        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%);
-        padding: 20px;
-        border-radius: 12px;
-        border: 3px solid #ff9900;
-        margin: 15px 0;
-        text-align: center;
-    }
-    .entry-signal-box h3 { margin: 0; color: #ff9900; font-size: 1.4rem; }
-    .entry-signal-box .signal-value { font-size: 2.5rem; font-weight: 900; margin: 15px 0; }
-    .entry-signal-box .signal-explanation { font-size: 1.1rem; color: #ffdd44; margin: 10px 0; }
-    .entry-signal-box .entry-price { font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin: 10px 0; }
-    
-    /* MOMENT DETECTOR BOXES */
-    .moment-box {
-        background: linear-gradient(135deg, #1a1f3e 0%, #2a2f4e 100%);
-        padding: 15px;
-        border-radius: 10px;
-        border: 2px solid #00ffff;
-        margin: 10px 0;
-        text-align: center;
-    }
-    .moment-box h4 { margin: 0; color: #00ffff; font-size: 1.1rem; }
-    .moment-box .moment-value { font-size: 1.8rem; font-weight: 900; margin: 10px 0; }
-    
-    /* TELEGRAM SIGNAL BOX */
-    .telegram-box {
-        background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
-        padding: 20px;
-        border-radius: 12px;
-        border: 3px solid #0088cc;
-        margin: 15px 0;
-    }
-    .telegram-box h3 { margin: 0; color: #00aaff; font-size: 1.4rem; }
-    
-    /* AI ANALYSIS BOX */
-    .ai-box {
-        background: linear-gradient(135deg, #2e1a2e 0%, #1a1f3e 100%);
-        padding: 20px;
-        border-radius: 12px;
-        border: 3px solid #aa00ff;
-        margin: 15px 0;
-    }
-    .ai-box h3 { margin: 0; color: #aa00ff; font-size: 1.4rem; }
-    
-    /* EXPIRY SPIKE DETECTOR STYLES */
-    .expiry-high-risk {
-        background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%) !important;
-        border: 3px solid #ff0000 !important;
-        animation: pulse 2s infinite;
-    }
-    
-    .expiry-medium-risk {
-        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%) !important;
-        border: 3px solid #ff9900 !important;
-    }
-    
-    .expiry-low-risk {
-        background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%) !important;
-        border: 3px solid #00ff00 !important;
-    }
-    
-    /* OI/PCR BOXES */
-    .oi-pcr-box {
-        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
-        padding: 20px;
-        border-radius: 12px;
-        border: 2px solid #66b3ff;
-        margin: 15px 0;
-    }
-    
-    .oi-pcr-metric {
-        background: rgba(0,0,0,0.2);
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 4px solid #66b3ff;
-        margin: 10px 0;
-    }
-    
-    @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
-        70% { box-shadow: 0 0 0 10px rgba(255, 0, 0, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0); }
-    }
-    
-    [data-testid="stMetricLabel"] { color: #cccccc !important; font-weight: 600; }
-    [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
-</style>
-""", unsafe_allow_html=True)
-
-st.set_page_config(page_title="Nifty Screener v6 - Seller's Perspective + Moment Detector + AI + Expiry Spike Detector + OI/PCR Analytics", layout="wide")
-
-def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
-    if "last_refresh" not in st.session_state:
-        st.session_state["last_refresh"] = time.time()
-    if time.time() - st.session_state["last_refresh"] > interval_sec:
-        st.session_state["last_refresh"] = time.time()
-        st.rerun()
-
-auto_refresh()
-
-# -----------------------
 #  UTILITY FUNCTIONS
 # -----------------------
 def safe_int(x, default=0):
@@ -2260,612 +2014,867 @@ def parse_dhan_option_chain(chain_data):
             pe_rows.append(pi)
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
-# -----------------------
-#  MAIN APP - COMPLETE V6 WITH OI/PCR ANALYTICS
-# -----------------------
-st.title("🎯 NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + Moment Detector + AI + Expiry Spike + OI/PCR ANALYTICS")
+# ============================================
+# 🎯 REORGANIZED UI - CLEANER INTERFACE
+# ============================================
 
-current_ist = get_ist_datetime_str()
+# Custom CSS with organized styling
+st.markdown("""
+<style>
+    /* BASE STYLES */
+    .main { background-color: #0e1117; color: #fafafa; }
+    
+    /* HEADER STYLES */
+    .main-header {
+        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #ff66cc;
+        margin-bottom: 20px;
+        text-align: center;
+    }
+    
+    /* PRIORITY 1: CRITICAL METRICS */
+    .critical-metric {
+        background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
+        padding: 15px;
+        border-radius: 8px;
+        border: 2px solid #00ffcc;
+        margin: 5px;
+        text-align: center;
+    }
+    
+    .critical-metric-value {
+        font-size: 1.8rem !important;
+        font-weight: 900 !important;
+        color: #ff66cc !important;
+        margin: 5px 0 !important;
+    }
+    
+    .critical-metric-label {
+        font-size: 0.9rem !important;
+        color: #cccccc !important;
+        margin-bottom: 5px !important;
+    }
+    
+    /* PRIORITY 2: ENTRY SIGNAL */
+    .entry-signal-box {
+        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid #ff9900;
+        margin: 15px 0;
+        text-align: center;
+    }
+    
+    /* PRIORITY 3: KEY LEVELS */
+    .key-level-box {
+        background: linear-gradient(135deg, #2e1a2e 0%, #3e2a3e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #ff66cc;
+        margin: 10px 0;
+    }
+    
+    /* MOMENT DETECTOR */
+    .moment-box {
+        background: linear-gradient(135deg, #1a1f3e 0%, #2a2f4e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #00ffff;
+        margin: 10px 0;
+        text-align: center;
+    }
+    
+    /* EXPIRY SPIKE */
+    .expiry-high-risk {
+        background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%);
+        border: 3px solid #ff0000;
+        animation: pulse 2s infinite;
+    }
+    
+    /* TAB STYLING */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #1a1f2e;
+        border-radius: 5px 5px 0px 0px;
+        gap: 1px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #2a2f3e;
+    }
+    
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(255, 0, 0, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0); }
+    }
+    
+    /* METRIC STYLING */
+    [data-testid="stMetricValue"] { 
+        font-size: 1.6rem !important; 
+        font-weight: 700 !important; 
+    }
+    
+    [data-testid="stMetricLabel"] { 
+        color: #cccccc !important; 
+        font-weight: 600 !important; 
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.set_page_config(
+    page_title="Nifty Screener v6 - Trader's Dashboard",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ============================================
+# 🎯 SIDEBAR REORGANIZATION
+# ============================================
+with st.sidebar:
+    # 1. QUICK SETTINGS (Top)
+    st.markdown("### ⚙️ QUICK SETTINGS")
+    
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        auto_refresh = st.checkbox("Auto Refresh", value=True)
+    with col_s2:
+        refresh_rate = st.selectbox("Rate (sec)", [30, 60, 120], index=1)
+    
+    auto_send = st.checkbox("Auto-send Telegram", value=False)
+    
+    # 2. KEY INFO (Middle)
+    st.markdown("---")
+    st.markdown("### 📊 MARKET STATUS")
+    
+    # Days to expiry (calculated later)
+    if 'days_to_expiry' in locals():
+        st.metric("Days to Expiry", f"{days_to_expiry:.1f}")
+    
+    # 3. FEATURE STATUS (Collapsible)
+    with st.expander("🔧 FEATURE STATUS", expanded=False):
+        if trading_ai.is_enabled():
+            st.success("✅ AI: ENABLED")
+        else:
+            st.warning("⚠️ AI: DISABLED")
+        
+        st.info(f"📡 Data: {'LIVE' if 'spot' in locals() and spot > 0 else 'OFFLINE'}")
+        st.info(f"📱 Telegram: {'READY' if TELEGRAM_BOT_TOKEN else 'OFF'}")
+    
+    # 4. TRADING LOGIC GUIDE (Collapsible)
+    with st.expander("🎯 TRADING LOGIC", expanded=False):
+        st.markdown("""
+        **SELLER'S VIEW:**
+        - 📉 CALL Writing = BEARISH
+        - 📈 PUT Writing = BULLISH  
+        - 🔄 Buying Back = Covering
+        
+        **MOMENT DETECTOR:**
+        - 💥 Momentum = Vol × IV × ΔOI
+        - 📊 Pressure = Buy/Sell imbalance
+        - 🌀 Gamma = ATM concentration
+        - ⚡ OI Accel = Speed of changes
+        """)
+    
+    # 5. EXPIRY INFO
+    st.markdown("---")
+    if 'expiry' in locals():
+        st.markdown(f"**Current Expiry:** {expiry}")
+    
+    st.markdown(f"**IST:** {get_ist_time_str()}")
+
+# ============================================
+# 🎯 MAIN PAGE - REORGANIZED WITH TABS
+# ============================================
+
+# Main header
 st.markdown(f"""
-<div style='text-align: center; margin-bottom: 20px;'>
-    <span class='ist-time'>🕐 IST: {current_ist}</span>
+<div class="main-header">
+    <h1 style="margin:0; color:#ff66cc;">🎯 NIFTY Option Screener v6.0</h1>
+    <p style="margin:5px 0; color:#cccccc;">🕐 IST: {get_ist_datetime_str()}</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar
-with st.sidebar:
-    st.markdown("""
-    <div class='seller-explanation'>
-    <h3>🎯 SELLER'S LOGIC</h3>
-    <p><strong>Options WRITING = Directional Bias:</strong></p>
-    <ul>
-    <li><span class='seller-bearish'>📉 CALL Writing</span> = BEARISH (expecting price to STAY BELOW)</li>
-    <li><span class='seller-bullish'>📈 PUT Writing</span> = BULLISH (expecting price to STAY ABOVE)</li>
-    <li><span class='seller-bullish'>🔄 CALL Buying Back</span> = BULLISH (covering bearish bets)</li>
-    <li><span class='seller-bearish'>🔄 PUT Buying Back</span> = BEARISH (covering bullish bets)</li>
-    </ul>
-    <p><em>Market makers & institutions are primarily SELLERS, not buyers.</em></p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    st.markdown("### 🚀 MOMENT DETECTOR FEATURES")
-    st.markdown("""
-    1. **Momentum Burst**: Volume × IV × ΔOI changes
-    2. **Orderbook Pressure**: Buy/Sell depth imbalance
-    3. **Gamma Cluster**: ATM gamma concentration
-    4. **OI Acceleration**: Speed of OI changes
-    """)
-    
-    st.markdown("---")
-    st.markdown("### 📊 ENHANCED OI/PCR ANALYTICS")
-    st.markdown("""
-    **New Metrics:**
-    1. Total OI Analysis (CALL/PUT)
-    2. PCR Interpretation & Sentiment
-    3. OI Concentration & Skew
-    4. ITM/OTM OI Distribution
-    5. Max OI Strikes
-    6. Historical PCR Context
-    """)
-    
-    st.markdown("---")
-    st.markdown("### 📅 EXPIRY SPIKE DETECTOR")
-    st.markdown("""
-    **Activation:** ≤5 days to expiry
-    
-    **Detection Factors:**
-    1. ATM OI Concentration
-    2. Max Pain Distance
-    3. PCR Extremes
-    4. Massive OI Walls
-    5. Gamma Flip Risk
-    6. Unwinding Activity
-    """)
-    
-    st.markdown("---")
-    st.markdown("### 📱 TELEGRAM SIGNALS")
-    st.markdown("""
-    **Signal Conditions:**
-    - Position ≠ NEUTRAL
-    - Confidence ≥ 40%
-    - New signal detected
-    """)
-    
-    st.markdown("---")
-    st.markdown("### 🧠 AI ANALYSIS")
-    if trading_ai.is_enabled():
-        st.success("✅ AI Analysis ENABLED")
-        st.metric("AI Model", "Perplexity Sonar-Pro")
-    else:
-        st.warning("⚠️ AI Analysis DISABLED")
-        st.info("Add PERPLEXITY_API_KEY to secrets to enable")
-    
-    # Expiry spike info in sidebar
-    st.markdown("---")
-    try:
-        expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
-        now = datetime.now()
-        days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)
-    except:
-        days_to_expiry = 7
-    
-    if days_to_expiry <= 5:
-        st.warning(f"⚠️ Expiry in {days_to_expiry:.1f} days")
-        st.info("Spike detector ACTIVE")
-    else:
-        st.success(f"✓ Expiry in {days_to_expiry:.1f} days")
-        st.info("Spike detector INACTIVE")
-    
-    st.markdown("---")
-    st.markdown(f"**Current IST:** {get_ist_time_str()}")
-    st.markdown(f"**Date:** {get_ist_date_str()}")
-    
-    save_interval = st.number_input("PCR Auto-save (sec)", value=SAVE_INTERVAL_SEC, min_value=60, step=60)
-    
-    # Telegram settings
-    st.markdown("---")
-    st.markdown("### 🤖 TELEGRAM SETTINGS")
-    auto_send = st.checkbox("Auto-send signals to Telegram", value=False)
-    show_signal_preview = st.checkbox("Show signal preview", value=True)
-    
-    # AI settings
-    st.markdown("---")
-    st.markdown("### 🤖 AI SETTINGS")
-    enable_ai_analysis = st.checkbox("Enable AI Analysis", value=trading_ai.is_enabled())
-    if enable_ai_analysis and not trading_ai.is_enabled():
-        st.warning("AI requires PERPLEXITY_API_KEY in secrets")
-    
-    if st.button("Clear Caches"):
-        st.cache_data.clear()
-        st.rerun()
+# Create tabs for different views
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🎯 Dashboard", 
+    "📊 OI/PCR Analytics", 
+    "🚀 Momentum", 
+    "📅 Expiry", 
+    "📈 Details"
+])
+
+# ============================================
+# DATA FETCHING AND PROCESSING
+# ============================================
 
 # Fetch data
-col1, col2 = st.columns([1, 2])
-with col1:
-    with st.spinner("Fetching NIFTY spot..."):
-        spot = get_nifty_spot_price()
+with st.spinner("Fetching market data..."):
+    # Fetch spot price
+    spot = get_nifty_spot_price()
+    
     if spot == 0.0:
         st.error("Unable to fetch NIFTY spot")
         st.stop()
     
+    # Fetch expiry list
     expiries = get_expiry_list()
     if not expiries:
         st.error("Unable to fetch expiry list")
         st.stop()
     
-    expiry = st.selectbox("Select expiry", expiries, index=0)
-
-with col2:
-    if spot > 0:
-        st.metric("NIFTY Spot", f"₹{spot:.2f}")
-        st.metric("Expiry", expiry)
-
-# Fetch option chain
-with st.spinner("Fetching option chain..."):
+    expiry = expiries[0]
+    
+    # Fetch option chain
     chain = fetch_dhan_option_chain(expiry)
-if chain is None:
-    st.error("Failed to fetch option chain")
-    st.stop()
-
-df_ce, df_pe = parse_dhan_option_chain(chain)
-if df_ce.empty or df_pe.empty:
-    st.error("Insufficient CE/PE data")
-    st.stop()
-
-# Filter ATM window
-strike_gap = strike_gap_from_series(df_ce["strikePrice"])
-atm_strike = min(df_ce["strikePrice"].tolist(), key=lambda x: abs(x - spot))
-lower = atm_strike - (ATM_STRIKE_WINDOW * strike_gap)
-upper = atm_strike + (ATM_STRIKE_WINDOW * strike_gap)
-
-df_ce = df_ce[(df_ce["strikePrice"]>=lower) & (df_ce["strikePrice"]<=upper)].reset_index(drop=True)
-df_pe = df_pe[(df_pe["strikePrice"]>=lower) & (df_pe["strikePrice"]<=upper)].reset_index(drop=True)
-
-merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
-merged["strikePrice"] = merged["strikePrice"].astype(int)
-
-# Compute tau and days to expiry
-try:
-    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
-    now = datetime.now()
-    tau = max((expiry_dt - now).total_seconds() / (365.25*24*3600), 1/365.25)
-    days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)
-except Exception:
-    tau = 7.0/365.0
-    days_to_expiry = 7.0
-
-# Session storage for prev LTP/IV
-if "prev_ltps_seller" not in st.session_state:
-    st.session_state["prev_ltps_seller"] = {}
-if "prev_ivs_seller" not in st.session_state:
-    st.session_state["prev_ivs_seller"] = {}
-
-# Initialize moment history
-_init_history()
-
-# Compute per-strike metrics with SELLER interpretation
-for i, row in merged.iterrows():
-    strike = int(row["strikePrice"])
-    ltp_ce = safe_float(row.get("LTP_CE",0.0))
-    ltp_pe = safe_float(row.get("LTP_PE",0.0))
-    iv_ce = safe_float(row.get("IV_CE", np.nan))
-    iv_pe = safe_float(row.get("IV_PE", np.nan))
-
-    key_ce = f"{expiry}_{strike}_CE"
-    key_pe = f"{expiry}_{strike}_PE"
-    prev_ce = st.session_state["prev_ltps_seller"].get(key_ce, None)
-    prev_pe = st.session_state["prev_ltps_seller"].get(key_pe, None)
-    prev_iv_ce = st.session_state["prev_ivs_seller"].get(key_ce, None)
-    prev_iv_pe = st.session_state["prev_ivs_seller"].get(key_pe, None)
-
-    ce_price_delta = None if prev_ce is None else (ltp_ce - prev_ce)
-    pe_price_delta = None if prev_pe is None else (ltp_pe - prev_pe)
-    ce_iv_delta = None if prev_iv_ce is None else (iv_ce - prev_iv_ce)
-    pe_iv_delta = None if prev_iv_pe is None else (iv_pe - prev_iv_pe)
-
-    st.session_state["prev_ltps_seller"][key_ce] = ltp_ce
-    st.session_state["prev_ltps_seller"][key_pe] = ltp_pe
-    st.session_state["prev_ivs_seller"][key_ce] = iv_ce
-    st.session_state["prev_ivs_seller"][key_pe] = iv_pe
-
-    chg_oi_ce = safe_int(row.get("Chg_OI_CE",0))
-    chg_oi_pe = safe_int(row.get("Chg_OI_PE",0))
-
-    # SELLER winding/unwinding labels
-    merged.at[i,"CE_Seller_Action"] = "WRITING" if chg_oi_ce>0 else ("BUYING BACK" if chg_oi_ce<0 else "HOLDING")
-    merged.at[i,"PE_Seller_Action"] = "WRITING" if chg_oi_pe>0 else ("BUYING BACK" if chg_oi_pe<0 else "HOLDING")
-
-    # SELLER divergence interpretation
-    merged.at[i,"CE_Seller_Divergence"] = seller_price_oi_divergence(chg_oi_ce, safe_int(row.get("Vol_CE",0)), ce_price_delta, "CE")
-    merged.at[i,"PE_Seller_Divergence"] = seller_price_oi_divergence(chg_oi_pe, safe_int(row.get("Vol_PE",0)), pe_price_delta, "PE")
-
-    # SELLER ITM/OTM interpretation
-    merged.at[i,"Seller_Interpretation"] = seller_itm_otm_interpretation(strike, atm_strike, chg_oi_ce, chg_oi_pe)
-
-    # Greeks calculation
-    sigma_ce = iv_ce/100.0 if not np.isnan(iv_ce) and iv_ce>0 else 0.25
-    sigma_pe = iv_pe/100.0 if not np.isnan(iv_pe) and iv_pe>0 else 0.25
-
+    if chain is None:
+        st.error("Failed to fetch option chain")
+        st.stop()
+    
+    df_ce, df_pe = parse_dhan_option_chain(chain)
+    if df_ce.empty or df_pe.empty:
+        st.error("Insufficient CE/PE data")
+        st.stop()
+    
+    # Filter ATM window
+    strike_gap = strike_gap_from_series(df_ce["strikePrice"])
+    atm_strike = min(df_ce["strikePrice"].tolist(), key=lambda x: abs(x - spot))
+    lower = atm_strike - (ATM_STRIKE_WINDOW * strike_gap)
+    upper = atm_strike + (ATM_STRIKE_WINDOW * strike_gap)
+    
+    df_ce = df_ce[(df_ce["strikePrice"]>=lower) & (df_ce["strikePrice"]<=upper)].reset_index(drop=True)
+    df_pe = df_pe[(df_pe["strikePrice"]>=lower) & (df_pe["strikePrice"]<=upper)].reset_index(drop=True)
+    
+    merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
+    merged["strikePrice"] = merged["strikePrice"].astype(int)
+    
+    # Compute tau and days to expiry
     try:
-        delta_ce = bs_delta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
-        gamma_ce = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
-        vega_ce = bs_vega(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
-        theta_ce = bs_theta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
+        expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
+        now = datetime.now()
+        tau = max((expiry_dt - now).total_seconds() / (365.25*24*3600), 1/365.25)
+        days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)
     except Exception:
-        delta_ce = gamma_ce = vega_ce = theta_ce = 0.0
-
-    try:
-        delta_pe = bs_delta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
-        gamma_pe = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
-        vega_pe = bs_vega(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
-        theta_pe = bs_theta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
-    except Exception:
-        delta_pe = gamma_pe = vega_pe = theta_pe = 0.0
-
-    merged.at[i,"Delta_CE"] = delta_ce
-    merged.at[i,"Gamma_CE"] = gamma_ce
-    merged.at[i,"Vega_CE"] = vega_ce
-    merged.at[i,"Theta_CE"] = theta_ce
-    merged.at[i,"Delta_PE"] = delta_pe
-    merged.at[i,"Gamma_PE"] = gamma_pe
-    merged.at[i,"Vega_PE"] = vega_pe
-    merged.at[i,"Theta_PE"] = theta_pe
-
-    # GEX calculation (SELLER exposure)
-    oi_ce = safe_int(row.get("OI_CE",0))
-    oi_pe = safe_int(row.get("OI_PE",0))
-    notional = LOT_SIZE * spot
-    gex_ce = gamma_ce * notional * oi_ce
-    gex_pe = gamma_pe * notional * oi_pe
-    merged.at[i,"GEX_CE"] = gex_ce
-    merged.at[i,"GEX_PE"] = gex_pe
-    merged.at[i,"GEX_Net"] = gex_ce + gex_pe
-
-    # SELLER strength score
-    merged.at[i,"Seller_Strength_Score"] = seller_strength_score(row)
-
-    # SELLER gamma pressure
-    merged.at[i,"Seller_Gamma_Pressure"] = seller_gamma_pressure(row, atm_strike, strike_gap)
-
-    merged.at[i,"CE_Price_Delta"] = ce_price_delta
-    merged.at[i,"PE_Price_Delta"] = pe_price_delta
-    merged.at[i,"CE_IV_Delta"] = ce_iv_delta
-    merged.at[i,"PE_IV_Delta"] = pe_iv_delta
-
-# Aggregations
-total_CE_OI = merged["OI_CE"].sum()
-total_PE_OI = merged["OI_PE"].sum()
-total_CE_chg = merged["Chg_OI_CE"].sum()
-total_PE_chg = merged["Chg_OI_PE"].sum()
-
-# SELLER activity summary
-ce_selling = (merged["Chg_OI_CE"] > 0).sum()
-ce_buying_back = (merged["Chg_OI_CE"] < 0).sum()
-pe_selling = (merged["Chg_OI_PE"] > 0).sum()
-pe_buying_back = (merged["Chg_OI_PE"] < 0).sum()
-
-# Greeks totals
-total_gex_ce = merged["GEX_CE"].sum()
-total_gex_pe = merged["GEX_PE"].sum()
-total_gex_net = merged["GEX_Net"].sum()
-
-# Calculate SELLER metrics
-seller_max_pain = calculate_seller_max_pain(merged)
-seller_breakout_index = seller_breakout_probability_index(merged, atm_strike, strike_gap)
-
-# Calculate SELLER market bias
-seller_bias_result = calculate_seller_market_bias(merged, spot, atm_strike)
-
-# Compute PCR
-pcr_df = compute_pcr_df(merged)
-
-# Get SELLER support/resistance rankings
-ranked_current, seller_supports_df, seller_resists_df = rank_support_resistance_seller(pcr_df)
-
-# Analyze spot position from SELLER perspective
-spot_analysis = analyze_spot_position_seller(spot, ranked_current, seller_bias_result)
-
-nearest_sup = spot_analysis["nearest_support"]
-nearest_res = spot_analysis["nearest_resistance"]
-
-# ---- NEW: Capture snapshot for moment detector ----
-st.session_state["moment_history"].append(
-    _snapshot_from_state(get_ist_now(), spot, atm_strike, merged)
-)
-# Keep last 10 points
-st.session_state["moment_history"] = st.session_state["moment_history"][-10:]
-
-# ---- NEW: Compute 4 moment metrics ----
-orderbook = get_nifty_orderbook_depth()
-orderbook_metrics = orderbook_pressure_score(orderbook) if orderbook else {"available": False, "pressure": 0.0}
-
-moment_metrics = {
-    "momentum_burst": compute_momentum_burst(st.session_state["moment_history"]),
-    "orderbook": orderbook_metrics,
-    "gamma_cluster": compute_gamma_cluster(merged, atm_strike, window=2),
-    "oi_accel": compute_oi_velocity_acceleration(st.session_state["moment_history"], atm_strike, window_strikes=2)
-}
-
-# Calculate entry signal with moment detector integration
-entry_signal = calculate_entry_signal_extended(
-    spot=spot,
-    merged_df=merged,
-    atm_strike=atm_strike,
-    seller_bias_result=seller_bias_result,
-    seller_max_pain=seller_max_pain,
-    seller_supports_df=seller_supports_df,
-    seller_resists_df=seller_resists_df,
-    nearest_sup=nearest_sup,
-    nearest_res=nearest_res,
-    seller_breakout_index=seller_breakout_index,
-    moment_metrics=moment_metrics
-)
-
-# ============================================
-# 📊 COMPREHENSIVE OI & PCR DASHBOARD
-# ============================================
-
-# Run OI/PCR analysis
-oi_pcr_metrics = analyze_oi_pcr_metrics(merged, spot, atm_strike)
-
-st.markdown("---")
-st.markdown("## 📊 ENHANCED OI & PCR ANALYTICS DASHBOARD")
-
-# Row 1: Totals
-col_t1, col_t2, col_t3, col_t4 = st.columns(4)
-
-with col_t1:
-    st.metric("📈 Total CALL OI", f"{oi_pcr_metrics['total_ce_oi']:,}")
-    st.metric("Δ CALL OI", f"{oi_pcr_metrics['total_ce_chg']:+,}")
-
-with col_t2:
-    st.metric("📉 Total PUT OI", f"{oi_pcr_metrics['total_pe_oi']:,}")
-    st.metric("Δ PUT OI", f"{oi_pcr_metrics['total_pe_chg']:+,}")
-
-with col_t3:
-    st.metric("📊 Total OI", f"{oi_pcr_metrics['total_oi']:,}")
-    st.metric("Total ΔOI", f"{oi_pcr_metrics['total_chg_oi']:+,}")
-
-with col_t4:
-    st.markdown(f"""
-    <div style="
-        background: rgba(0,0,0,0.2);
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 4px solid {oi_pcr_metrics['pcr_color']};
-        text-align: center;
-    ">
-        <div style='font-size: 0.9rem; color:#cccccc;'>PCR (TOTAL)</div>
-        <div style='font-size: 2rem; color:{oi_pcr_metrics['pcr_color']}; font-weight:900;'>
-            {oi_pcr_metrics['pcr_total']:.2f}
-        </div>
-        <div style='font-size: 0.9rem; color:{oi_pcr_metrics['pcr_color']};'>
-            {oi_pcr_metrics['pcr_interpretation']}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# Row 2: PCR Card with detailed interpretation
-st.markdown(f"""
-<div style="
-    background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
-    padding: 20px;
-    border-radius: 12px;
-    border: 2px solid {oi_pcr_metrics['pcr_color']};
-    margin: 15px 0;
-">
-    <h3 style='color:{oi_pcr_metrics["pcr_color"]}; margin:0 0 10px 0;'>🎯 PUT-CALL RATIO (PCR) ANALYSIS</h3>
+        tau = 7.0/365.0
+        days_to_expiry = 7.0
     
-    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 15px 0;">
-        <div style='text-align: center;'>
-            <div style='font-size: 0.9rem; color:#cccccc;'>Sentiment</div>
-            <div style='font-size: 1.3rem; color:{oi_pcr_metrics["pcr_color"]}; font-weight:700;'>
-                {oi_pcr_metrics['pcr_sentiment']}
-            </div>
-        </div>
-        
-        <div style='text-align: center;'>
-            <div style='font-size: 0.9rem; color:#cccccc;'>PCR Change</div>
-            <div style='font-size: 1.3rem; color:#ffcc00; font-weight:700;'>
-                {oi_pcr_metrics['pcr_chg']:+.2f}
-            </div>
-        </div>
-        
-        <div style='text-align: center;'>
-            <div style='font-size: 0.9rem; color:#cccccc;'>OI Momentum</div>
-            <div style='font-size: 1.3rem; color:#ff00ff; font-weight:700;'>
-                {oi_pcr_metrics['oi_momentum']:+.1f}%
-            </div>
-        </div>
-        
-        <div style='text-align: center;'>
-            <div style='font-size: 0.9rem; color:#cccccc;'>CE:PE Ratio</div>
-            <div style='font-size: 1.3rem; color:#66b3ff; font-weight:700;'>
-                {oi_pcr_metrics['ce_pe_ratio']:.2f}:1
-            </div>
-        </div>
-    </div>
+    # Session storage for prev LTP/IV
+    if "prev_ltps_seller" not in st.session_state:
+        st.session_state["prev_ltps_seller"] = {}
+    if "prev_ivs_seller" not in st.session_state:
+        st.session_state["prev_ivs_seller"] = {}
     
-    <div style='color:#ffffff; font-size: 1rem; margin-top: 10px;'>
-        <strong>Interpretation:</strong> {oi_pcr_metrics['oi_change_interpretation']}
-        {'. ' + oi_pcr_metrics['chg_interpretation'] if oi_pcr_metrics['chg_interpretation'] else ''}
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-# Row 3: Concentration Analysis
-st.markdown("### 🎯 OI CONCENTRATION & SKEW")
-
-col_c1, col_c2, col_c3, col_c4 = st.columns(4)
-
-with col_c1:
-    st.metric("ATM Concentration", f"{oi_pcr_metrics['atm_concentration_pct']:.1f}%")
-    st.caption(f"CALL: {oi_pcr_metrics['atm_ce_oi']:,} | PUT: {oi_pcr_metrics['atm_pe_oi']:,}")
-
-with col_c2:
-    st.metric("Max CALL OI Strike", f"₹{oi_pcr_metrics['max_ce_strike']:,}")
-    st.caption(f"OI: {oi_pcr_metrics['max_ce_oi']:,}")
-
-with col_c3:
-    st.metric("Max PUT OI Strike", f"₹{oi_pcr_metrics['max_pe_strike']:,}")
-    st.caption(f"OI: {oi_pcr_metrics['max_pe_oi']:,}")
-
-with col_c4:
-    st.metric("OI Skew", f"CALL: {oi_pcr_metrics['call_oi_skew']}")
-    st.caption(f"PUT: {oi_pcr_metrics['put_oi_skew']}")
-
-# Row 4: ITM/OTM Analysis
-with st.expander("🔍 ITM/OTM OI Distribution", expanded=False):
-    col_i1, col_i2, col_i3, col_i4 = st.columns(4)
+    # Initialize moment history
+    _init_history()
     
-    with col_i1:
-        st.markdown("""
-        <div style="text-align: center;">
-            <div style="font-size: 0.9rem; color:#ff4444;">ITM CALL OI</div>
-            <div style="font-size: 1.5rem; color:#ff4444; font-weight:700;">
-                {:,}
-            </div>
-            <div style="font-size: 0.8rem; color:#aaaaaa;">
-                Strike < Spot
-            </div>
-        </div>
-        """.format(oi_pcr_metrics['itm_ce_oi']), unsafe_allow_html=True)
+    # Compute per-strike metrics with SELLER interpretation
+    for i, row in merged.iterrows():
+        strike = int(row["strikePrice"])
+        ltp_ce = safe_float(row.get("LTP_CE",0.0))
+        ltp_pe = safe_float(row.get("LTP_PE",0.0))
+        iv_ce = safe_float(row.get("IV_CE", np.nan))
+        iv_pe = safe_float(row.get("IV_PE", np.nan))
     
-    with col_i2:
-        st.markdown("""
-        <div style="text-align: center;">
-            <div style="font-size: 0.9rem; color:#ff9900;">OTM CALL OI</div>
-            <div style="font-size: 1.5rem; color:#ff9900; font-weight:700;">
-                {:,}
-            </div>
-            <div style="font-size: 0.8rem; color:#aaaaaa;">
-                Strike > Spot
-            </div>
-        </div>
-        """.format(oi_pcr_metrics['otm_ce_oi']), unsafe_allow_html=True)
+        key_ce = f"{expiry}_{strike}_CE"
+        key_pe = f"{expiry}_{strike}_PE"
+        prev_ce = st.session_state["prev_ltps_seller"].get(key_ce, None)
+        prev_pe = st.session_state["prev_ltps_seller"].get(key_pe, None)
+        prev_iv_ce = st.session_state["prev_ivs_seller"].get(key_ce, None)
+        prev_iv_pe = st.session_state["prev_ivs_seller"].get(key_pe, None)
     
-    with col_i3:
-        st.markdown("""
-        <div style="text-align: center;">
-            <div style="font-size: 0.9rem; color:#00cc66;">ITM PUT OI</div>
-            <div style="font-size: 1.5rem; color:#00cc66; font-weight:700;">
-                {:,}
-            </div>
-            <div style="font-size: 0.8rem; color:#aaaaaa;">
-                Strike > Spot
-            </div>
-        </div>
-        """.format(oi_pcr_metrics['itm_pe_oi']), unsafe_allow_html=True)
+        ce_price_delta = None if prev_ce is None else (ltp_ce - prev_ce)
+        pe_price_delta = None if prev_pe is None else (ltp_pe - prev_pe)
+        ce_iv_delta = None if prev_iv_ce is None else (iv_ce - prev_iv_ce)
+        pe_iv_delta = None if prev_iv_pe is None else (iv_pe - prev_iv_pe)
     
-    with col_i4:
-        st.markdown("""
-        <div style="text-align: center;">
-            <div style="font-size: 0.9rem; color:#66b3ff;">OTM PUT OI</div>
-            <div style="font-size: 1.5rem; color:#66b3ff; font-weight:700;">
-                {:,}
-            </div>
-            <div style="font-size: 0.8rem; color:#aaaaaa;">
-                Strike < Spot
-            </div>
-        </div>
-        """.format(oi_pcr_metrics['otm_pe_oi']), unsafe_allow_html=True)
-
-# Historical PCR Context
-pcr_context = get_pcr_context(oi_pcr_metrics['pcr_total'])
-
-st.markdown("### 📈 PCR HISTORICAL CONTEXT")
-
-st.info(f"""
-**Current PCR: {oi_pcr_metrics['pcr_total']:.2f}** - {pcr_context}
-
-**Historical Ranges:**
-- **Neutral:** 0.80 - 1.20 (Most common)
-- **Bullish:** 1.20 - 1.50 (PUT selling dominant)
-- **Very Bullish:** 1.50 - 2.00 (Heavy PUT selling)
-- **Extreme Bullish:** > 2.00 (Rare, reversal possible)
-- **Bearish:** 0.50 - 0.80 (CALL selling dominant)
-- **Very Bearish:** 0.30 - 0.50 (Heavy CALL selling)
-- **Extreme Bearish:** < 0.30 (Rare, bounce possible)
-""")
-
-# Add expiry context if near expiry
-try:
-    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
-    days_to_expiry = (expiry_dt - datetime.now()).days + ((expiry_dt - datetime.now()).seconds / (24*3600))
+        st.session_state["prev_ltps_seller"][key_ce] = ltp_ce
+        st.session_state["prev_ltps_seller"][key_pe] = ltp_pe
+        st.session_state["prev_ivs_seller"][key_ce] = iv_ce
+        st.session_state["prev_ivs_seller"][key_pe] = iv_pe
     
-    if days_to_expiry <= 5:
-        expiry_pcr_context = analyze_pcr_for_expiry(oi_pcr_metrics['pcr_total'], days_to_expiry)
-        st.warning(f"""
-        **⚠️ Expiry Context (D-{int(days_to_expiry)}):** {expiry_pcr_context}
-        
-        PCR readings near expiry often exaggerate due to position squaring.
-        """)
-except:
-    pass
-
-# ============================================
-# 📅 EXPIRY SPIKE DETECTION
-# ============================================
-
-# Calculate expiry spike data
-expiry_spike_data = detect_expiry_spikes(merged, spot, atm_strike, days_to_expiry, expiry)
-
-# Advanced spike detection (optional)
-violent_unwinding_signals = detect_violent_unwinding(merged, spot, atm_strike)
-gamma_spike_risk = calculate_gamma_exposure_spike(total_gex_net, days_to_expiry)
-pinning_probability = predict_expiry_pinning_probability(
-    spot, seller_max_pain, 
-    nearest_sup["strike"] if nearest_sup else None,
-    nearest_res["strike"] if nearest_res else None
-)
-
-# Check for new Telegram signal
-telegram_signal = check_and_send_signal(
-    entry_signal, spot, seller_bias_result, 
-    seller_max_pain, nearest_sup, nearest_res, 
-    moment_metrics, seller_breakout_index, expiry, expiry_spike_data
-)
-
-# ============================================
-# 🧠 AI ANALYSIS SECTION (PERPLEXITY)
-# ============================================
-
-if trading_ai.is_enabled() and enable_ai_analysis:
-    st.markdown("---")
-    st.markdown("## 🧠 AI-POWERED MARKET ANALYSIS (Perplexity)")
+        chg_oi_ce = safe_int(row.get("Chg_OI_CE",0))
+        chg_oi_pe = safe_int(row.get("Chg_OI_PE",0))
     
-    # Prepare data for AI
-    market_data_for_ai = {
-        'spot': spot,
-        'atm_strike': atm_strike,
-        'seller_bias': seller_bias_result['bias'],
-        'max_pain': seller_max_pain if seller_max_pain else 0,
-        'breakout_index': seller_breakout_index,
-        'nearest_support': nearest_sup['strike'] if nearest_sup else 0,
-        'nearest_resistance': nearest_res['strike'] if nearest_res else 0,
-        'range_size': spot_analysis['range_size'],
-        'total_pcr': total_PE_OI / total_CE_OI if total_CE_OI > 0 else 0,
-        'total_ce_oi': total_CE_OI,
-        'total_pe_oi': total_PE_OI,
-        'ce_selling': ce_selling,
-        'pe_selling': pe_selling,
-        'total_gex': total_gex_net,
-        'expiry': expiry,
-        'days_to_expiry': days_to_expiry,
-        'enhanced_pcr': oi_pcr_metrics['pcr_total'],
-        'pcr_sentiment': oi_pcr_metrics['pcr_sentiment'],
-        'oi_concentration': oi_pcr_metrics['atm_concentration_pct']
+        # SELLER winding/unwinding labels
+        merged.at[i,"CE_Seller_Action"] = "WRITING" if chg_oi_ce>0 else ("BUYING BACK" if chg_oi_ce<0 else "HOLDING")
+        merged.at[i,"PE_Seller_Action"] = "WRITING" if chg_oi_pe>0 else ("BUYING BACK" if chg_oi_pe<0 else "HOLDING")
+    
+        # SELLER divergence interpretation
+        merged.at[i,"CE_Seller_Divergence"] = seller_price_oi_divergence(chg_oi_ce, safe_int(row.get("Vol_CE",0)), ce_price_delta, "CE")
+        merged.at[i,"PE_Seller_Divergence"] = seller_price_oi_divergence(chg_oi_pe, safe_int(row.get("Vol_PE",0)), pe_price_delta, "PE")
+    
+        # SELLER ITM/OTM interpretation
+        merged.at[i,"Seller_Interpretation"] = seller_itm_otm_interpretation(strike, atm_strike, chg_oi_ce, chg_oi_pe)
+    
+        # Greeks calculation
+        sigma_ce = iv_ce/100.0 if not np.isnan(iv_ce) and iv_ce>0 else 0.25
+        sigma_pe = iv_pe/100.0 if not np.isnan(iv_pe) and iv_pe>0 else 0.25
+    
+        try:
+            delta_ce = bs_delta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
+            gamma_ce = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
+            vega_ce = bs_vega(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
+            theta_ce = bs_theta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
+        except Exception:
+            delta_ce = gamma_ce = vega_ce = theta_ce = 0.0
+    
+        try:
+            delta_pe = bs_delta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
+            gamma_pe = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
+            vega_pe = bs_vega(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
+            theta_pe = bs_theta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
+        except Exception:
+            delta_pe = gamma_pe = vega_pe = theta_pe = 0.0
+    
+        merged.at[i,"Delta_CE"] = delta_ce
+        merged.at[i,"Gamma_CE"] = gamma_ce
+        merged.at[i,"Vega_CE"] = vega_ce
+        merged.at[i,"Theta_CE"] = theta_ce
+        merged.at[i,"Delta_PE"] = delta_pe
+        merged.at[i,"Gamma_PE"] = gamma_pe
+        merged.at[i,"Vega_PE"] = vega_pe
+        merged.at[i,"Theta_PE"] = theta_pe
+    
+        # GEX calculation (SELLER exposure)
+        oi_ce = safe_int(row.get("OI_CE",0))
+        oi_pe = safe_int(row.get("OI_PE",0))
+        notional = LOT_SIZE * spot
+        gex_ce = gamma_ce * notional * oi_ce
+        gex_pe = gamma_pe * notional * oi_pe
+        merged.at[i,"GEX_CE"] = gex_ce
+        merged.at[i,"GEX_PE"] = gex_pe
+        merged.at[i,"GEX_Net"] = gex_ce + gex_pe
+    
+        # SELLER strength score
+        merged.at[i,"Seller_Strength_Score"] = seller_strength_score(row)
+    
+        # SELLER gamma pressure
+        merged.at[i,"Seller_Gamma_Pressure"] = seller_gamma_pressure(row, atm_strike, strike_gap)
+    
+        merged.at[i,"CE_Price_Delta"] = ce_price_delta
+        merged.at[i,"PE_Price_Delta"] = pe_price_delta
+        merged.at[i,"CE_IV_Delta"] = ce_iv_delta
+        merged.at[i,"PE_IV_Delta"] = pe_iv_delta
+    
+    # Aggregations
+    total_CE_OI = merged["OI_CE"].sum()
+    total_PE_OI = merged["OI_PE"].sum()
+    total_CE_chg = merged["Chg_OI_CE"].sum()
+    total_PE_chg = merged["Chg_OI_PE"].sum()
+    
+    # SELLER activity summary
+    ce_selling = (merged["Chg_OI_CE"] > 0).sum()
+    ce_buying_back = (merged["Chg_OI_CE"] < 0).sum()
+    pe_selling = (merged["Chg_OI_PE"] > 0).sum()
+    pe_buying_back = (merged["Chg_OI_PE"] < 0).sum()
+    
+    # Greeks totals
+    total_gex_ce = merged["GEX_CE"].sum()
+    total_gex_pe = merged["GEX_PE"].sum()
+    total_gex_net = merged["GEX_Net"].sum()
+    
+    # Calculate SELLER metrics
+    seller_max_pain = calculate_seller_max_pain(merged)
+    seller_breakout_index = seller_breakout_probability_index(merged, atm_strike, strike_gap)
+    
+    # Calculate SELLER market bias
+    seller_bias_result = calculate_seller_market_bias(merged, spot, atm_strike)
+    
+    # Compute PCR
+    pcr_df = compute_pcr_df(merged)
+    
+    # Get SELLER support/resistance rankings
+    ranked_current, seller_supports_df, seller_resists_df = rank_support_resistance_seller(pcr_df)
+    
+    # Analyze spot position from SELLER perspective
+    spot_analysis = analyze_spot_position_seller(spot, ranked_current, seller_bias_result)
+    
+    nearest_sup = spot_analysis["nearest_support"]
+    nearest_res = spot_analysis["nearest_resistance"]
+    
+    # ---- Capture snapshot for moment detector ----
+    st.session_state["moment_history"].append(
+        _snapshot_from_state(get_ist_now(), spot, atm_strike, merged)
+    )
+    # Keep last 10 points
+    st.session_state["moment_history"] = st.session_state["moment_history"][-10:]
+    
+    # ---- Compute 4 moment metrics ----
+    orderbook = get_nifty_orderbook_depth()
+    orderbook_metrics = orderbook_pressure_score(orderbook) if orderbook else {"available": False, "pressure": 0.0}
+    
+    moment_metrics = {
+        "momentum_burst": compute_momentum_burst(st.session_state["moment_history"]),
+        "orderbook": orderbook_metrics,
+        "gamma_cluster": compute_gamma_cluster(merged, atm_strike, window=2),
+        "oi_accel": compute_oi_velocity_acceleration(st.session_state["moment_history"], atm_strike, window_strikes=2)
     }
     
-    # AI Analysis Tabs
-    ai_tab1, ai_tab2, ai_tab3 = st.tabs(["📊 Market Analysis", "🎯 Trade Plan", "📈 Sentiment"])
+    # Calculate entry signal with moment detector integration
+    entry_signal = calculate_entry_signal_extended(
+        spot=spot,
+        merged_df=merged,
+        atm_strike=atm_strike,
+        seller_bias_result=seller_bias_result,
+        seller_max_pain=seller_max_pain,
+        seller_supports_df=seller_supports_df,
+        seller_resists_df=seller_resists_df,
+        nearest_sup=nearest_sup,
+        nearest_res=nearest_res,
+        seller_breakout_index=seller_breakout_index,
+        moment_metrics=moment_metrics
+    )
     
-    with ai_tab1:
-        st.markdown("### 🤖 AI Market Analysis (Perplexity Sonar-Pro)")
+    # Run OI/PCR analysis
+    oi_pcr_metrics = analyze_oi_pcr_metrics(merged, spot, atm_strike)
+    
+    # Calculate expiry spike data
+    expiry_spike_data = detect_expiry_spikes(merged, spot, atm_strike, days_to_expiry, expiry)
+    
+    # Advanced spike detection (optional)
+    violent_unwinding_signals = detect_violent_unwinding(merged, spot, atm_strike)
+    gamma_spike_risk = calculate_gamma_exposure_spike(total_gex_net, days_to_expiry)
+    pinning_probability = predict_expiry_pinning_probability(
+        spot, seller_max_pain, 
+        nearest_sup["strike"] if nearest_sup else None,
+        nearest_res["strike"] if nearest_res else None
+    )
+    
+    # Check for new Telegram signal
+    telegram_signal = check_and_send_signal(
+        entry_signal, spot, seller_bias_result, 
+        seller_max_pain, nearest_sup, nearest_res, 
+        moment_metrics, seller_breakout_index, expiry, expiry_spike_data
+    )
+
+# ============================================
+# TAB 1: DASHBOARD (PRIORITY VIEW)
+# ============================================
+with tab1:
+    # ROW 1: CRITICAL METRICS (4 columns)
+    st.markdown("### 📈 CRITICAL METRICS")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("SPOT", f"₹{spot:.2f}", delta=None)
+    
+    with col2:
+        st.metric("PCR", f"{oi_pcr_metrics['pcr_total']:.2f}", 
+                 delta=oi_pcr_metrics['pcr_sentiment'].split()[0])
+    
+    with col3:
+        st.metric("SELLER BIAS", seller_bias_result["bias"].split()[0])
+    
+    with col4:
+        st.metric("CONFIDENCE", f"{entry_signal['confidence']:.0f}%")
+    
+    # ROW 2: ENTRY SIGNAL (PROMINENT)
+    st.markdown("### 🎯 ENTRY SIGNAL")
+    
+    if entry_signal["position_type"] != "NEUTRAL":
+        signal_emoji = "🚀" if entry_signal["position_type"] == "LONG" else "🐻"
+        signal_color = "#00ff88" if entry_signal["position_type"] == "LONG" else "#ff4444"
         
-        if st.button("🔄 Generate AI Analysis", key="ai_analyze"):
-            with st.spinner("🤖 AI is analyzing market conditions..."):
+        st.markdown(f"""
+        <div class="entry-signal-box">
+            <h2 style="color:{signal_color}; margin:10px 0;">{signal_emoji} {entry_signal['signal_strength']} {entry_signal['position_type']} SIGNAL</h2>
+            <div style="font-size: 1.3rem; color:#ffdd44; margin:10px 0;">
+                Confidence: {entry_signal['confidence']:.0f}%
+            </div>
+            <div style="font-size: 1.8rem; color:#ffcc00; font-weight:900; margin:15px 0;">
+                Entry: ₹{entry_signal['optimal_entry_price']:,.2f}
+            </div>
+            <div style="font-size: 1.1rem; color:#cccccc; margin:10px 0;">
+                SL: ₹{entry_signal.get('stop_loss', 'N/A'):,.2f} | TP: ₹{entry_signal.get('target', 'N/A'):,.2f}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("📭 No active entry signal. Market is neutral.")
+    
+    # ROW 3: KEY LEVELS
+    st.markdown("### 🎯 KEY LEVELS")
+    
+    col_l1, col_l2, col_l3 = st.columns(3)
+    
+    with col_l1:
+        if nearest_sup:
+            st.markdown(f"""
+            <div class="key-level-box">
+                <h4 style="color:#00ffcc; margin:0;">SUPPORT</h4>
+                <div style="font-size: 1.8rem; color:#00ffcc; font-weight:700; margin:10px 0;">
+                    ₹{nearest_sup['strike']:,}
+                </div>
+                <div style="font-size: 0.9rem; color:#cccccc;">
+                    PUT OI: {nearest_sup['oi_pe']:,}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with col_l2:
+        if seller_max_pain:
+            st.markdown(f"""
+            <div class="key-level-box">
+                <h4 style="color:#ff9900; margin:0;">MAX PAIN</h4>
+                <div style="font-size: 1.8rem; color:#ff9900; font-weight:700; margin:10px 0;">
+                    ₹{seller_max_pain:,}
+                </div>
+                <div style="font-size: 0.9rem; color:#cccccc;">
+                    Seller's preferred level
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with col_l3:
+        if nearest_res:
+            st.markdown(f"""
+            <div class="key-level-box">
+                <h4 style="color:#ff66cc; margin:0;">RESISTANCE</h4>
+                <div style="font-size: 1.8rem; color:#ff66cc; font-weight:700; margin:10px 0;">
+                    ₹{nearest_res['strike']:,}
+                </div>
+                <div style="font-size: 0.9rem; color:#cccccc;">
+                    CALL OI: {nearest_res['oi_ce']:,}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # ROW 4: MOMENT DETECTOR
+    st.markdown("### 🚀 MOMENT DETECTOR")
+    
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    
+    with col_m1:
+        mb = moment_metrics.get("momentum_burst", {})
+        if mb.get("available", False):
+            st.metric("Momentum Burst", f"{mb.get('score', 0)}/100")
+    
+    with col_m2:
+        ob = moment_metrics.get("orderbook", {})
+        if ob.get("available", False):
+            st.metric("Order Pressure", f"{ob.get('pressure', 0):+.2f}")
+    
+    with col_m3:
+        gc = moment_metrics.get("gamma_cluster", {})
+        if gc.get("available", False):
+            st.metric("Gamma Cluster", f"{gc.get('score', 0)}/100")
+    
+    with col_m4:
+        oi_accel = moment_metrics.get("oi_accel", {})
+        if oi_accel.get("available", False):
+            st.metric("OI Accel", f"{oi_accel.get('score', 0)}/100")
+    
+    # ROW 5: EXPIRY ALERT
+    if expiry_spike_data.get("active", False):
+        st.markdown("### 📅 EXPIRY ALERT")
+        
+        if expiry_spike_data["probability"] > 50:
+            alert_emoji = "🚨" if expiry_spike_data['probability'] > 70 else "⚠️"
+            
+            st.warning(f"""
+            {alert_emoji} **HIGH EXPIRY SPIKE RISK ({expiry_spike_data['probability']}%) - {expiry_spike_data['type']}**
+            
+            **Factors:**
+            {chr(10).join(['• ' + factor for factor in expiry_spike_data.get('factors', [])][:3])}
+            
+            **Key Levels:** {', '.join(expiry_spike_data.get('key_levels', [])[:2])}
+            """)
+
+# ============================================
+# TAB 2: OI/PCR ANALYTICS
+# ============================================
+with tab2:
+    st.markdown("## 📊 ENHANCED OI & PCR ANALYTICS")
+    
+    # Totals Row
+    col_t1, col_t2, col_t3 = st.columns(3)
+    
+    with col_t1:
+        st.metric("Total CALL OI", f"{oi_pcr_metrics['total_ce_oi']:,}")
+        st.metric("Δ CALL OI", f"{oi_pcr_metrics['total_ce_chg']:+,}")
+    
+    with col_t2:
+        st.metric("Total PUT OI", f"{oi_pcr_metrics['total_pe_oi']:,}")
+        st.metric("Δ PUT OI", f"{oi_pcr_metrics['total_pe_chg']:+,}")
+    
+    with col_t3:
+        st.metric("Total OI", f"{oi_pcr_metrics['total_oi']:,}")
+        st.metric("Total ΔOI", f"{oi_pcr_metrics['total_chg_oi']:+,}")
+    
+    # PCR Card
+    st.markdown("---")
+    st.markdown("### 🎯 PUT-CALL RATIO (PCR) ANALYSIS")
+    
+    col_p1, col_p2, col_p3 = st.columns(3)
+    
+    with col_p1:
+        st.metric("PCR", f"{oi_pcr_metrics['pcr_total']:.2f}")
+        st.caption(f"Sentiment: {oi_pcr_metrics['pcr_sentiment']}")
+    
+    with col_p2:
+        st.metric("PCR Change", f"{oi_pcr_metrics['pcr_chg']:+.2f}")
+        st.caption(f"{oi_pcr_metrics.get('chg_interpretation', '')}")
+    
+    with col_p3:
+        st.metric("OI Momentum", f"{oi_pcr_metrics.get('oi_momentum', 0):+.1f}%")
+        st.caption(f"{oi_pcr_metrics.get('oi_change_interpretation', '')}")
+    
+    # Concentration Analysis
+    st.markdown("---")
+    st.markdown("### 🎯 OI CONCENTRATION & SKEW")
+    
+    col_c1, col_c2, col_c3 = st.columns(3)
+    
+    with col_c1:
+        st.metric("ATM Concentration", f"{oi_pcr_metrics.get('atm_concentration_pct', 0):.1f}%")
+        st.caption(f"CALL: {oi_pcr_metrics.get('atm_ce_oi', 0):,} | PUT: {oi_pcr_metrics.get('atm_pe_oi', 0):,}")
+    
+    with col_c2:
+        if oi_pcr_metrics.get('max_ce_strike', 0) > 0:
+            st.metric("Max CALL OI", f"₹{oi_pcr_metrics['max_ce_strike']:,}")
+            st.caption(f"OI: {oi_pcr_metrics['max_ce_oi']:,}")
+    
+    with col_c3:
+        if oi_pcr_metrics.get('max_pe_strike', 0) > 0:
+            st.metric("Max PUT OI", f"₹{oi_pcr_metrics['max_pe_strike']:,}")
+            st.caption(f"OI: {oi_pcr_metrics['max_pe_oi']:,}")
+    
+    # ITM/OTM Distribution
+    with st.expander("🔍 ITM/OTM OI Distribution", expanded=False):
+        col_i1, col_i2, col_i3, col_i4 = st.columns(4)
+        
+        with col_i1:
+            st.metric("ITM CALL OI", f"{oi_pcr_metrics.get('itm_ce_oi', 0):,}")
+            st.caption("Strike < Spot")
+        
+        with col_i2:
+            st.metric("OTM CALL OI", f"{oi_pcr_metrics.get('otm_ce_oi', 0):,}")
+            st.caption("Strike > Spot")
+        
+        with col_i3:
+            st.metric("ITM PUT OI", f"{oi_pcr_metrics.get('itm_pe_oi', 0):,}")
+            st.caption("Strike > Spot")
+        
+        with col_i4:
+            st.metric("OTM PUT OI", f"{oi_pcr_metrics.get('otm_pe_oi', 0):,}")
+            st.caption("Strike < Spot")
+
+# ============================================
+# TAB 3: MOMENTUM ANALYSIS
+# ============================================
+with tab3:
+    st.markdown("## 🚀 MOMENT DETECTOR ANALYSIS")
+    
+    # Momentum Burst
+    st.markdown("### 💥 MOMENTUM BURST")
+    mb = moment_metrics.get("momentum_burst", {})
+    if mb.get("available", False):
+        col_mb1, col_mb2 = st.columns([1, 2])
+        with col_mb1:
+            st.metric("Score", f"{mb.get('score', 0)}/100")
+        with col_mb2:
+            st.info(mb.get("note", ""))
+    else:
+        st.warning("Momentum burst data unavailable")
+    
+    st.markdown("---")
+    
+    # Orderbook Pressure
+    st.markdown("### 📊 ORDERBOOK PRESSURE")
+    ob = moment_metrics.get("orderbook", {})
+    if ob.get("available", False):
+        col_ob1, col_ob2 = st.columns([1, 2])
+        with col_ob1:
+            st.metric("Pressure", f"{ob.get('pressure', 0):+.2f}")
+            st.metric("Buy Qty", f"{ob.get('buy_qty', 0):.0f}")
+            st.metric("Sell Qty", f"{ob.get('sell_qty', 0):.0f}")
+        with col_ob2:
+            pressure = ob.get('pressure', 0)
+            if pressure > 0.15:
+                st.success("**STRONG BUY PRESSURE**")
+            elif pressure < -0.15:
+                st.error("**STRONG SELL PRESSURE**")
+            else:
+                st.info("**BALANCED ORDERBOOK**")
+    else:
+        st.warning("Orderbook data unavailable")
+    
+    st.markdown("---")
+    
+    # Gamma Cluster
+    st.markdown("### 🌀 GAMMA CLUSTER")
+    gc = moment_metrics.get("gamma_cluster", {})
+    if gc.get("available", False):
+        col_gc1, col_gc2 = st.columns([1, 2])
+        with col_gc1:
+            st.metric("Score", f"{gc.get('score', 0)}/100")
+        with col_gc2:
+            if gc.get('score', 0) > 70:
+                st.success("**HIGH GAMMA CLUSTER** - Expect sharp moves")
+            elif gc.get('score', 0) > 40:
+                st.info("**MODERATE GAMMA CLUSTER**")
+            else:
+                st.warning("**LOW GAMMA CLUSTER** - Smoother moves expected")
+    else:
+        st.warning("Gamma cluster data unavailable")
+
+# ============================================
+# TAB 4: EXPIRY ANALYSIS
+# ============================================
+with tab4:
+    st.markdown("## 📅 EXPIRY SPIKE DETECTOR")
+    
+    if expiry_spike_data.get("active", False):
+        # Main spike card
+        col_e1, col_e2, col_e3 = st.columns(3)
+        
+        with col_e1:
+            st.metric("Spike Probability", f"{expiry_spike_data.get('probability', 0)}%")
+        
+        with col_e2:
+            st.metric("Spike Type", expiry_spike_data.get('type', 'N/A'))
+        
+        with col_e3:
+            st.metric("Days to Expiry", f"{expiry_spike_data.get('days_to_expiry', 0):.1f}")
+        
+        # Spike Factors
+        with st.expander("🔍 Spike Detection Factors", expanded=False):
+            if expiry_spike_data.get("factors"):
+                for factor in expiry_spike_data["factors"]:
+                    st.write(f"• {factor}")
+            else:
+                st.info("No spike factors detected")
+        
+        # Key Levels
+        with st.expander("🎯 Key Levels", expanded=False):
+            if expiry_spike_data.get("key_levels"):
+                for level in expiry_spike_data["key_levels"]:
+                    st.write(f"• {level}")
+            else:
+                st.info("No extreme levels detected")
+        
+        # Recommendations
+        st.markdown("### 🎯 TRADING STRATEGY")
+        prob = expiry_spike_data.get('probability', 0)
+        if prob > 70:
+            st.error("""
+            **HIGH SPIKE RISK - AGGRESSIVE STRATEGY:**
+            - Expect 100-200 point swings
+            - Use 2x wider stops
+            - Focus on 10:30-11:30 & 14:30-15:00
+            """)
+        elif prob > 50:
+            st.warning("""
+            **MODERATE SPIKE RISK - BALANCED STRATEGY:**
+            - Expect moderate volatility
+            - Use 1.5x wider stops
+            - Watch Max Pain closely
+            """)
+        else:
+            st.success("""
+            **LOW SPIKE RISK - NORMAL STRATEGY:**
+            - Normal trading rules apply
+            - Standard stop losses
+            - Focus on technical levels
+            """)
+    else:
+        st.info(f"""
+        **Expiry Spike Detector (Inactive)**
+        
+        Reason: {expiry_spike_data.get('message', 'Expiry >5 days away')}
+        
+        Current expiry: **{expiry}**  
+        Days to expiry: **{expiry_spike_data.get('days_to_expiry', 0):.1f}**
+        """)
+
+# ============================================
+# TAB 5: DETAILED ANALYSIS
+# ============================================
+with tab5:
+    st.markdown("## 📈 DETAILED ANALYSIS")
+    
+    # Seller Activity
+    with st.expander("📊 SELLER ACTIVITY BY STRIKE", expanded=False):
+        if not merged.empty:
+            seller_cols = ["strikePrice", "OI_CE", "Chg_OI_CE", "CE_Seller_Action", 
+                          "OI_PE", "Chg_OI_PE", "PE_Seller_Action", "Seller_Interpretation"]
+            display_df = merged[seller_cols].head(20)
+            st.dataframe(display_df, use_container_width=True)
+    
+    # Greeks
+    with st.expander("🧮 GREEKS & GEX", expanded=False):
+        if not merged.empty:
+            greeks_cols = ["strikePrice", "Delta_CE", "Gamma_CE", "Vega_CE", "GEX_CE",
+                          "Delta_PE", "Gamma_PE", "Vega_PE", "GEX_PE", "GEX_Net"]
+            display_df = merged[greeks_cols].head(20)
+            st.dataframe(display_df, use_container_width=True)
+    
+    # PCR Analysis
+    with st.expander("📈 PCR ANALYSIS", expanded=False):
+        if not ranked_current.empty:
+            pcr_cols = ["strikePrice", "OI_CE", "OI_PE", "PCR", "Chg_OI_CE", "Chg_OI_PE"]
+            display_df = ranked_current[pcr_cols].head(20)
+            st.dataframe(display_df, use_container_width=True)
+
+# ============================================
+# 🎯 TELEGRAM & AI SECTIONS (COLLAPSIBLE)
+# ============================================
+
+# Telegram Signal Section
+with st.expander("📱 TELEGRAM SIGNAL", expanded=False):
+    if telegram_signal:
+        st.success("🎯 **NEW TRADE SIGNAL GENERATED!**")
+        st.code(telegram_signal, language="markdown")
+        
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
+        with col_btn1:
+            if st.button("Copy to Clipboard", key="copy_signal"):
+                st.success("✅ Copied!")
+        with col_btn2:
+            if st.button("Send to Telegram", key="send_signal"):
+                if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                    st.info("Sending...")
+                else:
+                    st.warning("Telegram not configured")
+        with col_btn3:
+            if st.button("Save to File", key="save_signal"):
+                st.success("✅ Saved!")
+    else:
+        st.info("No active signal to send")
+
+# AI Analysis Section
+if trading_ai.is_enabled():
+    with st.expander("🧠 AI ANALYSIS", expanded=False):
+        if st.button("Generate AI Analysis", key="gen_ai"):
+            with st.spinner("🤖 AI is analyzing..."):
+                # Prepare market data for AI
+                market_data_for_ai = {
+                    'spot': spot,
+                    'atm_strike': atm_strike,
+                    'seller_bias': seller_bias_result['bias'],
+                    'max_pain': seller_max_pain if seller_max_pain else 0,
+                    'breakout_index': seller_breakout_index,
+                    'nearest_support': nearest_sup['strike'] if nearest_sup else 0,
+                    'nearest_resistance': nearest_res['strike'] if nearest_res else 0,
+                    'range_size': spot_analysis['range_size'],
+                    'total_pcr': total_PE_OI / total_CE_OI if total_CE_OI > 0 else 0,
+                    'total_ce_oi': total_CE_OI,
+                    'total_pe_oi': total_PE_OI,
+                    'total_gex': total_gex_net,
+                    'expiry': expiry,
+                    'days_to_expiry': days_to_expiry
+                }
+                
                 ai_analysis = trading_ai.generate_analysis(
                     market_data_for_ai, 
                     entry_signal, 
@@ -2874,1883 +2883,38 @@ if trading_ai.is_enabled() and enable_ai_analysis:
                 )
                 
                 if ai_analysis:
-                    st.success("✅ AI Analysis Generated!")
-                    
-                    # Store in session state
                     st.session_state["ai_analysis"] = ai_analysis
-                    
-                    # Display with nice formatting
-                    st.markdown("""
-                    <div style="
-                        background-color: #1a1f2e;
-                        padding: 20px;
-                        border-radius: 10px;
-                        border-left: 4px solid #aa00ff;
-                        margin: 10px 0;
-                        white-space: pre-wrap;
-                        font-family: 'Courier New', monospace;
-                        line-height: 1.6;
-                    ">
-                    """ + ai_analysis + "</div>", unsafe_allow_html=True)
-                    
-                    # Save analysis
-                    col_save1, col_save2 = st.columns(2)
-                    with col_save1:
-                        if st.button("💾 Save Analysis", key="save_ai_analysis"):
-                            filename = f"ai_analysis_{get_ist_datetime_str().replace(':', '-').replace(' ', '_')}.txt"
-                            with open(filename, 'w') as f:
-                                f.write(ai_analysis)
-                            st.success(f"✅ Analysis saved to {filename}")
-                    with col_save2:
-                        if st.button("📋 Copy to Clipboard", key="copy_ai_analysis"):
-                            st.info("✅ Analysis copied to clipboard!")
+                    st.success("✅ AI Analysis Generated!")
+                    st.text_area("AI Analysis", ai_analysis, height=300)
                 else:
                     st.error("❌ Failed to generate AI analysis")
         
-        # Show pre-generated analysis if available
-        elif "ai_analysis" in st.session_state:
-            st.markdown("#### 📝 Previous Analysis:")
-            st.markdown(f"""
-            <div style="
-                background-color: #1a1f2e;
-                padding: 15px;
-                border-radius: 8px;
-                border-left: 3px solid #666;
-                margin: 10px 0;
-                font-size: 0.9em;
-                max-height: 200px;
-                overflow-y: auto;
-            ">
-            {st.session_state['ai_analysis'][:500]}...
-            </div>
-            """, unsafe_allow_html=True)
-            if st.button("View Full Analysis", key="view_full"):
-                st.text_area("Full AI Analysis", st.session_state['ai_analysis'], height=300)
-    
-    with ai_tab2:
-        st.markdown("### 🎯 AI Trade Plan")
-        
-        # Risk capital input
-        risk_capital = st.number_input(
-            "Risk Capital (₹)", 
-            min_value=10000, 
-            max_value=10000000, 
-            value=100000, 
-            step=10000,
-            key="risk_capital_input"
-        )
-        
-        if st.button("📋 Generate Trade Plan", key="ai_trade_plan"):
-            with st.spinner("🤖 Creating detailed trade plan..."):
-                trade_plan = trading_ai.generate_trade_plan(entry_signal, risk_capital)
-                
-                if trade_plan:
-                    st.success("✅ Trade Plan Generated!")
-                    
-                    # Store in session state
-                    st.session_state["trade_plan"] = trade_plan
-                    
-                    # Display in columns
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("#### 📊 Position Sizing")
-                        # Calculate position size
-                        if entry_signal['stop_loss']:
-                            risk_per_trade = risk_capital * 0.02  # 2% risk per trade
-                            risk_points = abs(entry_signal['optimal_entry_price'] - entry_signal['stop_loss'])
-                            risk_per_point = 50 * spot  # Nifty lot size * spot for options
-                            position_size = int((risk_per_trade / risk_per_point) / risk_points)
-                            position_size = max(1, position_size)
-                            
-                            st.metric("Recommended Lots", position_size)
-                            st.metric("Risk per Trade", f"₹{risk_per_trade:,.0f}")
-                            st.metric("Max Risk %", "2%")
-                    
-                    with col2:
-                        st.markdown("#### 📈 AI Trade Plan")
-                        st.markdown(f"""
-                        <div style="
-                            background-color: #1a2e1a;
-                            padding: 15px;
-                            border-radius: 8px;
-                            border-left: 3px solid #00ff88;
-                            white-space: pre-wrap;
-                            line-height: 1.6;
-                        ">
-                        {trade_plan}
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    # Save trade plan
-                    col_save3, col_save4 = st.columns(2)
-                    with col_save3:
-                        if st.button("💾 Save Trade Plan", key="save_trade_plan"):
-                            filename = f"trade_plan_{get_ist_datetime_str().replace(':', '-').replace(' ', '_')}.txt"
-                            with open(filename, 'w') as f:
-                                f.write(trade_plan)
-                            st.success(f"✅ Trade plan saved to {filename}")
-                    with col_save4:
-                        if st.button("📋 Copy Trade Plan", key="copy_trade_plan"):
-                            st.info("✅ Trade plan copied to clipboard!")
-    
-    with ai_tab3:
-        st.markdown("### 📈 Market Sentiment Analysis")
-        
-        if st.button("🌡️ Analyze Sentiment", key="ai_sentiment"):
-            with st.spinner("🤖 Analyzing market sentiment..."):
-                sentiment = trading_ai.analyze_market_sentiment(market_data_for_ai)
-                
-                if sentiment:
-                    st.success("✅ Sentiment Analysis Complete!")
-                    
-                    # Store in session state
-                    st.session_state["sentiment"] = sentiment
-                    
-                    # Color code based on seller bias
-                    bias_color = {
-                        "BULLISH": "#00ff88",
-                        "BEARISH": "#ff4444", 
-                        "NEUTRAL": "#66b3ff"
-                    }
-                    
-                    current_bias = seller_bias_result['bias']
-                    color = "#66b3ff"
-                    for key in bias_color:
-                        if key in current_bias:
-                            color = bias_color[key]
-                            break
-                    
-                    st.markdown(f"""
-                    <div style="
-                        background-color: #1a1f2e;
-                        padding: 20px;
-                        border-radius: 10px;
-                        border-left: 4px solid {color};
-                        margin: 10px 0;
-                        white-space: pre-wrap;
-                        line-height: 1.6;
-                    ">
-                    <h4 style="color:{color}">🎯 Current Market Sentiment</h4>
-                    {sentiment}
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Sentiment metrics
-                    col_s1, col_s2, col_s3 = st.columns(3)
-                    with col_s1:
-                        st.metric("Seller Bias", seller_bias_result['bias'])
-                    with col_s2:
-                        pcr_val = market_data_for_ai['total_pcr']
-                        pcr_sentiment = "Bullish" if pcr_val > 1.2 else ("Bearish" if pcr_val < 0.8 else "Neutral")
-                        st.metric("PCR Sentiment", pcr_sentiment)
-                    with col_s3:
-                        gex_sentiment = "Stabilizing" if total_gex_net > 0 else "Volatile"
-                        st.metric("Gamma Sentiment", gex_sentiment)
-
-else:
-    # Show setup instructions if AI is not enabled
-    if enable_ai_analysis:
-        st.markdown("---")
-        st.markdown("## 🧠 AI ANALYSIS (Setup Required)")
-        
-        st.info("""
-        ### ⚙️ To Enable AI Analysis:
-        
-        1. **Install Perplexity package:**
-        ```bash
-        pip install perplexity-client python-dotenv
-        ```
-        
-        2. **Get Perplexity API Key:**
-           - Visit [perplexity.ai](https://www.perplexity.ai)
-           - Sign up and get your API key from dashboard
-           
-        3. **Add to Streamlit Secrets:**
-        ```toml
-        # .streamlit/secrets.toml
-        PERPLEXITY_API_KEY = "your_perplexity_api_key_here"
-        ENABLE_AI_ANALYSIS = "true"
-        ```
-        
-        4. **Restart the app**
-        
-        ### 🎯 AI Features:
-        - Real-time market analysis (Perplexity Sonar-Pro)
-        - Web-enhanced market context
-        - Trade plan generation
-        - Sentiment analysis
-        - Risk assessment
-        - Position sizing recommendations
-        """)
+        if "ai_analysis" in st.session_state:
+            st.markdown("#### Previous Analysis:")
+            st.text(st.session_state["ai_analysis"][:500] + "...")
 
 # ============================================
-# 📅 EXPIRY DATE SPIKE DETECTOR UI
+# 🎯 FINAL SUMMARY
 # ============================================
 
 st.markdown("---")
-st.markdown("## 📅 EXPIRY DATE SPIKE DETECTOR")
+st.markdown("### 📊 MARKET SUMMARY")
 
-# Main spike card
-if expiry_spike_data["active"]:
-    spike_col1, spike_col2, spike_col3 = st.columns([2, 1, 1])
-    
-    with spike_col1:
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%);
-            padding: 20px;
-            border-radius: 12px;
-            border: 3px solid {expiry_spike_data['color']};
-            margin: 10px 0;
-        ">
-            <h3 style='color:{expiry_spike_data["color"]}; margin:0;'>📅 EXPIRY SPIKE ALERT</h3>
-            <div style='font-size: 2.5rem; color:{expiry_spike_data["color"]}; font-weight:900; margin:10px 0;'>
-                {expiry_spike_data["probability"]}%
-            </div>
-            <div style='font-size: 1.3rem; color:#ffffff; margin:5px 0;'>
-                {expiry_spike_data["intensity"]}
-            </div>
-            <div style='font-size: 1.1rem; color:#ffcc00; margin:5px 0;'>
-                Type: {expiry_spike_data["type"]}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with spike_col2:
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.3);
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-        ">
-            <div style='font-size: 0.9rem; color:#cccccc;'>Days to Expiry</div>
-            <div style='font-size: 2rem; color:#ff9900; font-weight:700;'>
-                {expiry_spike_data['days_to_expiry']:.1f}
-            </div>
-            <div style='font-size: 0.8rem; color:#aaaaaa;'>
-                {expiry}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with spike_col3:
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.3);
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-        ">
-            <div style='font-size: 0.9rem; color:#cccccc;'>Spike Score</div>
-            <div style='font-size: 2rem; color:#ff00ff; font-weight:700;'>
-                {expiry_spike_data['score']}/100
-            </div>
-            <div style='font-size: 0.8rem; color:#aaaaaa;'>
-                Detection Factors
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Spike Factors
-    with st.expander("🔍 View Spike Detection Factors", expanded=False):
-        col_factors1, col_factors2 = st.columns(2)
-        
-        with col_factors1:
-            st.markdown("### ⚠️ Spike Triggers")
-            for factor in expiry_spike_data["factors"]:
-                st.markdown(f"• {factor}")
-            
-            # Violent unwinding signals
-            if violent_unwinding_signals:
-                st.markdown("### 🚨 Violent Unwinding")
-                for signal in violent_unwinding_signals:
-                    st.markdown(f"• {signal}")
-        
-        with col_factors2:
-            st.markdown("### 🎯 Key Levels")
-            if expiry_spike_data["key_levels"]:
-                for level in expiry_spike_data["key_levels"]:
-                    st.markdown(f"• {level}")
-            else:
-                st.info("No extreme levels detected")
-            
-            # Gamma spike risk
-            if gamma_spike_risk["score"] > 0:
-                st.markdown(f"### ⚡ Gamma Spike Risk")
-                st.markdown(f"• {gamma_spike_risk['message']}")
-                st.markdown(f"• Risk Level: {gamma_spike_risk['risk']}")
-            
-            # Pinning probability
-            if pinning_probability > 0:
-                st.markdown(f"### 📍 Pinning Probability")
-                st.markdown(f"• {pinning_probability}% chance of price getting stuck")
-    
-    # Historical Patterns
-    if days_to_expiry <= 3:
-        st.markdown("### 📊 Historical Expiry Patterns")
-        patterns = get_historical_expiry_patterns()
-        
-        pattern_cols = st.columns(len(patterns))
-        
-        for idx, (pattern_name, pattern_data) in enumerate(patterns.items()):
-            with pattern_cols[idx]:
-                prob_color = "#ff4444" if pattern_data["probability"] > 0.6 else "#ff9900" if pattern_data["probability"] > 0.4 else "#66b3ff"
-                st.markdown(f"""
-                <div style="
-                    background: #1a1f2e;
-                    padding: 15px;
-                    border-radius: 8px;
-                    border-left: 3px solid {prob_color};
-                    margin: 5px 0;
-                ">
-                    <div style='font-size: 0.9rem; color:#cccccc;'>{pattern_name.replace('_', ' ').title()}</div>
-                    <div style='font-size: 1.5rem; color:{prob_color}; font-weight:700;'>
-                        {pattern_data['probability']:.0%}
-                    </div>
-                    <div style='font-size: 0.8rem; color:#aaaaaa; margin-top:5px;'>
-                        {pattern_data['description']}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-    
-    # Action Recommendations
-    st.markdown("### 🎯 Expiry Day Trading Strategy")
-    
-    if expiry_spike_data["probability"] > 60:
-        st.warning("""
-        **HIGH SPIKE PROBABILITY - AGGRESSIVE STRATEGY:**
-        - Expect sharp moves (100-200 point swings)
-        - Use wider stops (1.5-2x normal)
-        - Consider straddles/strangles if IV not too high
-        - Avoid deep ITM options (gamma risk)
-        - Focus on 10:30-11:30 AM and 2:30-3:00 PM windows
-        """)
-    elif expiry_spike_data["probability"] > 40:
-        st.info("""
-        **MODERATE SPIKE RISK - BALANCED STRATEGY:**
-        - Expect moderate volatility
-        - Use normal stops with 20% buffer
-        - Prefer ATM/1st OTM strikes
-        - Watch Max Pain level closely
-        - Be ready to exit early
-        """)
-    else:
-        st.success("""
-        **LOW SPIKE RISK - NORMAL STRATEGY:**
-        - Normal trading rules apply
-        - Standard stop losses
-        - Focus on technical levels
-        - Watch for last-hour moves
-        """)
-    
-    # Gamma Risk Zone
-    if days_to_expiry <= 2:
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
-            padding: 15px;
-            border-radius: 10px;
-            border: 2px solid #00ffff;
-            margin: 10px 0;
-        ">
-            <h4 style='color:#00ffff; margin:0;'>⚠️ GAMMA RISK ZONE ACTIVE</h4>
-            <p style='color:#ffffff; margin:5px 0;'>
-                Days to expiry ≤ 2: Gamma exposure amplifies price moves.
-                Market makers' hedging can cause exaggerated swings.
-            </p>
-            <p style='color:#ffcc00; margin:5px 0;'>
-                🎯 Watch: {', '.join(expiry_spike_data['key_levels'][:3]) if expiry_spike_data['key_levels'] else 'ATM ±100 points'}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+col_sum1, col_sum2 = st.columns(2)
 
-else:
-    st.info(f"""
-    ### 📅 Expiry Spike Detector (Inactive)
-    
-    **Reason:** {expiry_spike_data['message']}
-    
-    Spike detection activates when expiry is ≤5 days away.
-    
-    Current expiry: **{expiry}**  
-    Days to expiry: **{days_to_expiry:.1f}**
-    
-    *Check back closer to expiry for spike alerts*
-    """)
-
-# ============================================
-# 🚀 TELEGRAM SIGNAL SECTION
-# ============================================
-st.markdown("---")
-st.markdown("## 📱 TELEGRAM SIGNAL GENERATION (Option 3 Format)")
-
-if telegram_signal:
-    # NEW SIGNAL DETECTED
-    st.success("🎯 **NEW TRADE SIGNAL GENERATED!**")
-    
-    # Auto-send to Telegram if enabled
-    if auto_send and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        with st.spinner("Sending to Telegram..."):
-            success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
-            if success:
-                st.success(f"✅ {message}")
-                st.balloons()
-            else:
-                st.error(f"❌ {message}")
-    
-    # Create a nice display of the signal
-    col_signal1, col_signal2 = st.columns([2, 1])
-    
-    with col_signal1:
-        st.markdown("### 📋 Telegram Signal Ready:")
-        
-        if show_signal_preview:
-            # Display formatted preview
-            st.markdown("""
-            <div style="
-                background-color: #1a1f2e;
-                padding: 15px;
-                border-radius: 10px;
-                border-left: 4px solid #0088cc;
-                margin: 10px 0;
-                font-family: monospace;
-                white-space: pre-wrap;
-            ">
-            """ + telegram_signal + "</div>", unsafe_allow_html=True)
-        else:
-            st.code(telegram_signal)
-    
-    with col_signal2:
-        st.markdown("### 📤 Send Options:")
-        
-        # Copy to clipboard
-        if st.button("📋 Copy to Clipboard", use_container_width=True, key="copy_clipboard"):
-            st.success("✅ Signal copied to clipboard!")
-            
-        # Manual send to Telegram
-        if st.button("📱 Send to Telegram", use_container_width=True, key="send_telegram"):
-            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-                success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
-                if success:
-                    st.success(f"✅ {message}")
-                else:
-                    st.error(f"❌ {message}")
-            else:
-                st.warning("Telegram credentials not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to secrets.")
-            
-        # Save to file
-        if st.button("💾 Save to File", use_container_width=True, key="save_file"):
-            filename = f"signal_{get_ist_datetime_str().replace(':', '-').replace(' ', '_')}.txt"
-            with open(filename, 'w') as f:
-                f.write(telegram_signal)
-            st.success(f"✅ Signal saved to {filename}")
-    
-    # Add signal details
-    with st.expander("📊 View Signal Details", expanded=False):
-        col_details1, col_details2 = st.columns(2)
-        
-        with col_details1:
-            st.markdown("**Position Details:**")
-            st.metric("Type", entry_signal["position_type"])
-            st.metric("Strength", entry_signal["signal_strength"])
-            st.metric("Confidence", f"{entry_signal['confidence']:.0f}%")
-            st.metric("Entry Price", f"₹{entry_signal['optimal_entry_price']:,.2f}")
-        
-        with col_details2:
-            st.markdown("**Risk Management:**")
-            st.metric("Stop Loss", f"₹{entry_signal['stop_loss']:,.2f}" if entry_signal['stop_loss'] else "N/A")
-            st.metric("Target", f"₹{entry_signal['target']:,.2f}" if entry_signal['target'] else "N/A")
-            
-            # Calculate actual risk:reward
-            if entry_signal['stop_loss'] and entry_signal['target']:
-                if entry_signal["position_type"] == "LONG":
-                    risk = abs(entry_signal['optimal_entry_price'] - entry_signal['stop_loss'])
-                    reward = abs(entry_signal['target'] - entry_signal['optimal_entry_price'])
-                else:
-                    risk = abs(entry_signal['stop_loss'] - entry_signal['optimal_entry_price'])
-                    reward = abs(entry_signal['optimal_entry_price'] - entry_signal['target'])
-                
-                if risk > 0:
-                    rr_ratio = reward / risk
-                    st.metric("Risk:Reward", f"1:{rr_ratio:.2f}")
-    
-    # Signal timestamp
-    st.caption(f"⏰ Signal generated at: {get_ist_datetime_str()}")
-    
-    # Last signal info
-    if "last_signal" in st.session_state and st.session_state["last_signal"]:
-        st.caption(f"📝 Last signal type: {st.session_state['last_signal']}")
-    
-else:
-    # No active signal
-    st.info("📭 **No active trade signal to send.**")
-    
-    # Show why no signal
-    with st.expander("ℹ️ Why no signal?", expanded=False):
-        st.markdown(f"""
-        **Current Status:**
-        - Position Type: {entry_signal['position_type']}
-        - Signal Strength: {entry_signal['signal_strength']}
-        - Confidence: {entry_signal['confidence']:.0f}%
-        - Seller Bias: {seller_bias_result['bias']}
-        - Expiry Spike Risk: {expiry_spike_data.get('probability', 0)}%
-        - PCR Sentiment: {oi_pcr_metrics['pcr_sentiment']}
-        
-        **Requirements for signal generation:**
-        ✅ Position Type ≠ NEUTRAL
-        ✅ Confidence ≥ 40%
-        ✅ Clear directional bias
-        """)
-    
-    # Show last signal if exists
-    if "last_signal" in st.session_state and st.session_state["last_signal"]:
-        st.info(f"📝 Last signal was: {st.session_state['last_signal']}")
-
-# ============================================
-# 🚀 MOMENT DETECTOR DISPLAY
-# ============================================
-
-st.markdown("---")
-st.markdown("## 🚀 MOMENT DETECTOR (Is this a real move?)")
-
-moment_col1, moment_col2, moment_col3, moment_col4 = st.columns(4)
-
-with moment_col1:
-    mb = moment_metrics["momentum_burst"]
-    if mb["available"]:
-        color = "#ff00ff" if mb["score"] > 70 else ("#ff9900" if mb["score"] > 40 else "#66b3ff")
-        st.markdown(f'''
-        <div class="moment-box">
-            <h4>💥 MOMENTUM BURST</h4>
-            <div class="moment-value" style="color:{color}">{mb["score"]}/100</div>
-            <div class="sub-info">{mb["note"]}</div>
-        </div>
-        ''', unsafe_allow_html=True)
-    else:
-        st.markdown(f'''
-        <div class="moment-box">
-            <h4>💥 MOMENTUM BURST</h4>
-            <div class="moment-value" style="color:#cccccc">N/A</div>
-            <div class="sub-info">Need more refresh points</div>
-        </div>
-        ''', unsafe_allow_html=True)
-
-with moment_col2:
-    ob = moment_metrics["orderbook"]
-    if ob["available"]:
-        pressure = ob["pressure"]
-        color = "#00ff88" if pressure > 0.15 else ("#ff4444" if pressure < -0.15 else "#66b3ff")
-        st.markdown(f'''
-        <div class="moment-box">
-            <h4>📊 ORDERBOOK PRESSURE</h4>
-            <div class="moment-value" style="color:{color}">{pressure:+.2f}</div>
-            <div class="sub-info">Buy/Sell imbalance</div>
-        </div>
-        ''', unsafe_allow_html=True)
-    else:
-        st.markdown(f'''
-        <div class="moment-box">
-            <h4>📊 ORDERBOOK PRESSURE</h4>
-            <div class="moment-value" style="color:#cccccc">N/A</div>
-            <div class="sub-info">Depth data unavailable</div>
-        </div>
-        ''', unsafe_allow_html=True)
-
-with moment_col3:
-    gc = moment_metrics["gamma_cluster"]
-    if gc["available"]:
-        color = "#ff00ff" if gc["score"] > 70 else ("#ff9900" if gc["score"] > 40 else "#66b3ff")
-        st.markdown(f'''
-        <div class="moment-box">
-            <h4>🌀 GAMMA CLUSTER</h4>
-            <div class="moment-value" style="color:{color}">{gc["score"]}/100</div>
-            <div class="sub-info">ATM ±2 concentration</div>
-        </div>
-        ''', unsafe_allow_html=True)
-    else:
-        st.markdown(f'''
-        <div class="moment-box">
-            <h4>🌀 GAMMA CLUSTER</h4>
-            <div class="moment-value" style="color:#cccccc">N/A</div>
-            <div class="sub-info">Data unavailable</div>
-        </div>
-        ''', unsafe_allow_html=True)
-
-with moment_col4:
-    oi = moment_metrics["oi_accel"]
-    if oi["available"]:
-        color = "#ff00ff" if oi["score"] > 70 else ("#ff9900" if oi["score"] > 40 else "#66b3ff")
-        st.markdown(f'''
-        <div class="moment-box">
-            <h4>⚡ OI ACCELERATION</h4>
-            <div class="moment-value" style="color:{color}">{oi["score"]}/100</div>
-            <div class="sub-info">{oi["note"]}</div>
-        </div>
-        ''', unsafe_allow_html=True)
-    else:
-        st.markdown(f'''
-        <div class="moment-box">
-            <h4>⚡ OI ACCELERATION</h4>
-            <div class="moment-value" style="color:#cccccc">N/A</div>
-            <div class="sub-info">Need more refresh points</div>
-        </div>
-        ''', unsafe_allow_html=True)
-
-# ============================================
-# 🎯 SUPER PROMINENT ENTRY SIGNAL
-# ============================================
-
-st.markdown("---")
-
-if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 40:
-    # ACTIVE SIGNAL
-    signal_bg = "#1a2e1a" if entry_signal["position_type"] == "LONG" else "#2e1a1a"
-    signal_border = "#00ff88" if entry_signal["position_type"] == "LONG" else "#ff4444"
-    signal_emoji = "🚀" if entry_signal["position_type"] == "LONG" else "🐻"
-    
-    # Create a container with custom styling
-    with st.container():
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, {signal_bg} 0%, #2a3e2a 100%);
-            padding: 30px;
-            border-radius: 20px;
-            border: 5px solid {signal_border};
-            margin: 0 auto;
-            text-align: center;
-            max-width: 900px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
-        ">
-        """, unsafe_allow_html=True)
-        
-        # Emoji and title row
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col1:
-            st.markdown(f"<div style='text-align: center; font-size: 4rem;'>{signal_emoji}</div>", unsafe_allow_html=True)
-        with col2:
-            st.markdown(f"""
-            <div style='text-align: center;'>
-                <div style='font-size: 2.8rem; font-weight: 900; color:{signal_border}; line-height: 1.2;'>
-                    {entry_signal["signal_strength"]} {entry_signal["position_type"]} SIGNAL
-                </div>
-                <div style='font-size: 1.2rem; color: #ffdd44; margin-top: 5px;'>
-                    Confidence: {entry_signal["confidence"]:.0f}%
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col3:
-            st.markdown(f"<div style='text-align: center; font-size: 4rem;'>{signal_emoji}</div>", unsafe_allow_html=True)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Optimal entry price in a separate styled container
-    st.markdown(f"""
-    <div style="
-        background: rgba(0,0,0,0.3); 
-        padding: 20px; 
-        border-radius: 10px; 
-        margin: 20px auto;
-        max-width: 900px;
-        text-align: center;
-    ">
-        <div style="font-size: 3rem; color: #ffcc00; font-weight: 900;">
-            ₹{entry_signal["optimal_entry_price"]:,.2f}
-        </div>
-        <div style="font-size: 1.3rem; color: #cccccc; margin-top: 5px;">
-            OPTIMAL ENTRY PRICE
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Stats row
-    col_stats1, col_stats2, col_stats3 = st.columns(3)
-    with col_stats1:
-        st.markdown("""
-        <div style="text-align: center;">
-            <div style="font-size: 1.1rem; color: #aaaaaa;">Current Spot</div>
-            <div style="font-size: 1.8rem; color: #ffffff; font-weight: 700;">₹""" + f"{spot:,.2f}" + """</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_stats2:
-        distance = abs(spot - entry_signal["optimal_entry_price"])
-        st.markdown(f"""
-        <div style="text-align: center;">
-            <div style="font-size: 1.1rem; color: #aaaaaa;">Distance</div>
-            <div style="font-size: 1.8rem; color: #ffaa00; font-weight: 700;">₹{distance:.2f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_stats3:
-        st.markdown(f"""
-        <div style="text-align: center;">
-            <div style="font-size: 1.1rem; color: #aaaaaa;">Direction</div>
-            <div style="font-size: 1.8rem; color: {signal_border}; font-weight: 700;">{entry_signal["position_type"]}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Moment confirmation
-    st.markdown(f"""
-    <div style="
-        margin-top: 25px; 
-        padding: 20px; 
-        background: rgba(0,0,0,0.2); 
-        border-radius: 10px;
-        max-width: 900px;
-        margin-left: auto;
-        margin-right: auto;
-    ">
-        <div style="font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px; text-align: center;">🎯 MOMENT CONFIRMATION</div>
-        <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
-            <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
-            <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
-            <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
-            <div>OI Accel: {moment_metrics['oi_accel'].get('score', 0)}/100</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # OI/PCR Confirmation
-    st.markdown(f"""
-    <div style="
-        margin-top: 25px; 
-        padding: 20px; 
-        background: rgba(0,0,0,0.2); 
-        border-radius: 10px;
-        max-width: 900px;
-        margin-left: auto;
-        margin-right: auto;
-    ">
-        <div style="font-size: 1.2rem; color: #66b3ff; margin-bottom: 10px; text-align: center;">📊 OI/PCR CONFIRMATION</div>
-        <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
-            <div>PCR: {oi_pcr_metrics['pcr_total']:.2f}</div>
-            <div>Sentiment: {oi_pcr_metrics['pcr_sentiment']}</div>
-            <div>CALL OI: {oi_pcr_metrics['total_ce_oi']:,}</div>
-            <div>PUT OI: {oi_pcr_metrics['total_pe_oi']:,}</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Action buttons
-    st.markdown("<br>", unsafe_allow_html=True)
-    action_col1, action_col2, action_col3 = st.columns([2, 1, 1])
-    
-    with action_col1:
-        if st.button(f"📊 PLACE {entry_signal['position_type']} ORDER AT ₹{entry_signal['optimal_entry_price']:,.0f}", 
-                    use_container_width=True, type="primary", key="place_order"):
-            st.success(f"✅ {entry_signal['position_type']} order queued at ₹{entry_signal['optimal_entry_price']:,.2f}")
-            st.balloons()
-    
-    with action_col2:
-        if st.button("🔔 SET PRICE ALERT", use_container_width=True, key="set_alert"):
-            st.info(f"📢 Alert set for {entry_signal['optimal_entry_price']:,.2f}")
-    
-    with action_col3:
-        if st.button("🔄 REFRESH", use_container_width=True, key="refresh"):
-            st.rerun()
-    
-    # Signal Reasons
-    with st.expander("📋 View Detailed Signal Reasoning", expanded=False):
-        for reason in entry_signal["reasons"]:
-            st.markdown(f"• {reason}")
-        
-        # Moment Detector Details
-        st.markdown("### 🚀 Moment Detector Details:")
-        for metric_name, metric_data in moment_metrics.items():
-            if metric_data.get("available", False):
-                st.markdown(f"**{metric_name.replace('_', ' ').title()}:** {metric_data.get('note', 'N/A')}")
-        
-        # OI/PCR Details
-        st.markdown("### 📊 OI/PCR Analysis:")
-        st.markdown(f"• **PCR:** {oi_pcr_metrics['pcr_total']:.2f} ({oi_pcr_metrics['pcr_sentiment']})")
-        st.markdown(f"• **OI Change:** {oi_pcr_metrics['oi_change_interpretation']}")
-        st.markdown(f"• **Max CALL OI:** ₹{oi_pcr_metrics['max_ce_strike']:,} ({oi_pcr_metrics['max_ce_oi']:,})")
-        st.markdown(f"• **Max PUT OI:** ₹{oi_pcr_metrics['max_pe_strike']:,} ({oi_pcr_metrics['max_pe_oi']:,})")
-        st.markdown(f"• **ATM Concentration:** {oi_pcr_metrics['atm_concentration_pct']:.1f}%")
-        
-        # Expiry Spike Risk
-        if expiry_spike_data["active"]:
-            st.markdown("### 📅 Expiry Spike Risk:")
-            st.markdown(f"• Probability: {expiry_spike_data['probability']}%")
-            st.markdown(f"• Type: {expiry_spike_data['type']}")
-            st.markdown(f"• Intensity: {expiry_spike_data['intensity']}")
-            if expiry_spike_data["key_levels"]:
-                st.markdown(f"• Key Levels: {', '.join(expiry_spike_data['key_levels'])}")
-    
-else:
-    # NO SIGNAL
-    with st.container():
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
-            padding: 30px;
-            border-radius: 20px;
-            border: 5px solid #666666;
-            margin: 0 auto;
-            text-align: center;
-            max-width: 900px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
-        ">
-        """, unsafe_allow_html=True)
-        
-        # Warning icon
-        st.markdown("""
-        <div style="font-size: 4rem; color: #cccccc; margin-bottom: 20px; text-align: center;">
-            ⚠️
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # No signal message
-        st.markdown("""
-        <div style="font-size: 2.5rem; font-weight: 900; color:#cccccc; line-height: 1.2; margin-bottom: 15px; text-align: center;">
-            NO CLEAR ENTRY SIGNAL
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown(f"""
-        <div style="font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin-bottom: 20px; text-align: center;">
-            Wait for Better Setup
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Current spot price
-    st.markdown(f"""
-    <div style="
-        background: rgba(0,0,0,0.3); 
-        padding: 20px; 
-        border-radius: 10px; 
-        margin: 20px auto;
-        max-width: 900px;
-        text-align: center;
-    ">
-        <div style="font-size: 2.5rem; color: #ffffff; font-weight: 700;">
-            ₹{spot:,.2f}
-        </div>
-        <div style="font-size: 1.2rem; color: #cccccc; margin-top: 5px;">
-            CURRENT SPOT PRICE
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Confidence info
-    st.markdown(f"""
-    <div style="
-        color: #aaaaaa; 
-        font-size: 1.1rem; 
-        margin-top: 20px;
-        text-align: center;
-        max-width: 900px;
-        margin-left: auto;
-        margin-right: auto;
-    ">
-        Signal Confidence: {entry_signal["confidence"]:.0f}% | 
-        Seller Bias: {seller_bias_result["bias"]} | 
-        PCR Sentiment: {oi_pcr_metrics['pcr_sentiment']} | 
-        Expiry Spike Risk: {expiry_spike_data.get('probability', 0)}%
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Moment status
-    st.markdown(f"""
-    <div style="
-        margin-top: 25px; 
-        padding: 20px; 
-        background: rgba(0,0,0,0.2); 
-        border-radius: 10px;
-        max-width: 900px;
-        margin-left: auto;
-        margin-right: auto;
-    ">
-        <div style="font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px; text-align: center;">🎯 MOMENT STATUS</div>
-        <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
-            <div>Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
-            <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
-            <div>Gamma: {moment_metrics['gamma_cluster'].get('score', 0)}/100</div>
-            <div>OI Accel: {moment_metrics['oi_accel'].get('score', 0)}/100</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # OI/PCR status
-    st.markdown(f"""
-    <div style="
-        margin-top: 25px; 
-        padding: 20px; 
-        background: rgba(0,0,0,0.2); 
-        border-radius: 10px;
-        max-width: 900px;
-        margin-left: auto;
-        margin-right: auto;
-    ">
-        <div style="font-size: 1.2rem; color: #66b3ff; margin-bottom: 10px; text-align: center;">📊 OI/PCR STATUS</div>
-        <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
-            <div>PCR: {oi_pcr_metrics['pcr_total']:.2f}</div>
-            <div>CALL OI: {oi_pcr_metrics['total_ce_oi']:,}</div>
-            <div>PUT OI: {oi_pcr_metrics['total_pe_oi']:,}</div>
-            <div>ATM Conc: {oi_pcr_metrics['atm_concentration_pct']:.1f}%</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Expandable details for no signal
-    with st.expander("🔍 Why No Signal? (Click for Details)", expanded=False):
-        col_detail1, col_detail2 = st.columns(2)
-        
-        with col_detail1:
-            st.markdown("### 📊 Current Metrics:")
-            st.metric("Seller Bias", seller_bias_result["bias"])
-            st.metric("Polarity Score", f"{seller_bias_result['polarity']:.2f}")
-            st.metric("Breakout Index", f"{seller_breakout_index}%")
-            st.metric("Signal Confidence", f"{entry_signal['confidence']:.0f}%")
-            st.metric("PCR", f"{oi_pcr_metrics['pcr_total']:.2f}")
-            st.metric("PCR Sentiment", oi_pcr_metrics['pcr_sentiment'])
-            st.metric("Expiry Spike Risk", f"{expiry_spike_data.get('probability', 0)}%")
-        
-        with col_detail2:
-            st.markdown("### 🎯 Signal Requirements:")
-            requirements = [
-                "✅ Clear directional bias (BULLISH/BEARISH)",
-                "✅ Confidence > 40%",
-                "✅ Strong moment detector scores",
-                "✅ Support/Resistance alignment",
-                "✅ Momentum burst > 50",
-                "✅ PCR alignment with bias"
-            ]
-            for req in requirements:
-                st.markdown(f"- {req}")
-            
-            st.markdown(f"""
-            ### 📈 Current Status:
-            - **Position Type**: {entry_signal["position_type"]}
-            - **Signal Strength**: {entry_signal["signal_strength"]}
-            - **Optimal Entry**: ₹{entry_signal["optimal_entry_price"]:,.2f}
-            - **PCR Sentiment**: {oi_pcr_metrics['pcr_sentiment']}
-            - **OI Skew**: CALL: {oi_pcr_metrics['call_oi_skew']}, PUT: {oi_pcr_metrics['put_oi_skew']}
-            - **Expiry in**: {days_to_expiry:.1f} days
-            """)
-
-st.markdown("---")
-
-# ============================================
-# 🎯 SELLER'S BIAS
-# ============================================
-
-st.markdown(f"""
-<div class='seller-bias-box'>
-    <h3>🎯 SELLER'S MARKET BIAS</h3>
-    <div class='bias-value' style='color:{seller_bias_result["color"]}'>
-        {seller_bias_result["bias"]}
-    </div>
-    <p>Polarity Score: {seller_bias_result["polarity"]:.2f}</p>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown(f"""
-<div class='seller-explanation'>
-    <h4>🧠 SELLER'S THINKING:</h4>
-    <p><strong>{seller_bias_result["explanation"]}</strong></p>
-    <p><strong>Action:</strong> {seller_bias_result["action"]}</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Core Metrics with OI/PCR
-st.markdown("## 📈 SELLER'S MARKET OVERVIEW")
-
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("Spot", f"₹{spot:.2f}")
-    st.metric("ATM", f"₹{atm_strike}")
-with col2:
-    st.metric("CALL Sellers", f"{ce_selling} strikes")
-    st.metric("PUT Sellers", f"{pe_selling} strikes")
-with col3:
-    st.metric("PCR", f"{oi_pcr_metrics['pcr_total']:.2f}")
-    st.metric("PCR Sentiment", oi_pcr_metrics['pcr_sentiment'])
-with col4:
+with col_sum1:
     st.metric("Total GEX", f"₹{int(total_gex_net):,}")
     st.metric("Breakout Index", f"{seller_breakout_index}%")
+    st.metric("CALL Sellers", f"{ce_selling} strikes")
+    st.metric("PUT Sellers", f"{pe_selling} strikes")
 
-# Max Pain Display
-if seller_max_pain:
-    distance_to_max_pain = abs(spot - seller_max_pain)
-    st.markdown(f"""
-    <div class='max-pain-box'>
-        <h4>🎯 SELLER'S MAX PAIN (Preferred Level)</h4>
-        <p style='font-size: 1.5rem; color: #ff9900; font-weight: bold; text-align: center;'>₹{seller_max_pain:,}</p>
-        <p style='text-align: center; color: #cccccc;'>Distance from spot: ₹{distance_to_max_pain:.2f} ({distance_to_max_pain/spot*100:.2f}%)</p>
-        <p style='text-align: center; color: #ffcc00;'>Sellers want price here to minimize losses</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-# SELLER Activity Summary with OI Context
-st.markdown("### 🔥 SELLER ACTIVITY HEATMAP WITH OI CONTEXT")
-
-seller_activity = pd.DataFrame([
-    {"Activity": "CALL Writing (Bearish)", "Strikes": ce_selling, "Total OI": f"{oi_pcr_metrics['total_ce_oi']:,}", "Bias": "BEARISH", "Color": "#ff4444"},
-    {"Activity": "CALL Buying Back (Bullish)", "Strikes": ce_buying_back, "Total OI": f"{oi_pcr_metrics['total_ce_oi']:,}", "Bias": "BULLISH", "Color": "#00ff88"},
-    {"Activity": "PUT Writing (Bullish)", "Strikes": pe_selling, "Total OI": f"{oi_pcr_metrics['total_pe_oi']:,}", "Bias": "BULLISH", "Color": "#00ff88"},
-    {"Activity": "PUT Buying Back (Bearish)", "Strikes": pe_buying_back, "Total OI": f"{oi_pcr_metrics['total_pe_oi']:,}", "Bias": "BEARISH", "Color": "#ff4444"}
-])
-
-st.dataframe(seller_activity, use_container_width=True)
-
-st.markdown("---")
-
-# ============================================
-# 🎯 SPOT POSITION - SELLER'S VIEW WITH OI/PCR
-# ============================================
-
-st.markdown("## 📍 SPOT POSITION (SELLER'S DEFENSE + OI/PCR)")
-
-col_spot, col_range = st.columns([1, 1])
-
-with col_spot:
-    st.markdown(f"""
-    <div class="spot-card">
-        <h3>🎯 CURRENT SPOT</h3>
-        <div class="spot-price">₹{spot:,.2f}</div>
-        <div class="distance">ATM: ₹{atm_strike:,}</div>
-        <div class="distance">Market Bias: <span style="color:{seller_bias_result['color']}">{seller_bias_result["bias"]}</span></div>
-        <div class="distance">PCR: <span style="color:{oi_pcr_metrics['pcr_color']}">{oi_pcr_metrics['pcr_total']:.2f}</span></div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col_range:
-    if nearest_sup and nearest_res:
-        range_size = spot_analysis["range_size"]
-        spot_position_pct = spot_analysis["spot_position_pct"]
-        range_bias = spot_analysis["range_bias"]
-        
-        st.markdown(f"""
-        <div class="spot-card">
-            <h3>📊 SELLER'S DEFENSE RANGE</h3>
-            <div class="distance">₹{nearest_sup['strike']:,} ← SPOT → ₹{nearest_res['strike']:,}</div>
-            <div class="distance">Position: {spot_position_pct:.1f}% within range</div>
-            <div class="distance">Range Width: ₹{range_size:,}</div>
-            <div class="distance" style="color:#ffcc00;">{range_bias}</div>
-            <div class="distance">ATM OI Concentration: {oi_pcr_metrics['atm_concentration_pct']:.1f}%</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-st.markdown("---")
-
-# NEAREST LEVELS WITH SELLER INTERPRETATION + OI
-st.markdown("### 🎯 NEAREST SELLER DEFENSE LEVELS WITH OI")
-
-col_ns, col_nr = st.columns(2)
-
-with col_ns:
-    st.markdown("#### 🛡️ SELLER SUPPORT BELOW")
-    
-    if nearest_sup:
-        sup = nearest_sup
-        pcr_display = f"{sup['pcr']:.2f}" if not np.isinf(sup['pcr']) else "∞"
-        
-        st.markdown(f"""
-        <div class="nearest-level">
-            <h4>💚 NEAREST SELLER SUPPORT</h4>
-            <div class="level-value">₹{sup['strike']:,}</div>
-            <div class="level-distance">⬇️ Distance: ₹{sup['distance']:.2f} ({sup['distance_pct']:.2f}%)</div>
-            <div class="sub-info">
-                <strong>SELLER ACTIVITY:</strong> {sup['seller_strength']}<br>
-                PUT OI: {sup['oi_pe']:,} | CALL OI: {sup['oi_ce']:,}<br>
-                PCR: {pcr_display} | ΔCALL: {sup['chg_oi_ce']:+,} | ΔPUT: {sup['chg_oi_pe']:+,}<br>
-                <strong>OI Skew:</strong> PUT/CALL = {sup['oi_pe']/max(sup['oi_ce'],1):.1f}x
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.info("No seller support level below spot")
-
-with col_nr:
-    st.markdown("#### ⚡ SELLER RESISTANCE ABOVE")
-    
-    if nearest_res:
-        res = nearest_res
-        pcr_display = f"{res['pcr']:.2f}" if not np.isinf(res['pcr']) else "∞"
-        
-        st.markdown(f"""
-        <div class="nearest-level">
-            <h4>🧡 NEAREST SELLER RESISTANCE</h4>
-            <div class="level-value">₹{res['strike']:,}</div>
-            <div class="level-distance">⬆️ Distance: ₹{res['distance']:.2f} ({res['distance_pct']:.2f}%)</div>
-            <div class="sub-info">
-                <strong>SELLER ACTIVITY:</strong> {res['seller_strength']}<br>
-                CALL OI: {res['oi_ce']:,} | PUT OI: {res['oi_pe']:,}<br>
-                PCR: {pcr_display} | ΔCALL: {res['chg_oi_ce']:+,} | ΔPUT: {res['chg_oi_pe']:+,}<br>
-                <strong>OI Skew:</strong> CALL/PUT = {res['oi_ce']/max(res['oi_pe'],1):.1f}x
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.info("No seller resistance level above spot")
-
-st.markdown("---")
-
-# TOP SELLER DEFENSE LEVELS WITH ENHANCED OI INFO
-st.markdown("### 🎯 TOP SELLER DEFENSE LEVELS (Strongest 3 with OI Analysis)")
-
-col_s, col_r = st.columns(2)
-
-with col_s:
-    st.markdown("#### 🛡️ STRONGEST SELLER SUPPORTS (Highest PUT OI)")
-    
-    for i, (idx, row) in enumerate(seller_supports_df.head(3).iterrows(), 1):
-        strike = int(row["strikePrice"])
-        oi_pe = int(row["OI_PE"])
-        oi_ce = int(row["OI_CE"])
-        pcr = row["PCR"]
-        pcr_display = f"{pcr:.2f}" if not np.isinf(pcr) else "∞"
-        chg_oi_pe = int(row.get("Chg_OI_PE", 0))
-        chg_oi_ce = int(row.get("Chg_OI_CE", 0))
-        
-        # Calculate OI ratios
-        total_oi = oi_pe + oi_ce
-        pe_ratio = (oi_pe / total_oi * 100) if total_oi > 0 else 0
-        
-        if pcr > 1.5:
-            seller_msg = f"Heavy PUT writing ({pe_ratio:.0f}% PUT OI) - Strong bullish defense"
-            color = "#00ff88"
-        elif pcr > 1.0:
-            seller_msg = f"Moderate PUT writing ({pe_ratio:.0f}% PUT OI) - Bullish defense"
-            color = "#00cc66"
-        else:
-            seller_msg = f"Light PUT writing ({pe_ratio:.0f}% PUT OI) - Weak defense"
-            color = "#cccccc"
-        
-        dist = abs(spot - strike)
-        dist_pct = (dist / spot * 100)
-        direction = "⬆️ Above" if strike > spot else "⬇️ Below"
-        
-        st.markdown(f'''
-        <div class="level-card">
-            <h4>Seller Support #{i}</h4>
-            <p>₹{strike:,}</p>
-            <div class="sub-info">
-                {direction}: ₹{dist:.2f} ({dist_pct:.2f}%)<br>
-                <span style="color:{color}"><strong>{seller_msg}</strong></span><br>
-                PUT OI: {oi_pe:,} | ΔPUT: {chg_oi_pe:+,}<br>
-                CALL OI: {oi_ce:,} | ΔCALL: {chg_oi_ce:+,}<br>
-                PCR: {pcr_display} | PUT%: {pe_ratio:.0f}%
-            </div>
-        </div>
-        ''', unsafe_allow_html=True)
-
-with col_r:
-    st.markdown("#### ⚡ STRONGEST SELLER RESISTANCES (Highest CALL OI)")
-    
-    for i, (idx, row) in enumerate(seller_resists_df.head(3).iterrows(), 1):
-        strike = int(row["strikePrice"])
-        oi_ce = int(row["OI_CE"])
-        oi_pe = int(row["OI_PE"])
-        pcr = row["PCR"]
-        pcr_display = f"{pcr:.2f}" if not np.isinf(pcr) else "∞"
-        chg_oi_ce = int(row.get("Chg_OI_CE", 0))
-        chg_oi_pe = int(row.get("Chg_OI_PE", 0))
-        
-        # Calculate OI ratios
-        total_oi = oi_ce + oi_pe
-        ce_ratio = (oi_ce / total_oi * 100) if total_oi > 0 else 0
-        
-        if pcr < 0.5:
-            seller_msg = f"Heavy CALL writing ({ce_ratio:.0f}% CALL OI) - Strong bearish defense"
-            color = "#ff4444"
-        elif pcr < 1.0:
-            seller_msg = f"Moderate CALL writing ({ce_ratio:.0f}% CALL OI) - Bearish defense"
-            color = "#ff6666"
-        else:
-            seller_msg = f"Light CALL writing ({ce_ratio:.0f}% CALL OI) - Weak defense"
-            color = "#cccccc"
-        
-        dist = abs(spot - strike)
-        dist_pct = (dist / spot * 100)
-        direction = "⬆️ Above" if strike > spot else "⬇️ Below"
-        
-        st.markdown(f'''
-        <div class="level-card">
-            <h4>Seller Resistance #{i}</h4>
-            <p>₹{strike:,}</p>
-            <div class="sub-info">
-                {direction}: ₹{dist:.2f} ({dist_pct:.2f}%)<br>
-                <span style="color:{color}"><strong>{seller_msg}</strong></span><br>
-                CALL OI: {oi_ce:,} | ΔCALL: {chg_oi_ce:+,}<br>
-                PUT OI: {oi_pe:,} | ΔPUT: {chg_oi_pe:+,}<br>
-                PCR: {pcr_display} | CALL%: {ce_ratio:.0f}%
-            </div>
-        </div>
-        ''', unsafe_allow_html=True)
-
-st.markdown("---")
-
-# ============================================
-# 📊 DETAILED DATA - SELLER VIEW + MOMENT + EXPIRY + OI/PCR
-# ============================================
-
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR", "🚀 Moment Analysis", "📅 Expiry Analysis", "📊 OI/PCR Analysis"])
-
-with tab1:
-    st.markdown("### 📊 SELLER ACTIVITY BY STRIKE")
-    
-    seller_cols = [
-        "strikePrice", 
-        "OI_CE", "Chg_OI_CE", "CE_Seller_Action", "CE_Seller_Divergence",
-        "OI_PE", "Chg_OI_PE", "PE_Seller_Action", "PE_Seller_Divergence",
-        "Seller_Interpretation", "Seller_Strength_Score"
-    ]
-    
-    # Ensure all columns exist
-    for col in seller_cols:
-        if col not in merged.columns:
-            merged[col] = ""
-    
-    # Color code seller actions
-    def color_seller_action(val):
-        if "WRITING" in str(val):
-            if "CALL" in str(val):
-                return "background-color: #2e1a1a; color: #ff6666"
-            else:
-                return "background-color: #1a2e1a; color: #00ff88"
-        elif "BUYING BACK" in str(val):
-            if "CALL" in str(val):
-                return "background-color: #1a2e1a; color: #00ff88"
-            else:
-                return "background-color: #2e1a1a; color: #ff6666"
-        return ""
-    
-    seller_display = merged[seller_cols].copy()
-    styled_df = seller_display.style.applymap(color_seller_action, subset=["CE_Seller_Action", "PE_Seller_Action"])
-    st.dataframe(styled_df, use_container_width=True)
-
-with tab2:
-    st.markdown("### 🧮 SELLER GREEKS & GEX EXPOSURE")
-    
-    greeks_cols = [
-        "strikePrice",
-        "Delta_CE", "Gamma_CE", "Vega_CE", "Theta_CE", "GEX_CE",
-        "Delta_PE", "Gamma_PE", "Vega_PE", "Theta_PE", "GEX_PE",
-        "GEX_Net", "Seller_Gamma_Pressure"
-    ]
-    
-    for col in greeks_cols:
-        if col not in merged.columns:
-            merged[col] = 0.0
-    
-    # Format Greek values
-    greeks_display = merged[greeks_cols].copy()
-    
-    # Color code GEX
-    def color_gex(val):
-        if val > 0:
-            return "background-color: #1a2e1a; color: #00ff88"
-        elif val < 0:
-            return "background-color: #2e1a1a; color: #ff6666"
-        return ""
-    
-    styled_greeks = greeks_display.style.applymap(color_gex, subset=["GEX_Net"])
-    st.dataframe(styled_greeks, use_container_width=True)
-    
-    # GEX Interpretation
-    st.markdown("#### 🎯 GEX INTERPRETATION (SELLER'S VIEW)")
-    if total_gex_net > 0:
-        st.success(f"**POSITIVE GEX (₹{int(total_gex_net):,}):** Sellers have POSITIVE gamma exposure. They're SHORT gamma and will BUY when price rises, SELL when price falls (stabilizing effect).")
-    elif total_gex_net < 0:
-        st.error(f"**NEGATIVE GEX (₹{int(total_gex_net):,}):** Sellers have NEGATIVE gamma exposure. They're LONG gamma and will SELL when price rises, BUY when price falls (destabilizing effect).")
-    else:
-        st.info("**NEUTRAL GEX:** Balanced seller gamma exposure.")
-
-with tab3:
-    st.markdown("### 📈 SELLER PCR ANALYSIS")
-    
-    pcr_display_cols = ["strikePrice", "OI_CE", "OI_PE", "PCR", "Chg_OI_CE", "Chg_OI_PE", "seller_support_score", "seller_resistance_score"]
-    for col in pcr_display_cols:
-        if col not in ranked_current.columns:
-            ranked_current[col] = 0
-    
-    # Create display dataframe
-    pcr_display = ranked_current[pcr_display_cols].copy()
-    pcr_display["distance_from_spot"] = abs(pcr_display["strikePrice"] - spot)
-    pcr_display["OI_Total"] = pcr_display["OI_CE"] + pcr_display["OI_PE"]
-    pcr_display["PUT_OI_Pct"] = (pcr_display["OI_PE"] / pcr_display["OI_Total"] * 100).round(1)
-    
-    # Sort by distance_from_spot BEFORE applying style
-    pcr_display = pcr_display.sort_values("distance_from_spot")
-    
-    # Color PCR values
-    def color_pcr(val):
-        if isinstance(val, (int, float)):
-            if val > 1.5:
-                return "background-color: #1a2e1a; color: #00ff88"
-            elif val > 1.0:
-                return "background-color: #2e2a1a; color: #ffcc44"
-            elif val > 0.5:
-                return "background-color: #1a1f2e; color: #66b3ff"
-            elif val <= 0.5:
-                return "background-color: #2e1a1a; color: #ff4444"
-        return ""
-    
-    # Apply style to already sorted dataframe
-    styled_pcr = pcr_display.style.applymap(color_pcr, subset=["PCR"])
-    
-    # Display without sorting again
-    st.dataframe(styled_pcr, use_container_width=True)
-    
-    # PCR Interpretation with OI context
-    avg_pcr = ranked_current["PCR"].replace([np.inf, -np.inf], np.nan).mean()
-    if not np.isnan(avg_pcr):
-        st.markdown(f"#### 🎯 AVERAGE PCR: {avg_pcr:.2f}")
-        if avg_pcr > 1.5:
-            st.success(f"**HIGH PCR (>1.5):** Heavy PUT selling relative to CALL selling. Sellers are BULLISH. PUT OI dominance: {oi_pcr_metrics['total_pe_oi']/max(oi_pcr_metrics['total_ce_oi'],1):.1f}x")
-        elif avg_pcr > 1.0:
-            st.info(f"**MODERATE PCR (1.0-1.5):** More PUT selling than CALL selling. Sellers leaning BULLISH. PUT OI: {oi_pcr_metrics['total_pe_oi']:,}")
-        elif avg_pcr > 0.5:
-            st.warning(f"**LOW PCR (0.5-1.0):** More CALL selling than PUT selling. Sellers leaning BEARISH. CALL OI: {oi_pcr_metrics['total_ce_oi']:,}")
-        else:
-            st.error(f"**VERY LOW PCR (<0.5):** Heavy CALL selling relative to PUT selling. Sellers are BEARISH. CALL OI dominance: {oi_pcr_metrics['total_ce_oi']/max(oi_pcr_metrics['total_pe_oi'],1):.1f}x")
-
-with tab4:
-    st.markdown("### 🚀 MOMENT DETECTOR ANALYSIS")
-    
-    # Momentum Burst Details
-    st.markdown("#### 💥 MOMENTUM BURST ANALYSIS")
-    mb = moment_metrics["momentum_burst"]
-    if mb["available"]:
-        col_mb1, col_mb2 = st.columns(2)
-        with col_mb1:
-            st.metric("Score", f"{mb['score']}/100")
-            if mb["score"] > 70:
-                st.success("**STRONG MOMENTUM:** High energy for directional move")
-            elif mb["score"] > 40:
-                st.info("**MODERATE MOMENTUM:** Some energy building")
-            else:
-                st.warning("**LOW MOMENTUM:** Market is calm")
-        with col_mb2:
-            st.info(f"**Note:** {mb['note']}")
-    else:
-        st.warning("Momentum burst data unavailable. Need more refresh points.")
-    
-    st.markdown("---")
-    
-    # Orderbook Pressure Details
-    st.markdown("#### 📊 ORDERBOOK PRESSURE ANALYSIS")
-    ob = moment_metrics["orderbook"]
-    if ob["available"]:
-        col_ob1, col_ob2 = st.columns(2)
-        with col_ob1:
-            st.metric("Pressure", f"{ob['pressure']:+.2f}")
-            st.metric("Buy Qty", f"{ob['buy_qty']:.0f}")
-            st.metric("Sell Qty", f"{ob['sell_qty']:.0f}")
-        with col_ob2:
-            if ob["pressure"] > 0.15:
-                st.success("**STRONG BUY PRESSURE:** More buy orders than sell orders")
-            elif ob["pressure"] < -0.15:
-                st.error("**STRONG SELL PRESSURE:** More sell orders than buy orders")
-            else:
-                st.info("**BALANCED ORDERBOOK:** Buy and sell orders are balanced")
-    else:
-        st.warning("Orderbook depth data unavailable from Dhan API.")
-    
-    st.markdown("---")
-    
-    # Gamma Cluster Details
-    st.markdown("#### 🌀 GAMMA CLUSTER ANALYSIS")
-    gc = moment_metrics["gamma_cluster"]
-    if gc["available"]:
-        col_gc1, col_gc2 = st.columns(2)
-        with col_gc1:
-            st.metric("Cluster Score", f"{gc['score']}/100")
-            st.metric("Raw Cluster Value", f"{gc['cluster']:.2f}")
-        with col_gc2:
-            if gc["score"] > 70:
-                st.success("**HIGH GAMMA CLUSTER:** Strong concentration around ATM - expect sharp moves")
-            elif gc["score"] > 40:
-                st.info("**MODERATE GAMMA CLUSTER:** Some gamma concentration")
-            else:
-                st.warning("**LOW GAMMA CLUSTER:** Gamma spread out - smoother moves expected")
-    
-    st.markdown("---")
-    
-    # OI Acceleration Details
-    st.markdown("#### ⚡ OI ACCELERATION ANALYSIS")
-    oi_accel = moment_metrics["oi_accel"]
-    if oi_accel["available"]:
-        col_oi1, col_oi2 = st.columns(2)
-        with col_oi1:
-            st.metric("Acceleration Score", f"{oi_accel['score']}/100")
-        with col_oi2:
-            st.info(f"**Note:** {oi_accel['note']}")
-            if oi_accel["score"] > 60:
-                st.success("**ACCELERATING OI:** Open interest changing rapidly - momentum building")
-            else:
-                st.info("**STEADY OI:** Open interest changes are gradual")
-
-with tab5:
-    st.markdown("### 📅 EXPIRY SPIKE ANALYSIS")
-    
-    # Expiry Spike Probability
-    st.markdown("#### 📊 SPIKE PROBABILITY BREAKDOWN")
-    
-    col_exp1, col_exp2, col_exp3 = st.columns(3)
-    
-    with col_exp1:
-        st.metric("Spike Probability", f"{expiry_spike_data.get('probability', 0)}%")
-        st.metric("Spike Score", f"{expiry_spike_data.get('score', 0)}/100")
-    
-    with col_exp2:
-        st.metric("Days to Expiry", f"{days_to_expiry:.1f}")
-        st.metric("Spike Type", expiry_spike_data.get('type', 'N/A'))
-    
-    with col_exp3:
-        intensity = expiry_spike_data.get('intensity', 'N/A')
-        intensity_color = {
-            "HIGH PROBABILITY SPIKE": "#ff0000",
-            "MODERATE SPIKE RISK": "#ff9900",
-            "LOW SPIKE RISK": "#ffff00",
-            "NO SPIKE DETECTED": "#00ff00"
-        }.get(intensity, "#cccccc")
-        
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.2);
-            padding: 10px;
-            border-radius: 8px;
-            border-left: 4px solid {intensity_color};
-            margin: 10px 0;
-        ">
-            <div style="font-size: 0.9rem; color:#cccccc;">Spike Intensity</div>
-            <div style="font-size: 1.2rem; color:{intensity_color}; font-weight:700;">{intensity}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # Spike Triggers
-    st.markdown("#### ⚠️ SPIKE TRIGGERS DETECTED")
-    if expiry_spike_data.get("factors"):
-        for factor in expiry_spike_data["factors"]:
-            st.markdown(f"• {factor}")
-    else:
-        st.info("No spike triggers detected")
-    
-    st.markdown("---")
-    
-    # Violent Unwinding
-    if violent_unwinding_signals:
-        st.markdown("#### 🚨 VIOLENT UNWINDING DETECTED")
-        for signal in violent_unwinding_signals:
-            st.markdown(f"• {signal}")
-    
-    st.markdown("---")
-    
-    # Gamma Spike Risk
-    if gamma_spike_risk["score"] > 0:
-        st.markdown("#### ⚡ GAMMA SPIKE RISK")
-        st.markdown(f"**Risk Level:** {gamma_spike_risk['risk']}")
-        st.markdown(f"**Score:** {gamma_spike_risk['score']}/100")
-        st.markdown(f"**Message:** {gamma_spike_risk['message']}")
-    
-    st.markdown("---")
-    
-    # Pinning Probability
-    if pinning_probability > 0:
-        st.markdown("#### 📍 EXPIRY PINNING PROBABILITY")
-        st.metric("Pinning Chance", f"{pinning_probability}%")
-        if pinning_probability > 50:
-            st.info("**HIGH PINNING RISK:** Price likely to get stuck near current levels")
-        elif pinning_probability > 30:
-            st.warning("**MODERATE PINNING RISK:** Some chance of price getting stuck")
-        else:
-            st.success("**LOW PINNING RISK:** Price likely to move freely")
-
-with tab6:
-    st.markdown("### 📊 COMPREHENSIVE OI/PCR ANALYSIS")
-    
-    # OI Distribution Analysis
-    st.markdown("#### 📈 OI DISTRIBUTION ANALYSIS")
-    
-    col_oi1, col_oi2, col_oi3 = st.columns(3)
-    
-    with col_oi1:
-        # CALL OI Analysis
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #ff4444;
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.1rem; color:#ff4444; font-weight:700;">CALL OI ANALYSIS</div>
-            <div style="font-size: 1.8rem; color:#ff4444; font-weight:900;">{oi_pcr_metrics['total_ce_oi']:,}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                ITM: {oi_pcr_metrics['itm_ce_oi']:,}<br>
-                OTM: {oi_pcr_metrics['otm_ce_oi']:,}<br>
-                ΔOI: {oi_pcr_metrics['total_ce_chg']:+,}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_oi2:
-        # PUT OI Analysis
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #00ff88;
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.1rem; color:#00ff88; font-weight:700;">PUT OI ANALYSIS</div>
-            <div style="font-size: 1.8rem; color:#00ff88; font-weight:900;">{oi_pcr_metrics['total_pe_oi']:,}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                ITM: {oi_pcr_metrics['itm_pe_oi']:,}<br>
-                OTM: {oi_pcr_metrics['otm_pe_oi']:,}<br>
-                ΔOI: {oi_pcr_metrics['total_pe_chg']:+,}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_oi3:
-        # Total OI Analysis
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #66b3ff;
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.1rem; color:#66b3ff; font-weight:700;">TOTAL OI ANALYSIS</div>
-            <div style="font-size: 1.8rem; color:#66b3ff; font-weight:900;">{oi_pcr_metrics['total_oi']:,}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                CALL%: {(oi_pcr_metrics['total_ce_oi']/oi_pcr_metrics['total_oi']*100):.1f}%<br>
-                PUT%: {(oi_pcr_metrics['total_pe_oi']/oi_pcr_metrics['total_oi']*100):.1f}%<br>
-                ΔTotal: {oi_pcr_metrics['total_chg_oi']:+,}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # PCR Deep Dive
-    st.markdown("#### 🎯 PCR DEEP DIVE ANALYSIS")
-    
-    col_pcr1, col_pcr2 = st.columns(2)
-    
-    with col_pcr1:
-        st.markdown("##### 📊 PCR METRICS")
-        st.metric("Current PCR", f"{oi_pcr_metrics['pcr_total']:.2f}")
-        st.metric("PCR Change", f"{oi_pcr_metrics['pcr_chg']:+.2f}")
-        st.metric("CE:PE Ratio", f"{oi_pcr_metrics['ce_pe_ratio']:.2f}:1")
-        st.metric("OI Momentum", f"{oi_pcr_metrics['oi_momentum']:+.1f}%")
-    
-    with col_pcr2:
-        st.markdown("##### 🎯 PCR INTERPRETATION")
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.2);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid {oi_pcr_metrics['pcr_color']};
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.1rem; color:{oi_pcr_metrics['pcr_color']}; font-weight:700;">
-                {oi_pcr_metrics['pcr_interpretation']}
-            </div>
-            <div style="font-size: 1rem; color:#ffffff; margin-top: 10px;">
-                <strong>Sentiment:</strong> {oi_pcr_metrics['pcr_sentiment']}<br>
-                <strong>OI Change:</strong> {oi_pcr_metrics['oi_change_interpretation']}<br>
-                <strong>PCR Change:</strong> {oi_pcr_metrics['chg_interpretation'] if oi_pcr_metrics['chg_interpretation'] else 'Stable'}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # Max OI Analysis
-    st.markdown("#### 🏆 MAX OI STRIKES ANALYSIS")
-    
-    col_max1, col_max2 = st.columns(2)
-    
-    with col_max1:
-        st.markdown("##### 📈 MAX CALL OI")
-        if oi_pcr_metrics['max_ce_strike'] > 0:
-            st.markdown(f"""
-            <div style="
-                background: #2e1a1a;
-                padding: 15px;
-                border-radius: 10px;
-                border-left: 4px solid #ff4444;
-                margin: 10px 0;
-            ">
-                <div style="font-size: 1.5rem; color:#ff4444; font-weight:700;">₹{oi_pcr_metrics['max_ce_strike']:,}</div>
-                <div style="font-size: 1.1rem; color:#ffffff;">OI: {oi_pcr_metrics['max_ce_oi']:,}</div>
-                <div style="font-size: 0.9rem; color:#cccccc;">
-                    Distance from Spot: ₹{abs(spot - oi_pcr_metrics['max_ce_strike']):.2f}<br>
-                    Position: {'Above' if oi_pcr_metrics['max_ce_strike'] > spot else 'Below'} spot
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            if oi_pcr_metrics['max_ce_strike'] > spot:
-                st.info("**CALL Wall ABOVE spot:** Strong resistance level")
-            else:
-                st.warning("**CALL Wall BELOW spot:** Unusual - could indicate trapped sellers")
-    
-    with col_max2:
-        st.markdown("##### 📉 MAX PUT OI")
-        if oi_pcr_metrics['max_pe_strike'] > 0:
-            st.markdown(f"""
-            <div style="
-                background: #1a2e1a;
-                padding: 15px;
-                border-radius: 10px;
-                border-left: 4px solid #00ff88;
-                margin: 10px 0;
-            ">
-                <div style="font-size: 1.5rem; color:#00ff88; font-weight:700;">₹{oi_pcr_metrics['max_pe_strike']:,}</div>
-                <div style="font-size: 1.1rem; color:#ffffff;">OI: {oi_pcr_metrics['max_pe_oi']:,}</div>
-                <div style="font-size: 0.9rem; color:#cccccc;">
-                    Distance from Spot: ₹{abs(spot - oi_pcr_metrics['max_pe_strike']):.2f}<br>
-                    Position: {'Above' if oi_pcr_metrics['max_pe_strike'] > spot else 'Below'} spot
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            if oi_pcr_metrics['max_pe_strike'] < spot:
-                st.info("**PUT Wall BELOW spot:** Strong support level")
-            else:
-                st.warning("**PUT Wall ABOVE spot:** Unusual - could indicate trapped buyers")
-    
-    st.markdown("---")
-    
-    # OI Skew Analysis
-    st.markdown("#### ⚖️ OI SKEW ANALYSIS")
-    
-    col_skew1, col_skew2 = st.columns(2)
-    
-    with col_skew1:
-        st.markdown("##### 📊 CALL OI SKEW")
-        skew_color = "#ff4444" if oi_pcr_metrics['call_oi_skew'] == "High" else ("#ff9900" if oi_pcr_metrics['call_oi_skew'] == "Moderate" else "#66b3ff")
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.2);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid {skew_color};
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.3rem; color:{skew_color}; font-weight:700;">{oi_pcr_metrics['call_oi_skew']}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                Concentration analysis of CALL OI across strikes<br>
-                <strong>High:</strong> OI concentrated at few strikes (potential pinning)<br>
-                <strong>Moderate:</strong> Some concentration<br>
-                <strong>Low:</strong> Evenly distributed
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_skew2:
-        st.markdown("##### 📊 PUT OI SKEW")
-        skew_color = "#00ff88" if oi_pcr_metrics['put_oi_skew'] == "High" else ("#00cc66" if oi_pcr_metrics['put_oi_skew'] == "Moderate" else "#66b3ff")
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.2);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid {skew_color};
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.3rem; color:{skew_color}; font-weight:700;">{oi_pcr_metrics['put_oi_skew']}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                Concentration analysis of PUT OI across strikes<br>
-                <strong>High:</strong> OI concentrated at few strikes (potential pinning)<br>
-                <strong>Moderate:</strong> Some concentration<br>
-                <strong>Low:</strong> Evenly distributed
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # ATM Concentration Analysis
-    st.markdown("#### 🎯 ATM CONCENTRATION ANALYSIS")
-    st.metric("ATM OI Concentration", f"{oi_pcr_metrics['atm_concentration_pct']:.1f}%")
-    
-    if oi_pcr_metrics['atm_concentration_pct'] > 40:
-        st.warning("**HIGH ATM CONCENTRATION:** Significant OI concentrated around ATM. This increases gamma risk and potential for sharp moves.")
-    elif oi_pcr_metrics['atm_concentration_pct'] > 25:
-        st.info("**MODERATE ATM CONCENTRATION:** Some OI concentration around ATM. Watch for gamma effects.")
-    else:
-        st.success("**LOW ATM CONCENTRATION:** OI spread out. Lower gamma risk, smoother price action expected.")
-
-# ============================================
-# 🎯 TRADING INSIGHTS - SELLER PERSPECTIVE + MOMENT + EXPIRY + OI/PCR
-# ============================================
-st.markdown("---")
-st.markdown("## 💡 TRADING INSIGHTS (Seller + Moment + Expiry + OI/PCR Fusion)")
-
-insight_col1, insight_col2 = st.columns(2)
-
-with insight_col1:
-    st.markdown("### 🎯 KEY OBSERVATIONS")
-    
-    # Max Pain insight
-    if seller_max_pain:
-        max_pain_insight = ""
-        if spot > seller_max_pain:
-            max_pain_insight = f"Spot ABOVE max pain (₹{seller_max_pain:,}). Sellers losing on CALLs, gaining on PUTs."
-        else:
-            max_pain_insight = f"Spot BELOW max pain (₹{seller_max_pain:,}). Sellers gaining on CALLs, losing on PUTs."
-        
-        st.info(f"**Max Pain:** {max_pain_insight}")
-    
-    # GEX insight
-    if total_gex_net > 0:
-        st.success("**Gamma Exposure:** Sellers SHORT gamma. Expect reduced volatility and mean reversion.")
-    elif total_gex_net < 0:
-        st.warning("**Gamma Exposure:** Sellers LONG gamma. Expect increased volatility and momentum moves.")
-    
-    # PCR insight with OI context
-    total_pcr = total_PE_OI / total_CE_OI if total_CE_OI > 0 else 0
-    if total_pcr > 1.5:
-        st.success(f"**Overall PCR ({total_pcr:.2f}):** Strong PUT selling dominance. Bullish seller conviction. PUT OI: {oi_pcr_metrics['total_pe_oi']:,}")
-    elif total_pcr < 0.7:
-        st.error(f"**Overall PCR ({total_pcr:.2f}):** Strong CALL selling dominance. Bearish seller conviction. CALL OI: {oi_pcr_metrics['total_ce_oi']:,}")
-    else:
-        st.info(f"**Overall PCR ({total_pcr:.2f}):** Balanced. CALL OI: {oi_pcr_metrics['total_ce_oi']:,} | PUT OI: {oi_pcr_metrics['total_pe_oi']:,}")
-    
-    # OI Concentration insight
-    if oi_pcr_metrics['atm_concentration_pct'] > 35:
-        st.warning(f"**High ATM OI Concentration ({oi_pcr_metrics['atm_concentration_pct']:.1f}%):** Gamma risk elevated. Expect whipsaws around ATM.")
-    
-    # Max OI insights
-    if oi_pcr_metrics['max_ce_oi'] > 1000000:
-        st.info(f"**Large CALL Wall at ₹{oi_pcr_metrics['max_ce_strike']:,}:** Strong resistance with {oi_pcr_metrics['max_ce_oi']:,} OI")
-    if oi_pcr_metrics['max_pe_oi'] > 1000000:
-        st.info(f"**Large PUT Wall at ₹{oi_pcr_metrics['max_pe_strike']:,}:** Strong support with {oi_pcr_metrics['max_pe_oi']:,} OI")
-    
-    # Expiry Spike insight
-    if expiry_spike_data["active"]:
-        if expiry_spike_data["probability"] > 60:
-            st.error(f"**High Expiry Spike Risk ({expiry_spike_data['probability']}%):** {expiry_spike_data['type']}")
-        elif expiry_spike_data["probability"] > 40:
-            st.warning(f"**Moderate Expiry Spike Risk ({expiry_spike_data['probability']}%):** {expiry_spike_data['type']}")
-        else:
-            st.success(f"**Low Expiry Spike Risk ({expiry_spike_data['probability']}%):** Market stable near expiry")
-    
-    # Moment Detector insights
-    st.markdown("#### 🚀 MOMENT DETECTOR INSIGHTS")
-    if moment_metrics["momentum_burst"]["score"] > 60:
-        st.success("**High Momentum Burst:** Market energy is building for a move")
-    if moment_metrics["orderbook"]["available"] and abs(moment_metrics["orderbook"]["pressure"]) > 0.15:
-        direction = "buy" if moment_metrics["orderbook"]["pressure"] > 0 else "sell"
-        st.info(f"**Strong {direction.upper()} pressure** in orderbook")
-
-with insight_col2:
-    st.markdown("### 🛡️ RISK MANAGEMENT")
-    
-    # Nearest levels insight
-    if nearest_sup and nearest_res:
-        risk_reward = (nearest_res["distance"] / nearest_sup["distance"]) if nearest_sup["distance"] > 0 else 0
-        
-        st.metric("Risk:Reward (Current Range)", f"1:{risk_reward:.2f}")
-        
-        # Stop loss suggestion with OI context
-        if seller_bias_result["bias"].startswith("BULLISH"):
-            stop_loss = f"Below seller support: ₹{nearest_sup['strike']:,} (PUT OI: {nearest_sup['oi_pe']:,})"
-            target = f"Seller resistance: ₹{nearest_res['strike']:,} (CALL OI: {nearest_res['oi_ce']:,})"
-        elif seller_bias_result["bias"].startswith("BEARISH"):
-            stop_loss = f"Above seller resistance: ₹{nearest_res['strike']:,} (CALL OI: {nearest_res['oi_ce']:,})"
-            target = f"Seller support: ₹{nearest_sup['strike']:,} (PUT OI: {nearest_sup['oi_pe']:,})"
-        else:
-            stop_loss = f"Range: ₹{nearest_sup['strike']:,} - ₹{nearest_res['strike']:,}"
-            target = "Wait for breakout"
-        
-        st.info(f"**Stop Loss:** {stop_loss}")
-        st.info(f"**Target:** {target}")
-        
-        # OI-based stop adjustment
-        if oi_pcr_metrics['max_pe_oi'] > 500000 and oi_pcr_metrics['max_pe_strike'] < spot:
-            st.info(f"**Strong PUT Support:** Consider ₹{oi_pcr_metrics['max_pe_strike']:,} as major support ({oi_pcr_metrics['max_pe_oi']:,} OI)")
-        if oi_pcr_metrics['max_ce_oi'] > 500000 and oi_pcr_metrics['max_ce_strike'] > spot:
-            st.info(f"**Strong CALL Resistance:** Consider ₹{oi_pcr_metrics['max_ce_strike']:,} as major resistance ({oi_pcr_metrics['max_ce_oi']:,} OI)")
-    
-    # Expiry-based risk adjustments with OI context
-    if expiry_spike_data["active"]:
-        st.markdown("#### 📅 EXPIRY-BASED RISK ADJUSTMENTS")
-        if expiry_spike_data["probability"] > 60:
-            st.warning("**High Spike Risk:** Use 2x wider stops, avoid overnight positions")
-            if oi_pcr_metrics['atm_concentration_pct'] > 40:
-                st.warning("**High ATM OI + Expiry:** Extreme gamma risk. Consider straddle/strangle strategies")
-        elif expiry_spike_data["probability"] > 40:
-            st.info("**Moderate Spike Risk:** Use 1.5x wider stops, be ready for volatility")
-        if days_to_expiry <= 1:
-            st.warning("**Expiry Day:** Expect whipsaws in last 2 hours, reduce position size")
-            # Check for massive OI that needs to unwind
-            if oi_pcr_metrics['total_oi'] > 5000000:
-                st.warning(f"**Large OI ({oi_pcr_metrics['total_oi']:,}) to unwind:** Expect violent moves as positions close")
-    
-    # OI-based risk adjustments
-    st.markdown("#### 📊 OI-BASED RISK ADJUSTMENTS")
-    if oi_pcr_metrics['call_oi_skew'] == "High":
-        st.warning("**High CALL OI Skew:** OI concentrated at few strikes - increased pinning risk")
-    if oi_pcr_metrics['put_oi_skew'] == "High":
-        st.warning("**High PUT OI Skew:** OI concentrated at few strikes - increased pinning risk")
-    if abs(oi_pcr_metrics['total_ce_chg']) > 100000 or abs(oi_pcr_metrics['total_pe_chg']) > 100000:
-        st.info(f"**Large OI Changes:** CALL Δ: {oi_pcr_metrics['total_ce_chg']:+,} | PUT Δ: {oi_pcr_metrics['total_pe_chg']:+,} - Momentum building")
-    
-    # Moment-based risk adjustments
-    st.markdown("#### 🚀 MOMENT-BASED RISK ADJUSTMENTS")
-    if moment_metrics["momentum_burst"]["score"] > 70:
-        st.warning("**High Momentum Alert:** Consider tighter stops due to potential sharp moves")
-    if moment_metrics["gamma_cluster"]["score"] > 70:
-        st.warning("**High Gamma Cluster:** Expect whipsaws around ATM - be prepared for volatility")
-
-# Final Seller Summary with Moment, Expiry, and OI/PCR Integration
-st.markdown("---")
-moment_summary = ""
-if moment_metrics["momentum_burst"]["score"] > 60:
-    moment_summary += "High momentum burst detected. "
-if moment_metrics["orderbook"]["available"] and abs(moment_metrics["orderbook"]["pressure"]) > 0.15:
-    direction = "buy" if moment_metrics["orderbook"]["pressure"] > 0 else "sell"
-    moment_summary += f"Strong {direction} pressure in orderbook. "
-
-expiry_summary = ""
-if expiry_spike_data["active"]:
-    if expiry_spike_data["probability"] > 60:
-        expiry_summary = f"🚨 HIGH EXPIRY SPIKE RISK ({expiry_spike_data['probability']}%) - {expiry_spike_data['type']}"
-    elif expiry_spike_data["probability"] > 40:
-        expiry_summary = f"⚠️ MODERATE EXPIRY SPIKE RISK ({expiry_spike_data['probability']}%) - {expiry_spike_data['type']}"
-    else:
-        expiry_summary = f"✅ LOW EXPIRY SPIKE RISK ({expiry_spike_data['probability']}%)"
-
-oi_pcr_summary = f"PCR: {oi_pcr_metrics['pcr_total']:.2f} ({oi_pcr_metrics['pcr_sentiment']}) | CALL OI: {oi_pcr_metrics['total_ce_oi']:,} | PUT OI: {oi_pcr_metrics['total_pe_oi']:,} | ATM Conc: {oi_pcr_metrics['atm_concentration_pct']:.1f}%"
-
-st.markdown(f'''
-<div class='seller-explanation'>
-    <h3>🎯 FINAL ASSESSMENT (Seller + Moment + Expiry + OI/PCR)</h3>
-    <p><strong>Market Makers are telling us:</strong> {seller_bias_result["explanation"]}</p>
-    <p><strong>Their game plan:</strong> {seller_bias_result["action"]}</p>
-    <p><strong>Moment Detector:</strong> {moment_summary if moment_summary else "Moment indicators neutral"}</p>
-    <p><strong>OI/PCR Analysis:</strong> {oi_pcr_summary}</p>
-    <p><strong>Expiry Context:</strong> {expiry_summary if expiry_summary else f"Expiry in {days_to_expiry:.1f} days"}</p>
-    <p><strong>Key defense levels:</strong> ₹{nearest_sup['strike'] if nearest_sup else 'N/A':,} (Support) | ₹{nearest_res['strike'] if nearest_res else 'N/A':,} (Resistance)</p>
-    <p><strong>Max OI Walls:</strong> CALL: ₹{oi_pcr_metrics['max_ce_strike']:,} | PUT: ₹{oi_pcr_metrics['max_pe_strike']:,}</p>
-    <p><strong>Preferred price level:</strong> ₹{seller_max_pain if seller_max_pain else 'N/A':,} (Max Pain)</p>
-</div>
-''', unsafe_allow_html=True)
+with col_sum2:
+    st.metric("Spot Position", f"{spot_analysis['spot_position_pct']:.1f}%")
+    st.metric("Range Bias", spot_analysis['range_bias'].split('(')[0])
+    st.metric("Range Size", f"₹{spot_analysis['range_size']:,}")
+    st.metric("Expiry", f"{expiry}")
 
 # Footer
 st.markdown("---")
-st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS** | All features enabled")
-
-# Requirements note
-st.markdown("""
-<small>
-**Requirements:** 
-`streamlit pandas numpy requests pytz scipy supabase perplexity-client python-dotenv` | 
-**AI:** Perplexity API key required | 
-**Data:** Dhan API required
-</small>
-""", unsafe_allow_html=True)
+st.caption(f"🔄 Auto-refresh: {refresh_rate if auto_refresh else 'Off'}s | ⏰ Last update: {get_ist_time_str()}")
+st.caption("🎯 **NIFTY Option Screener v6.0 — Trader-Focused Dashboard**")
