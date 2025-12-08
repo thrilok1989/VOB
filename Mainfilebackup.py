@@ -2343,24 +2343,8 @@ with st.sidebar:
     
     # Expiry spike info in sidebar
     st.markdown("---")
-    try:
-        expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
-        now = datetime.now()
-        days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)
-    except:
-        days_to_expiry = 7
     
-    if days_to_expiry <= 5:
-        st.warning(f"⚠️ Expiry in {days_to_expiry:.1f} days")
-        st.info("Spike detector ACTIVE")
-    else:
-        st.success(f"✓ Expiry in {days_to_expiry:.1f} days")
-        st.info("Spike detector INACTIVE")
-    
-    st.markdown("---")
-    st.markdown(f"**Current IST:** {get_ist_time_str()}")
-    st.markdown(f"**Date:** {get_ist_date_str()}")
-    
+    # Save interval
     save_interval = st.number_input("PCR Auto-save (sec)", value=SAVE_INTERVAL_SEC, min_value=60, step=60)
     
     # Telegram settings
@@ -2401,6 +2385,29 @@ with col2:
         st.metric("NIFTY Spot", f"₹{spot:.2f}")
         st.metric("Expiry", expiry)
 
+# Calculate days to expiry
+try:
+    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
+    now = datetime.now()
+    tau = max((expiry_dt - now).total_seconds() / (365.25*24*3600), 1/365.25)
+    days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)
+except Exception:
+    tau = 7.0/365.0
+    days_to_expiry = 7.0
+
+# Add expiry info to sidebar
+with st.sidebar:
+    if days_to_expiry <= 5:
+        st.warning(f"⚠️ Expiry in {days_to_expiry:.1f} days")
+        st.info("Spike detector ACTIVE")
+    else:
+        st.success(f"✓ Expiry in {days_to_expiry:.1f} days")
+        st.info("Spike detector INACTIVE")
+    
+    st.markdown("---")
+    st.markdown(f"**Current IST:** {get_ist_time_str()}")
+    st.markdown(f"**Date:** {get_ist_date_str()}")
+
 # Fetch option chain
 with st.spinner("Fetching option chain..."):
     chain = fetch_dhan_option_chain(expiry)
@@ -2424,16 +2431,6 @@ df_pe = df_pe[(df_pe["strikePrice"]>=lower) & (df_pe["strikePrice"]<=upper)].res
 
 merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
 merged["strikePrice"] = merged["strikePrice"].astype(int)
-
-# Compute tau and days to expiry
-try:
-    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
-    now = datetime.now()
-    tau = max((expiry_dt - now).total_seconds() / (365.25*24*3600), 1/365.25)
-    days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)
-except Exception:
-    tau = 7.0/365.0
-    days_to_expiry = 7.0
 
 # Session storage for prev LTP/IV
 if "prev_ltps_seller" not in st.session_state:
@@ -2790,19 +2787,13 @@ st.info(f"""
 """)
 
 # Add expiry context if near expiry
-try:
-    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
-    days_to_expiry = (expiry_dt - datetime.now()).days + ((expiry_dt - datetime.now()).seconds / (24*3600))
+if days_to_expiry <= 5:
+    expiry_pcr_context = analyze_pcr_for_expiry(oi_pcr_metrics['pcr_total'], days_to_expiry)
+    st.warning(f"""
+    **⚠️ Expiry Context (D-{int(days_to_expiry)}):** {expiry_pcr_context}
     
-    if days_to_expiry <= 5:
-        expiry_pcr_context = analyze_pcr_for_expiry(oi_pcr_metrics['pcr_total'], days_to_expiry)
-        st.warning(f"""
-        **⚠️ Expiry Context (D-{int(days_to_expiry)}):** {expiry_pcr_context}
-        
-        PCR readings near expiry often exaggerate due to position squaring.
-        """)
-except:
-    pass
+    PCR readings near expiry often exaggerate due to position squaring.
+    """)
 
 # ============================================
 # 📅 EXPIRY SPIKE DETECTION
@@ -4754,3 +4745,6 @@ st.markdown("""
 **Data:** Dhan API required
 </small>
 """, unsafe_allow_html=True)
+
+st.markdown("---")
+st.markdown("**🔄 Last update:** Auto-refreshing every 60 seconds")
