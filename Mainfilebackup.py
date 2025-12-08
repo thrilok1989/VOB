@@ -1,5 +1,5 @@
 """
-Nifty Option Screener v6.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS
+Nifty Option Screener v6.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS
 EVERYTHING interpreted from Option Seller/Market Maker viewpoint
 CALL building = BEARISH (sellers selling calls, expecting price to stay below)
 PUT building = BULLISH (sellers selling puts, expecting price to stay above)
@@ -10,9 +10,8 @@ NEW FEATURES ADDED:
 3. Gamma Cluster Concentration
 4. OI Velocity/Acceleration
 5. Telegram Signal Generation
-6. AI-Powered Market Analysis (Perplexity)
-7. EXPIRY SPIKE DETECTOR (NEW)
-8. ENHANCED OI/PCR ANALYTICS (NEW)
+6. EXPIRY SPIKE DETECTOR (NEW)
+7. ENHANCED OI/PCR ANALYTICS (NEW)
 """
 
 import streamlit as st
@@ -85,9 +84,6 @@ try:
     # Telegram credentials (optional)
     TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
-    # Perplexity AI credentials (optional)
-    PERPLEXITY_API_KEY = st.secrets.get("PERPLEXITY_API_KEY", "")
-    ENABLE_AI_ANALYSIS = st.secrets.get("ENABLE_AI_ANALYSIS", "false").lower() == "true"
 except Exception as e:
     st.error("❌ Missing credentials")
     st.stop()
@@ -101,308 +97,6 @@ except Exception as e:
 DHAN_BASE_URL = "https://api.dhan.co"
 NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
-
-# -----------------------
-#  AI ANALYSIS CLASS - UPDATED FOR PERPLEXITY
-# -----------------------
-class TradingAI:
-    """AI-powered trading analysis using Perplexity (Sonar model)"""
-    
-    def __init__(self, api_key=None):
-        # Set up Perplexity API
-        self.api_key = api_key or PERPLEXITY_API_KEY
-        self.enabled = bool(self.api_key) and ENABLE_AI_ANALYSIS
-        
-        if self.enabled:
-            try:
-                # Try to import Perplexity
-                try:
-                    from perplexity import Perplexity
-                    
-                    # Set the API key
-                    if not os.environ.get("PERPLEXITY_API_KEY"):
-                        os.environ["PERPLEXITY_API_KEY"] = self.api_key
-                    
-                    self.client = Perplexity()
-                    self.model = "sonar-pro"  # Using Perplexity's Sonar Pro model
-                except ImportError:
-                    st.warning("⚠️ Perplexity package not installed. Install with: pip install perplexity-client")
-                    self.enabled = False
-                except Exception as e:
-                    st.warning(f"⚠️ Perplexity initialization error: {e}")
-                    self.enabled = False
-            except Exception as e:
-                st.warning(f"⚠️ AI Analysis Disabled: {e}")
-                self.enabled = False
-    
-    def is_enabled(self):
-        return self.enabled
-    
-    def format_market_data_for_analysis(self, market_data, signal_data, moment_metrics, expiry_spike_data):
-        """Format trading data for AI analysis"""
-        
-        formatted_data = {
-            "timestamp": get_ist_datetime_str(),
-            "market_data": market_data,
-            "signal_data": {
-                "position_type": signal_data["position_type"],
-                "signal_strength": signal_data["signal_strength"],
-                "confidence": signal_data["confidence"],
-                "optimal_entry_price": signal_data["optimal_entry_price"],
-                "stop_loss": signal_data.get("stop_loss", "N/A"),
-                "target": signal_data.get("target", "N/A"),
-                "max_pain": signal_data.get("max_pain", "N/A"),
-                "nearest_support": signal_data.get("nearest_support", "N/A"),
-                "nearest_resistance": signal_data.get("nearest_resistance", "N/A")
-            },
-            "moment_metrics": moment_metrics,
-            "expiry_spike_data": expiry_spike_data
-        }
-        
-        return json.dumps(formatted_data, indent=2)
-    
-    def generate_analysis(self, market_data, signal_data, moment_metrics, expiry_spike_data):
-        """
-        Generate AI analysis of current market conditions using Perplexity
-        """
-        if not self.enabled:
-            return None
-        
-        try:
-            # Format data for analysis
-            formatted_data = self.format_market_data_for_analysis(market_data, signal_data, moment_metrics, expiry_spike_data)
-            
-            # Prepare analysis prompt
-            analysis_prompt = f"""
-            You are an expert options trader and market analyst specializing in Nifty options. 
-            Analyze the following real-time trading data and provide actionable insights:
-            
-            ====== MARKET DATA ======
-            Spot Price: ₹{market_data['spot']:,.2f}
-            ATM Strike: ₹{market_data['atm_strike']:,}
-            Seller Bias: {market_data['seller_bias']}
-            Max Pain: ₹{market_data['max_pain']:,}
-            Breakout Index: {market_data['breakout_index']}%
-            PCR: {market_data['total_pcr']:.2f}
-            Total GEX: ₹{market_data['total_gex']:,}
-            
-            ====== EXPIRY SPIKE DATA ======
-            Days to Expiry: {market_data['days_to_expiry']:.1f}
-            Spike Probability: {expiry_spike_data.get('probability', 0)}%
-            Spike Type: {expiry_spike_data.get('type', 'N/A')}
-            Spike Risk: {expiry_spike_data.get('intensity', 'N/A')}
-            
-            ====== SIGNAL DATA ======
-            Position: {signal_data['position_type']} ({signal_data['signal_strength']})
-            Confidence: {signal_data['confidence']:.0f}%
-            Entry Price: ₹{signal_data['optimal_entry_price']:,.2f}
-            Stop Loss: ₹{signal_data.get('stop_loss', 'N/A'):,.2f}
-            Target: ₹{signal_data.get('target', 'N/A'):,.2f}
-            
-            ====== KEY LEVELS ======
-            Support: ₹{market_data['nearest_support']:,}
-            Resistance: ₹{market_data['nearest_resistance']:,}
-            Range Size: ₹{market_data['range_size']:,}
-            
-            ====== MOMENT DETECTOR ======
-            Momentum Burst: {moment_metrics['momentum_burst'].get('score', 0)}/100
-            Orderbook Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}
-            Gamma Cluster: {moment_metrics['gamma_cluster'].get('score', 0)}/100
-            OI Acceleration: {moment_metrics['oi_accel'].get('score', 0)}/100
-            
-            ====== TIME CONTEXT ======
-            Current Time: {get_ist_datetime_str()}
-            Expiry: {market_data['expiry']}
-            Days to Expiry: {market_data['days_to_expiry']:.1f}
-            
-            Please analyze this setup and provide:
-            1. Key observations from seller activity and market structure
-            2. Probability assessment of the trade signal
-            3. Risk factors to watch (gamma, PCR, moment indicators)
-            4. Recommended adjustments to stop loss/target based on levels
-            5. Market context and macro factors to consider
-            6. Expiry spike risk assessment and mitigation strategies
-            
-            Be concise, professional, and data-driven. Focus on actionable insights for an options trader.
-            """
-            
-            # Call Perplexity API
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert options trader and market analyst with 20+ years of experience in Nifty options. Provide actionable, data-driven insights."
-                    },
-                    {
-                        "role": "user", 
-                        "content": analysis_prompt
-                    }
-                ],
-                max_tokens=2000
-            )
-            
-            analysis_result = response.choices[0].message.content
-            
-            # Save analysis to file
-            self.save_analysis(analysis_result, market_data, signal_data)
-            
-            return analysis_result
-            
-        except Exception as e:
-            st.error(f"AI Analysis Error: {e}")
-            return None
-    
-    def save_analysis(self, analysis, market_data, signal_data):
-        """Save AI analysis to a timestamped file"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"trading_analysis_{timestamp}.txt"
-            
-            with open(filename, "w") as f:
-                f.write(f"Timestamp: {get_ist_datetime_str()}\n")
-                f.write(f"Position: {signal_data['position_type']}\n")
-                f.write(f"Confidence: {signal_data['confidence']:.0f}%\n")
-                f.write(f"Spot: ₹{market_data['spot']:,.2f}\n")
-                f.write(f"Entry: ₹{signal_data['optimal_entry_price']:,.2f}\n")
-                f.write("\n" + "="*50 + "\n")
-                f.write("AI ANALYSIS:\n")
-                f.write("="*50 + "\n\n")
-                f.write(analysis)
-            
-            st.session_state["last_analysis_file"] = filename
-        except Exception as e:
-            st.warning(f"Could not save analysis: {e}")
-    
-    def generate_trade_plan(self, signal_data, risk_capital=100000):
-        """
-        Generate detailed trade plan with position sizing using Perplexity
-        """
-        if not self.enabled:
-            return None
-        
-        try:
-            prompt = f"""
-            Create a detailed trade plan for this Nifty options setup:
-            
-            Position: {signal_data['position_type']}
-            Entry: ₹{signal_data['optimal_entry_price']:,.2f}
-            Stop Loss: ₹{signal_data.get('stop_loss', 'N/A'):,.2f}
-            Target: ₹{signal_data.get('target', 'N/A'):,.2f}
-            Confidence: {signal_data['confidence']:.0f}%
-            
-            Risk Capital: ₹{risk_capital:,.2f}
-            Nifty Lot Size: 50
-            
-            Create a detailed trade plan including:
-            1. Recommended position size (number of lots) with calculation
-            2. Entry strategy (market vs limit order timing)
-            3. Stop loss placement rationale and adjustment rules
-            4. Profit booking strategy (partial vs full exits)
-            5. Risk per trade (% of capital) and maximum drawdown limits
-            6. Contingency plans for gap openings or news events
-            7. Position management during market hours
-            
-            Be specific and practical for Nifty options trading.
-            """
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1500
-            )
-            
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            st.error(f"Trade Plan Error: {e}")
-            return None
-    
-    def analyze_market_sentiment(self, market_data):
-        """
-        Analyze overall market sentiment using Perplexity
-        """
-        if not self.enabled:
-            return None
-        
-        try:
-            prompt = f"""
-            Analyze Nifty options market sentiment based on:
-            
-            Spot: ₹{market_data['spot']:,.2f}
-            Seller Activity: {market_data['seller_bias']}
-            PCR: {market_data['total_pcr']:.2f}
-            GEX: ₹{market_data['total_gex']:,}
-            Max Pain: ₹{market_data['max_pain']:,}
-            
-            Provide sentiment analysis covering:
-            1. Institutional positioning (FII/DII flows context)
-            2. Retail sentiment indicators
-            3. Volatility outlook (IV vs HV comparison)
-            4. Key risk events for the session
-            5. Market structure analysis (support/resistance validity)
-            6. Gamma exposure implications
-            7. PCR interpretation for next session
-            
-            Focus on practical implications for intraday options traders.
-            """
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1200
-            )
-            
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            st.error(f"Sentiment Analysis Error: {e}")
-            return None
-    
-    def analyze_historical_patterns(self, historical_data=None):
-        """
-        Analyze historical patterns for similar setups
-        """
-        if not self.enabled:
-            return None
-        
-        try:
-            prompt = """
-            Based on historical Nifty options data patterns, analyze:
-            
-            1. Similar seller bias setups and their outcomes
-            2. PCR extremes and mean reversion patterns
-            3. Gamma cluster formations and price behavior
-            4. Max Pain theory effectiveness in current expiry
-            5. Historical win rates for similar signal configurations
-            
-            Provide insights on:
-            - Probability of success for current setup
-            - Historical risk:reward ratios
-            - Best time of day for entry
-            - Common failure modes to avoid
-            """
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1000
-            )
-            
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            st.error(f"Historical Analysis Error: {e}")
-            return None
-
-# Initialize AI
-trading_ai = TradingAI(PERPLEXITY_API_KEY)
 
 # -----------------------
 #  TELEGRAM FUNCTIONS
@@ -1195,16 +889,6 @@ st.markdown(r"""
     }
     .telegram-box h3 { margin: 0; color: #00aaff; font-size: 1.4rem; }
     
-    /* AI ANALYSIS BOX */
-    .ai-box {
-        background: linear-gradient(135deg, #2e1a2e 0%, #1a1f3e 100%);
-        padding: 20px;
-        border-radius: 12px;
-        border: 3px solid #aa00ff;
-        margin: 15px 0;
-    }
-    .ai-box h3 { margin: 0; color: #aa00ff; font-size: 1.4rem; }
-    
     /* EXPIRY SPIKE DETECTOR STYLES */
     .expiry-high-risk {
         background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%) !important;
@@ -1250,7 +934,7 @@ st.markdown(r"""
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Nifty Screener v6 - Seller's Perspective + Moment Detector + AI + Expiry Spike Detector + OI/PCR Analytics", layout="wide")
+st.set_page_config(page_title="Nifty Screener v6 - Seller's Perspective + Moment Detector + Expiry Spike Detector + OI/PCR Analytics", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -2263,7 +1947,7 @@ def parse_dhan_option_chain(chain_data):
 # -----------------------
 #  MAIN APP - COMPLETE V6 WITH OI/PCR ANALYTICS
 # -----------------------
-st.title("🎯 NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + Moment Detector + AI + Expiry Spike + OI/PCR ANALYTICS")
+st.title("🎯 NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + Moment Detector + Expiry Spike + OI/PCR ANALYTICS")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -2332,15 +2016,6 @@ with st.sidebar:
     - New signal detected
     """)
     
-    st.markdown("---")
-    st.markdown("### 🧠 AI ANALYSIS")
-    if trading_ai.is_enabled():
-        st.success("✅ AI Analysis ENABLED")
-        st.metric("AI Model", "Perplexity Sonar-Pro")
-    else:
-        st.warning("⚠️ AI Analysis DISABLED")
-        st.info("Add PERPLEXITY_API_KEY to secrets to enable")
-    
     # Expiry spike info in sidebar
     st.markdown("---")
     
@@ -2352,13 +2027,6 @@ with st.sidebar:
     st.markdown("### 🤖 TELEGRAM SETTINGS")
     auto_send = st.checkbox("Auto-send signals to Telegram", value=False)
     show_signal_preview = st.checkbox("Show signal preview", value=True)
-    
-    # AI settings
-    st.markdown("---")
-    st.markdown("### 🤖 AI SETTINGS")
-    enable_ai_analysis = st.checkbox("Enable AI Analysis", value=trading_ai.is_enabled())
-    if enable_ai_analysis and not trading_ai.is_enabled():
-        st.warning("AI requires PERPLEXITY_API_KEY in secrets")
     
     if st.button("Clear Caches"):
         st.cache_data.clear()
@@ -2817,263 +2485,6 @@ telegram_signal = check_and_send_signal(
     seller_max_pain, nearest_sup, nearest_res, 
     moment_metrics, seller_breakout_index, expiry, expiry_spike_data
 )
-
-# ============================================
-# 🧠 AI ANALYSIS SECTION (PERPLEXITY)
-# ============================================
-
-if trading_ai.is_enabled() and enable_ai_analysis:
-    st.markdown("---")
-    st.markdown("## 🧠 AI-POWERED MARKET ANALYSIS (Perplexity)")
-    
-    # Prepare data for AI
-    market_data_for_ai = {
-        'spot': spot,
-        'atm_strike': atm_strike,
-        'seller_bias': seller_bias_result['bias'],
-        'max_pain': seller_max_pain if seller_max_pain else 0,
-        'breakout_index': seller_breakout_index,
-        'nearest_support': nearest_sup['strike'] if nearest_sup else 0,
-        'nearest_resistance': nearest_res['strike'] if nearest_res else 0,
-        'range_size': spot_analysis['range_size'],
-        'total_pcr': total_PE_OI / total_CE_OI if total_CE_OI > 0 else 0,
-        'total_ce_oi': total_CE_OI,
-        'total_pe_oi': total_PE_OI,
-        'ce_selling': ce_selling,
-        'pe_selling': pe_selling,
-        'total_gex': total_gex_net,
-        'expiry': expiry,
-        'days_to_expiry': days_to_expiry,
-        'enhanced_pcr': oi_pcr_metrics['pcr_total'],
-        'pcr_sentiment': oi_pcr_metrics['pcr_sentiment'],
-        'oi_concentration': oi_pcr_metrics['atm_concentration_pct']
-    }
-    
-    # AI Analysis Tabs
-    ai_tab1, ai_tab2, ai_tab3 = st.tabs(["📊 Market Analysis", "🎯 Trade Plan", "📈 Sentiment"])
-    
-    with ai_tab1:
-        st.markdown("### 🤖 AI Market Analysis (Perplexity Sonar-Pro)")
-        
-        if st.button("🔄 Generate AI Analysis", key="ai_analyze"):
-            with st.spinner("🤖 AI is analyzing market conditions..."):
-                ai_analysis = trading_ai.generate_analysis(
-                    market_data_for_ai, 
-                    entry_signal, 
-                    moment_metrics,
-                    expiry_spike_data
-                )
-                
-                if ai_analysis:
-                    st.success("✅ AI Analysis Generated!")
-                    
-                    # Store in session state
-                    st.session_state["ai_analysis"] = ai_analysis
-                    
-                    # Display with nice formatting
-                    st.markdown("""
-                    <div style="
-                        background-color: #1a1f2e;
-                        padding: 20px;
-                        border-radius: 10px;
-                        border-left: 4px solid #aa00ff;
-                        margin: 10px 0;
-                        white-space: pre-wrap;
-                        font-family: 'Courier New', monospace;
-                        line-height: 1.6;
-                    ">
-                    """ + ai_analysis + "</div>", unsafe_allow_html=True)
-                    
-                    # Save analysis
-                    col_save1, col_save2 = st.columns(2)
-                    with col_save1:
-                        if st.button("💾 Save Analysis", key="save_ai_analysis"):
-                            filename = f"ai_analysis_{get_ist_datetime_str().replace(':', '-').replace(' ', '_')}.txt"
-                            with open(filename, 'w') as f:
-                                f.write(ai_analysis)
-                            st.success(f"✅ Analysis saved to {filename}")
-                    with col_save2:
-                        if st.button("📋 Copy to Clipboard", key="copy_ai_analysis"):
-                            st.info("✅ Analysis copied to clipboard!")
-                else:
-                    st.error("❌ Failed to generate AI analysis")
-        
-        # Show pre-generated analysis if available
-        elif "ai_analysis" in st.session_state:
-            st.markdown("#### 📝 Previous Analysis:")
-            st.markdown(f"""
-            <div style="
-                background-color: #1a1f2e;
-                padding: 15px;
-                border-radius: 8px;
-                border-left: 3px solid #666;
-                margin: 10px 0;
-                font-size: 0.9em;
-                max-height: 200px;
-                overflow-y: auto;
-            ">
-            {st.session_state['ai_analysis'][:500]}...
-            </div>
-            """, unsafe_allow_html=True)
-            if st.button("View Full Analysis", key="view_full"):
-                st.text_area("Full AI Analysis", st.session_state['ai_analysis'], height=300)
-    
-    with ai_tab2:
-        st.markdown("### 🎯 AI Trade Plan")
-        
-        # Risk capital input
-        risk_capital = st.number_input(
-            "Risk Capital (₹)", 
-            min_value=10000, 
-            max_value=10000000, 
-            value=100000, 
-            step=10000,
-            key="risk_capital_input"
-        )
-        
-        if st.button("📋 Generate Trade Plan", key="ai_trade_plan"):
-            with st.spinner("🤖 Creating detailed trade plan..."):
-                trade_plan = trading_ai.generate_trade_plan(entry_signal, risk_capital)
-                
-                if trade_plan:
-                    st.success("✅ Trade Plan Generated!")
-                    
-                    # Store in session state
-                    st.session_state["trade_plan"] = trade_plan
-                    
-                    # Display in columns
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("#### 📊 Position Sizing")
-                        # Calculate position size
-                        if entry_signal['stop_loss']:
-                            risk_per_trade = risk_capital * 0.02  # 2% risk per trade
-                            risk_points = abs(entry_signal['optimal_entry_price'] - entry_signal['stop_loss'])
-                            risk_per_point = 50 * spot  # Nifty lot size * spot for options
-                            position_size = int((risk_per_trade / risk_per_point) / risk_points)
-                            position_size = max(1, position_size)
-                            
-                            st.metric("Recommended Lots", position_size)
-                            st.metric("Risk per Trade", f"₹{risk_per_trade:,.0f}")
-                            st.metric("Max Risk %", "2%")
-                    
-                    with col2:
-                        st.markdown("#### 📈 AI Trade Plan")
-                        st.markdown(f"""
-                        <div style="
-                            background-color: #1a2e1a;
-                            padding: 15px;
-                            border-radius: 8px;
-                            border-left: 3px solid #00ff88;
-                            white-space: pre-wrap;
-                            line-height: 1.6;
-                        ">
-                        {trade_plan}
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    # Save trade plan
-                    col_save3, col_save4 = st.columns(2)
-                    with col_save3:
-                        if st.button("💾 Save Trade Plan", key="save_trade_plan"):
-                            filename = f"trade_plan_{get_ist_datetime_str().replace(':', '-').replace(' ', '_')}.txt"
-                            with open(filename, 'w') as f:
-                                f.write(trade_plan)
-                            st.success(f"✅ Trade plan saved to {filename}")
-                    with col_save4:
-                        if st.button("📋 Copy Trade Plan", key="copy_trade_plan"):
-                            st.info("✅ Trade plan copied to clipboard!")
-    
-    with ai_tab3:
-        st.markdown("### 📈 Market Sentiment Analysis")
-        
-        if st.button("🌡️ Analyze Sentiment", key="ai_sentiment"):
-            with st.spinner("🤖 Analyzing market sentiment..."):
-                sentiment = trading_ai.analyze_market_sentiment(market_data_for_ai)
-                
-                if sentiment:
-                    st.success("✅ Sentiment Analysis Complete!")
-                    
-                    # Store in session state
-                    st.session_state["sentiment"] = sentiment
-                    
-                    # Color code based on seller bias
-                    bias_color = {
-                        "BULLISH": "#00ff88",
-                        "BEARISH": "#ff4444", 
-                        "NEUTRAL": "#66b3ff"
-                    }
-                    
-                    current_bias = seller_bias_result['bias']
-                    color = "#66b3ff"
-                    for key in bias_color:
-                        if key in current_bias:
-                            color = bias_color[key]
-                            break
-                    
-                    st.markdown(f"""
-                    <div style="
-                        background-color: #1a1f2e;
-                        padding: 20px;
-                        border-radius: 10px;
-                        border-left: 4px solid {color};
-                        margin: 10px 0;
-                        white-space: pre-wrap;
-                        line-height: 1.6;
-                    ">
-                    <h4 style="color:{color}">🎯 Current Market Sentiment</h4>
-                    {sentiment}
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Sentiment metrics
-                    col_s1, col_s2, col_s3 = st.columns(3)
-                    with col_s1:
-                        st.metric("Seller Bias", seller_bias_result['bias'])
-                    with col_s2:
-                        pcr_val = market_data_for_ai['total_pcr']
-                        pcr_sentiment = "Bullish" if pcr_val > 1.2 else ("Bearish" if pcr_val < 0.8 else "Neutral")
-                        st.metric("PCR Sentiment", pcr_sentiment)
-                    with col_s3:
-                        gex_sentiment = "Stabilizing" if total_gex_net > 0 else "Volatile"
-                        st.metric("Gamma Sentiment", gex_sentiment)
-
-else:
-    # Show setup instructions if AI is not enabled
-    if enable_ai_analysis:
-        st.markdown("---")
-        st.markdown("## 🧠 AI ANALYSIS (Setup Required)")
-        
-        st.info("""
-        ### ⚙️ To Enable AI Analysis:
-        
-        1. **Install Perplexity package:**
-        ```bash
-        pip install perplexity-client python-dotenv
-        ```
-        
-        2. **Get Perplexity API Key:**
-           - Visit [perplexity.ai](https://www.perplexity.ai)
-           - Sign up and get your API key from dashboard
-           
-        3. **Add to Streamlit Secrets:**
-        ```toml
-        # .streamlit/secrets.toml
-        PERPLEXITY_API_KEY = "your_perplexity_api_key_here"
-        ENABLE_AI_ANALYSIS = "true"
-        ```
-        
-        4. **Restart the app**
-        
-        ### 🎯 AI Features:
-        - Real-time market analysis (Perplexity Sonar-Pro)
-        - Web-enhanced market context
-        - Trade plan generation
-        - Sentiment analysis
-        - Risk assessment
-        - Position sizing recommendations
-        """)
 
 # ============================================
 # 📅 EXPIRY DATE SPIKE DETECTOR UI
@@ -4081,7 +3492,7 @@ st.markdown("---")
 # 📊 DETAILED DATA - SELLER VIEW + MOMENT + EXPIRY + OI/PCR
 # ============================================
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR", "🚀 Moment Analysis", "📅 Expiry Analysis", "📊 OI/PCR Analysis"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR", "🚀 Moment Analysis", "📅 Expiry Analysis"])
 
 with tab1:
     st.markdown("### 📊 SELLER ACTIVITY BY STRIKE")
@@ -4356,224 +3767,6 @@ with tab5:
         else:
             st.success("**LOW PINNING RISK:** Price likely to move freely")
 
-with tab6:
-    st.markdown("### 📊 COMPREHENSIVE OI/PCR ANALYSIS")
-    
-    # OI Distribution Analysis
-    st.markdown("#### 📈 OI DISTRIBUTION ANALYSIS")
-    
-    col_oi1, col_oi2, col_oi3 = st.columns(3)
-    
-    with col_oi1:
-        # CALL OI Analysis
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #ff4444;
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.1rem; color:#ff4444; font-weight:700;">CALL OI ANALYSIS</div>
-            <div style="font-size: 1.8rem; color:#ff4444; font-weight:900;">{oi_pcr_metrics['total_ce_oi']:,}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                ITM: {oi_pcr_metrics['itm_ce_oi']:,}<br>
-                OTM: {oi_pcr_metrics['otm_ce_oi']:,}<br>
-                ΔOI: {oi_pcr_metrics['total_ce_chg']:+,}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_oi2:
-        # PUT OI Analysis
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #00ff88;
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.1rem; color:#00ff88; font-weight:700;">PUT OI ANALYSIS</div>
-            <div style="font-size: 1.8rem; color:#00ff88; font-weight:900;">{oi_pcr_metrics['total_pe_oi']:,}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                ITM: {oi_pcr_metrics['itm_pe_oi']:,}<br>
-                OTM: {oi_pcr_metrics['otm_pe_oi']:,}<br>
-                ΔOI: {oi_pcr_metrics['total_pe_chg']:+,}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_oi3:
-        # Total OI Analysis
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #66b3ff;
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.1rem; color:#66b3ff; font-weight:700;">TOTAL OI ANALYSIS</div>
-            <div style="font-size: 1.8rem; color:#66b3ff; font-weight:900;">{oi_pcr_metrics['total_oi']:,}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                CALL%: {(oi_pcr_metrics['total_ce_oi']/oi_pcr_metrics['total_oi']*100):.1f}%<br>
-                PUT%: {(oi_pcr_metrics['total_pe_oi']/oi_pcr_metrics['total_oi']*100):.1f}%<br>
-                ΔTotal: {oi_pcr_metrics['total_chg_oi']:+,}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # PCR Deep Dive
-    st.markdown("#### 🎯 PCR DEEP DIVE ANALYSIS")
-    
-    col_pcr1, col_pcr2 = st.columns(2)
-    
-    with col_pcr1:
-        st.markdown("##### 📊 PCR METRICS")
-        st.metric("Current PCR", f"{oi_pcr_metrics['pcr_total']:.2f}")
-        st.metric("PCR Change", f"{oi_pcr_metrics['pcr_chg']:+.2f}")
-        st.metric("CE:PE Ratio", f"{oi_pcr_metrics['ce_pe_ratio']:.2f}:1")
-        st.metric("OI Momentum", f"{oi_pcr_metrics['oi_momentum']:+.1f}%")
-    
-    with col_pcr2:
-        st.markdown("##### 🎯 PCR INTERPRETATION")
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.2);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid {oi_pcr_metrics['pcr_color']};
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.1rem; color:{oi_pcr_metrics['pcr_color']}; font-weight:700;">
-                {oi_pcr_metrics['pcr_interpretation']}
-            </div>
-            <div style="font-size: 1rem; color:#ffffff; margin-top: 10px;">
-                <strong>Sentiment:</strong> {oi_pcr_metrics['pcr_sentiment']}<br>
-                <strong>OI Change:</strong> {oi_pcr_metrics['oi_change_interpretation']}<br>
-                <strong>PCR Change:</strong> {oi_pcr_metrics['chg_interpretation'] if oi_pcr_metrics['chg_interpretation'] else 'Stable'}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # Max OI Analysis
-    st.markdown("#### 🏆 MAX OI STRIKES ANALYSIS")
-    
-    col_max1, col_max2 = st.columns(2)
-    
-    with col_max1:
-        st.markdown("##### 📈 MAX CALL OI")
-        if oi_pcr_metrics['max_ce_strike'] > 0:
-            st.markdown(f"""
-            <div style="
-                background: #2e1a1a;
-                padding: 15px;
-                border-radius: 10px;
-                border-left: 4px solid #ff4444;
-                margin: 10px 0;
-            ">
-                <div style="font-size: 1.5rem; color:#ff4444; font-weight:700;">₹{oi_pcr_metrics['max_ce_strike']:,}</div>
-                <div style="font-size: 1.1rem; color:#ffffff;">OI: {oi_pcr_metrics['max_ce_oi']:,}</div>
-                <div style="font-size: 0.9rem; color:#cccccc;">
-                    Distance from Spot: ₹{abs(spot - oi_pcr_metrics['max_ce_strike']):.2f}<br>
-                    Position: {'Above' if oi_pcr_metrics['max_ce_strike'] > spot else 'Below'} spot
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            if oi_pcr_metrics['max_ce_strike'] > spot:
-                st.info("**CALL Wall ABOVE spot:** Strong resistance level")
-            else:
-                st.warning("**CALL Wall BELOW spot:** Unusual - could indicate trapped sellers")
-    
-    with col_max2:
-        st.markdown("##### 📉 MAX PUT OI")
-        if oi_pcr_metrics['max_pe_strike'] > 0:
-            st.markdown(f"""
-            <div style="
-                background: #1a2e1a;
-                padding: 15px;
-                border-radius: 10px;
-                border-left: 4px solid #00ff88;
-                margin: 10px 0;
-            ">
-                <div style="font-size: 1.5rem; color:#00ff88; font-weight:700;">₹{oi_pcr_metrics['max_pe_strike']:,}</div>
-                <div style="font-size: 1.1rem; color:#ffffff;">OI: {oi_pcr_metrics['max_pe_oi']:,}</div>
-                <div style="font-size: 0.9rem; color:#cccccc;">
-                    Distance from Spot: ₹{abs(spot - oi_pcr_metrics['max_pe_strike']):.2f}<br>
-                    Position: {'Above' if oi_pcr_metrics['max_pe_strike'] > spot else 'Below'} spot
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            if oi_pcr_metrics['max_pe_strike'] < spot:
-                st.info("**PUT Wall BELOW spot:** Strong support level")
-            else:
-                st.warning("**PUT Wall ABOVE spot:** Unusual - could indicate trapped buyers")
-    
-    st.markdown("---")
-    
-    # OI Skew Analysis
-    st.markdown("#### ⚖️ OI SKEW ANALYSIS")
-    
-    col_skew1, col_skew2 = st.columns(2)
-    
-    with col_skew1:
-        st.markdown("##### 📊 CALL OI SKEW")
-        skew_color = "#ff4444" if oi_pcr_metrics['call_oi_skew'] == "High" else ("#ff9900" if oi_pcr_metrics['call_oi_skew'] == "Moderate" else "#66b3ff")
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.2);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid {skew_color};
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.3rem; color:{skew_color}; font-weight:700;">{oi_pcr_metrics['call_oi_skew']}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                Concentration analysis of CALL OI across strikes<br>
-                <strong>High:</strong> OI concentrated at few strikes (potential pinning)<br>
-                <strong>Moderate:</strong> Some concentration<br>
-                <strong>Low:</strong> Evenly distributed
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_skew2:
-        st.markdown("##### 📊 PUT OI SKEW")
-        skew_color = "#00ff88" if oi_pcr_metrics['put_oi_skew'] == "High" else ("#00cc66" if oi_pcr_metrics['put_oi_skew'] == "Moderate" else "#66b3ff")
-        st.markdown(f"""
-        <div style="
-            background: rgba(0,0,0,0.2);
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid {skew_color};
-            margin: 10px 0;
-        ">
-            <div style="font-size: 1.3rem; color:{skew_color}; font-weight:700;">{oi_pcr_metrics['put_oi_skew']}</div>
-            <div style="font-size: 0.9rem; color:#cccccc;">
-                Concentration analysis of PUT OI across strikes<br>
-                <strong>High:</strong> OI concentrated at few strikes (potential pinning)<br>
-                <strong>Moderate:</strong> Some concentration<br>
-                <strong>Low:</strong> Evenly distributed
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # ATM Concentration Analysis
-    st.markdown("#### 🎯 ATM CONCENTRATION ANALYSIS")
-    st.metric("ATM OI Concentration", f"{oi_pcr_metrics['atm_concentration_pct']:.1f}%")
-    
-    if oi_pcr_metrics['atm_concentration_pct'] > 40:
-        st.warning("**HIGH ATM CONCENTRATION:** Significant OI concentrated around ATM. This increases gamma risk and potential for sharp moves.")
-    elif oi_pcr_metrics['atm_concentration_pct'] > 25:
-        st.info("**MODERATE ATM CONCENTRATION:** Some OI concentration around ATM. Watch for gamma effects.")
-    else:
-        st.success("**LOW ATM CONCENTRATION:** OI spread out. Lower gamma risk, smoother price action expected.")
-
 # ============================================
 # 🎯 TRADING INSIGHTS - SELLER PERSPECTIVE + MOMENT + EXPIRY + OI/PCR
 # ============================================
@@ -4734,14 +3927,13 @@ st.markdown(f'''
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + AI ANALYSIS + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS** | All features enabled")
+st.caption("🎯 **NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS** | All features enabled")
 
 # Requirements note
 st.markdown("""
 <small>
 **Requirements:** 
-`streamlit pandas numpy requests pytz scipy supabase perplexity-client python-dotenv` | 
-**AI:** Perplexity API key required | 
+`streamlit pandas numpy requests pytz scipy supabase python-dotenv` | 
 **Data:** Dhan API required
 </small>
 """, unsafe_allow_html=True)
