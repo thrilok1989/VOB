@@ -1,17 +1,21 @@
 """
-Nifty Option Screener v6.0 — 100% SELLER'S PERSPECTIVE + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS
+Nifty Option Screener v7.0 — 100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS
 EVERYTHING interpreted from Option Seller/Market Maker viewpoint
 CALL building = BEARISH (sellers selling calls, expecting price to stay below)
 PUT building = BULLISH (sellers selling puts, expecting price to stay above)
 
 NEW FEATURES ADDED:
-1. Momentum Burst Detection
-2. Orderbook Pressure Analysis
-3. Gamma Cluster Concentration
-4. OI Velocity/Acceleration
-5. Telegram Signal Generation
-6. EXPIRY SPIKE DETECTOR (NEW)
-7. ENHANCED OI/PCR ANALYTICS (NEW)
+1. Comprehensive ATM Bias Analysis (12 metrics)
+2. Multi-dimensional Bias Dashboard
+3. Support/Resistance Bias Analysis
+4. Enhanced Entry Signals with Bias Integration
+5. Momentum Burst Detection
+6. Orderbook Pressure Analysis
+7. Gamma Cluster Concentration
+8. OI Velocity/Acceleration
+9. Telegram Signal Generation
+10. Expiry Spike Detector
+11. Enhanced OI/PCR Analytics
 """
 
 import streamlit as st
@@ -98,6 +102,674 @@ DHAN_BASE_URL = "https://api.dhan.co"
 NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
 
+# ============================================
+# 🎯 ATM BIAS ANALYZER (NEW)
+# ============================================
+def analyze_atm_bias(merged_df, spot, atm_strike, strike_gap):
+    """
+    Analyze ATM bias from multiple perspectives for sellers
+    """
+    
+    # Define ATM window (±2 strikes around ATM)
+    atm_window = 2
+    atm_strikes = [s for s in merged_df["strikePrice"] 
+                  if abs(s - atm_strike) <= (atm_window * strike_gap)]
+    
+    atm_df = merged_df[merged_df["strikePrice"].isin(atm_strikes)].copy()
+    
+    if atm_df.empty:
+        return None
+    
+    # Initialize bias scores
+    bias_scores = {
+        "OI_Bias": 0,
+        "ChgOI_Bias": 0,
+        "Volume_Bias": 0,
+        "Delta_Bias": 0,
+        "Gamma_Bias": 0,
+        "Premium_Bias": 0,
+        "IV_Bias": 0,
+        "Delta_Exposure_Bias": 0,
+        "Gamma_Exposure_Bias": 0,
+        "IV_Skew_Bias": 0,
+        "OI_Change_Bias": 0
+    }
+    
+    bias_interpretations = {}
+    bias_emojis = {}
+    
+    # 1. OI BIAS (CALL vs PUT OI)
+    total_ce_oi_atm = atm_df["OI_CE"].sum()
+    total_pe_oi_atm = atm_df["OI_PE"].sum()
+    oi_ratio = total_pe_oi_atm / max(total_ce_oi_atm, 1)
+    
+    if oi_ratio > 1.5:
+        bias_scores["OI_Bias"] = 1
+        bias_interpretations["OI_Bias"] = "Heavy PUT OI at ATM → Bullish sellers"
+        bias_emojis["OI_Bias"] = "🐂 Bullish"
+    elif oi_ratio > 1.0:
+        bias_scores["OI_Bias"] = 0.5
+        bias_interpretations["OI_Bias"] = "Moderate PUT OI → Mild bullish"
+        bias_emojis["OI_Bias"] = "🐂 Bullish"
+    elif oi_ratio < 0.7:
+        bias_scores["OI_Bias"] = -1
+        bias_interpretations["OI_Bias"] = "Heavy CALL OI at ATM → Bearish sellers"
+        bias_emojis["OI_Bias"] = "🐻 Bearish"
+    elif oi_ratio < 1.0:
+        bias_scores["OI_Bias"] = -0.5
+        bias_interpretations["OI_Bias"] = "Moderate CALL OI → Mild bearish"
+        bias_emojis["OI_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["OI_Bias"] = 0
+        bias_interpretations["OI_Bias"] = "Balanced OI → Neutral"
+        bias_emojis["OI_Bias"] = "⚖️ Neutral"
+    
+    # 2. CHANGE IN OI BIAS (CALL vs PUT ΔOI)
+    total_ce_chg_atm = atm_df["Chg_OI_CE"].sum()
+    total_pe_chg_atm = atm_df["Chg_OI_PE"].sum()
+    
+    if total_pe_chg_atm > 0 and total_ce_chg_atm > 0:
+        # Both sides writing
+        if total_pe_chg_atm > total_ce_chg_atm:
+            bias_scores["ChgOI_Bias"] = 0.5
+            bias_interpretations["ChgOI_Bias"] = "More PUT writing → Bullish buildup"
+            bias_emojis["ChgOI_Bias"] = "🐂 Bullish"
+        else:
+            bias_scores["ChgOI_Bias"] = -0.5
+            bias_interpretations["ChgOI_Bias"] = "More CALL writing → Bearish buildup"
+            bias_emojis["ChgOI_Bias"] = "🐻 Bearish"
+    elif total_pe_chg_atm > 0:
+        bias_scores["ChgOI_Bias"] = 1
+        bias_interpretations["ChgOI_Bias"] = "Only PUT writing → Strong bullish"
+        bias_emojis["ChgOI_Bias"] = "🐂 Bullish"
+    elif total_ce_chg_atm > 0:
+        bias_scores["ChgOI_Bias"] = -1
+        bias_interpretations["ChgOI_Bias"] = "Only CALL writing → Strong bearish"
+        bias_emojis["ChgOI_Bias"] = "🐻 Bearish"
+    elif total_pe_chg_atm < 0 and total_ce_chg_atm < 0:
+        # Both sides unwinding
+        bias_scores["ChgOI_Bias"] = 0
+        bias_interpretations["ChgOI_Bias"] = "Both unwinding → Range contraction"
+        bias_emojis["ChgOI_Bias"] = "⚖️ Neutral"
+    else:
+        bias_scores["ChgOI_Bias"] = 0
+        bias_interpretations["ChgOI_Bias"] = "Mixed activity"
+        bias_emojis["ChgOI_Bias"] = "⚖️ Neutral"
+    
+    # 3. VOLUME BIAS (CALL vs PUT Volume)
+    total_ce_vol_atm = atm_df["Vol_CE"].sum()
+    total_pe_vol_atm = atm_df["Vol_PE"].sum()
+    vol_ratio = total_pe_vol_atm / max(total_ce_vol_atm, 1)
+    
+    if vol_ratio > 1.3:
+        bias_scores["Volume_Bias"] = 1
+        bias_interpretations["Volume_Bias"] = "High PUT volume → Bullish activity"
+        bias_emojis["Volume_Bias"] = "🐂 Bullish"
+    elif vol_ratio > 1.0:
+        bias_scores["Volume_Bias"] = 0.5
+        bias_interpretations["Volume_Bias"] = "More PUT volume → Mild bullish"
+        bias_emojis["Volume_Bias"] = "🐂 Bullish"
+    elif vol_ratio < 0.8:
+        bias_scores["Volume_Bias"] = -1
+        bias_interpretations["Volume_Bias"] = "High CALL volume → Bearish activity"
+        bias_emojis["Volume_Bias"] = "🐻 Bearish"
+    elif vol_ratio < 1.0:
+        bias_scores["Volume_Bias"] = -0.5
+        bias_interpretations["Volume_Bias"] = "More CALL volume → Mild bearish"
+        bias_emojis["Volume_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["Volume_Bias"] = 0
+        bias_interpretations["Volume_Bias"] = "Balanced volume"
+        bias_emojis["Volume_Bias"] = "⚖️ Neutral"
+    
+    # 4. DELTA BIAS (Net Delta Position)
+    total_delta_ce = atm_df["Delta_CE"].sum()
+    total_delta_pe = atm_df["Delta_PE"].sum()
+    net_delta = total_delta_ce + total_delta_pe  # CALL delta positive, PUT delta negative
+    
+    if net_delta > 0.3:
+        bias_scores["Delta_Bias"] = -1  # Positive delta = CALL heavy = Bearish for sellers
+        bias_interpretations["Delta_Bias"] = "Positive delta → CALL heavy → Bearish"
+        bias_emojis["Delta_Bias"] = "🐻 Bearish"
+    elif net_delta > 0.1:
+        bias_scores["Delta_Bias"] = -0.5
+        bias_interpretations["Delta_Bias"] = "Mild positive delta → Slightly bearish"
+        bias_emojis["Delta_Bias"] = "🐻 Bearish"
+    elif net_delta < -0.3:
+        bias_scores["Delta_Bias"] = 1  # Negative delta = PUT heavy = Bullish for sellers
+        bias_interpretations["Delta_Bias"] = "Negative delta → PUT heavy → Bullish"
+        bias_emojis["Delta_Bias"] = "🐂 Bullish"
+    elif net_delta < -0.1:
+        bias_scores["Delta_Bias"] = 0.5
+        bias_interpretations["Delta_Bias"] = "Mild negative delta → Slightly bullish"
+        bias_emojis["Delta_Bias"] = "🐂 Bullish"
+    else:
+        bias_scores["Delta_Bias"] = 0
+        bias_interpretations["Delta_Bias"] = "Neutral delta"
+        bias_emojis["Delta_Bias"] = "⚖️ Neutral"
+    
+    # 5. GAMMA BIAS (Net Gamma Position)
+    total_gamma_ce = atm_df["Gamma_CE"].sum()
+    total_gamma_pe = atm_df["Gamma_PE"].sum()
+    net_gamma = total_gamma_ce + total_gamma_pe
+    
+    # For sellers: Positive gamma = stabilizing, Negative gamma = explosive
+    if net_gamma > 0.1:
+        bias_scores["Gamma_Bias"] = 1
+        bias_interpretations["Gamma_Bias"] = "Positive gamma → Stabilizing → Bullish (less volatility)"
+        bias_emojis["Gamma_Bias"] = "🐂 Bullish"
+    elif net_gamma > 0:
+        bias_scores["Gamma_Bias"] = 0.5
+        bias_interpretations["Gamma_Bias"] = "Mild positive gamma → Slightly stabilizing"
+        bias_emojis["Gamma_Bias"] = "🐂 Bullish"
+    elif net_gamma < -0.1:
+        bias_scores["Gamma_Bias"] = -1
+        bias_interpretations["Gamma_Bias"] = "Negative gamma → Explosive → Bearish (high volatility)"
+        bias_emojis["Gamma_Bias"] = "🐻 Bearish"
+    elif net_gamma < 0:
+        bias_scores["Gamma_Bias"] = -0.5
+        bias_interpretations["Gamma_Bias"] = "Mild negative gamma → Slightly explosive"
+        bias_emojis["Gamma_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["Gamma_Bias"] = 0
+        bias_interpretations["Gamma_Bias"] = "Neutral gamma"
+        bias_emojis["Gamma_Bias"] = "⚖️ Neutral"
+    
+    # 6. PREMIUM BIAS (CALL vs PUT Premium)
+    # Calculate average premium
+    ce_premium = atm_df["LTP_CE"].mean() if not atm_df["LTP_CE"].isna().all() else 0
+    pe_premium = atm_df["LTP_PE"].mean() if not atm_df["LTP_PE"].isna().all() else 0
+    premium_ratio = pe_premium / max(ce_premium, 0.01)
+    
+    if premium_ratio > 1.2:
+        bias_scores["Premium_Bias"] = 1
+        bias_interpretations["Premium_Bias"] = "PUT premium higher → Bullish sentiment"
+        bias_emojis["Premium_Bias"] = "🐂 Bullish"
+    elif premium_ratio > 1.0:
+        bias_scores["Premium_Bias"] = 0.5
+        bias_interpretations["Premium_Bias"] = "PUT premium slightly higher → Mild bullish"
+        bias_emojis["Premium_Bias"] = "🐂 Bullish"
+    elif premium_ratio < 0.8:
+        bias_scores["Premium_Bias"] = -1
+        bias_interpretations["Premium_Bias"] = "CALL premium higher → Bearish sentiment"
+        bias_emojis["Premium_Bias"] = "🐻 Bearish"
+    elif premium_ratio < 1.0:
+        bias_scores["Premium_Bias"] = -0.5
+        bias_interpretations["Premium_Bias"] = "CALL premium slightly higher → Mild bearish"
+        bias_emojis["Premium_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["Premium_Bias"] = 0
+        bias_interpretations["Premium_Bias"] = "Balanced premiums"
+        bias_emojis["Premium_Bias"] = "⚖️ Neutral"
+    
+    # 7. IV BIAS (CALL vs PUT IV)
+    ce_iv = atm_df["IV_CE"].mean() if not atm_df["IV_CE"].isna().all() else 0
+    pe_iv = atm_df["IV_PE"].mean() if not atm_df["IV_PE"].isna().all() else 0
+    
+    if pe_iv > ce_iv + 3:
+        bias_scores["IV_Bias"] = 1
+        bias_interpretations["IV_Bias"] = "PUT IV higher → Bullish fear"
+        bias_emojis["IV_Bias"] = "🐂 Bullish"
+    elif pe_iv > ce_iv + 1:
+        bias_scores["IV_Bias"] = 0.5
+        bias_interpretations["IV_Bias"] = "PUT IV slightly higher → Mild bullish fear"
+        bias_emojis["IV_Bias"] = "🐂 Bullish"
+    elif ce_iv > pe_iv + 3:
+        bias_scores["IV_Bias"] = -1
+        bias_interpretations["IV_Bias"] = "CALL IV higher → Bearish fear"
+        bias_emojis["IV_Bias"] = "🐻 Bearish"
+    elif ce_iv > pe_iv + 1:
+        bias_scores["IV_Bias"] = -0.5
+        bias_interpretations["IV_Bias"] = "CALL IV slightly higher → Mild bearish fear"
+        bias_emojis["IV_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["IV_Bias"] = 0
+        bias_interpretations["IV_Bias"] = "Balanced IV"
+        bias_emojis["IV_Bias"] = "⚖️ Neutral"
+    
+    # 8. DELTA EXPOSURE BIAS (OI-weighted Delta)
+    delta_exposure_ce = (atm_df["Delta_CE"] * atm_df["OI_CE"]).sum()
+    delta_exposure_pe = (atm_df["Delta_PE"] * atm_df["OI_PE"]).sum()
+    net_delta_exposure = delta_exposure_ce + delta_exposure_pe
+    
+    if net_delta_exposure > 1000000:
+        bias_scores["Delta_Exposure_Bias"] = -1
+        bias_interpretations["Delta_Exposure_Bias"] = "High CALL delta exposure → Bearish pressure"
+        bias_emojis["Delta_Exposure_Bias"] = "🐻 Bearish"
+    elif net_delta_exposure > 500000:
+        bias_scores["Delta_Exposure_Bias"] = -0.5
+        bias_interpretations["Delta_Exposure_Bias"] = "Moderate CALL delta exposure → Slightly bearish"
+        bias_emojis["Delta_Exposure_Bias"] = "🐻 Bearish"
+    elif net_delta_exposure < -1000000:
+        bias_scores["Delta_Exposure_Bias"] = 1
+        bias_interpretations["Delta_Exposure_Bias"] = "High PUT delta exposure → Bullish pressure"
+        bias_emojis["Delta_Exposure_Bias"] = "🐂 Bullish"
+    elif net_delta_exposure < -500000:
+        bias_scores["Delta_Exposure_Bias"] = 0.5
+        bias_interpretations["Delta_Exposure_Bias"] = "Moderate PUT delta exposure → Slightly bullish"
+        bias_emojis["Delta_Exposure_Bias"] = "🐂 Bullish"
+    else:
+        bias_scores["Delta_Exposure_Bias"] = 0
+        bias_interpretations["Delta_Exposure_Bias"] = "Balanced delta exposure"
+        bias_emojis["Delta_Exposure_Bias"] = "⚖️ Neutral"
+    
+    # 9. GAMMA EXPOSURE BIAS (OI-weighted Gamma)
+    gamma_exposure_ce = (atm_df["Gamma_CE"] * atm_df["OI_CE"]).sum()
+    gamma_exposure_pe = (atm_df["Gamma_PE"] * atm_df["OI_PE"]).sum()
+    net_gamma_exposure = gamma_exposure_ce + gamma_exposure_pe
+    
+    if net_gamma_exposure > 500000:
+        bias_scores["Gamma_Exposure_Bias"] = 1
+        bias_interpretations["Gamma_Exposure_Bias"] = "Positive gamma exposure → Stabilizing → Bullish"
+        bias_emojis["Gamma_Exposure_Bias"] = "🐂 Bullish"
+    elif net_gamma_exposure > 100000:
+        bias_scores["Gamma_Exposure_Bias"] = 0.5
+        bias_interpretations["Gamma_Exposure_Bias"] = "Mild positive gamma → Slightly stabilizing"
+        bias_emojis["Gamma_Exposure_Bias"] = "🐂 Bullish"
+    elif net_gamma_exposure < -500000:
+        bias_scores["Gamma_Exposure_Bias"] = -1
+        bias_interpretations["Gamma_Exposure_Bias"] = "Negative gamma exposure → Explosive → Bearish"
+        bias_emojis["Gamma_Exposure_Bias"] = "🐻 Bearish"
+    elif net_gamma_exposure < -100000:
+        bias_scores["Gamma_Exposure_Bias"] = -0.5
+        bias_interpretations["Gamma_Exposure_Bias"] = "Mild negative gamma → Slightly explosive"
+        bias_emojis["Gamma_Exposure_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["Gamma_Exposure_Bias"] = 0
+        bias_interpretations["Gamma_Exposure_Bias"] = "Balanced gamma exposure"
+        bias_emojis["Gamma_Exposure_Bias"] = "⚖️ Neutral"
+    
+    # 10. IV SKEW BIAS (ATM vs Nearby strikes)
+    # Get ±1 strike IVs
+    nearby_strikes = [s for s in merged_df["strikePrice"] 
+                     if abs(s - atm_strike) <= (1 * strike_gap)]
+    nearby_df = merged_df[merged_df["strikePrice"].isin(nearby_strikes)]
+    
+    if not nearby_df.empty:
+        atm_ce_iv = atm_df["IV_CE"].mean() if not atm_df["IV_CE"].isna().all() else 0
+        atm_pe_iv = atm_df["IV_PE"].mean() if not atm_df["IV_PE"].isna().all() else 0
+        nearby_ce_iv = nearby_df["IV_CE"].mean() if not nearby_df["IV_CE"].isna().all() else 0
+        nearby_pe_iv = nearby_df["IV_PE"].mean() if not nearby_df["IV_PE"].isna().all() else 0
+        
+        # ATM IV vs Nearby IV comparison
+        if atm_ce_iv > nearby_ce_iv + 2:
+            bias_scores["IV_Skew_Bias"] = -0.5
+            bias_interpretations["IV_Skew_Bias"] = "ATM CALL IV higher → Bearish skew"
+            bias_emojis["IV_Skew_Bias"] = "🐻 Bearish"
+        elif atm_pe_iv > nearby_pe_iv + 2:
+            bias_scores["IV_Skew_Bias"] = 0.5
+            bias_interpretations["IV_Skew_Bias"] = "ATM PUT IV higher → Bullish skew"
+            bias_emojis["IV_Skew_Bias"] = "🐂 Bullish"
+        else:
+            bias_scores["IV_Skew_Bias"] = 0
+            bias_interpretations["IV_Skew_Bias"] = "Flat IV skew"
+            bias_emojis["IV_Skew_Bias"] = "⚖️ Neutral"
+    else:
+        bias_scores["IV_Skew_Bias"] = 0
+        bias_interpretations["IV_Skew_Bias"] = "Insufficient data for IV skew"
+        bias_emojis["IV_Skew_Bias"] = "⚖️ Neutral"
+    
+    # 11. OI CHANGE BIAS (Acceleration)
+    # Calculate OI change rate
+    total_oi_change = abs(total_ce_chg_atm) + abs(total_pe_chg_atm)
+    total_oi_atm = total_ce_oi_atm + total_pe_oi_atm
+    
+    if total_oi_atm > 0:
+        oi_change_rate = total_oi_change / total_oi_atm
+        if oi_change_rate > 0.1:
+            # High OI change - check direction
+            if total_pe_chg_atm > total_ce_chg_atm:
+                bias_scores["OI_Change_Bias"] = 0.5
+                bias_interpretations["OI_Change_Bias"] = "Rapid PUT OI buildup → Bullish acceleration"
+                bias_emojis["OI_Change_Bias"] = "🐂 Bullish"
+            else:
+                bias_scores["OI_Change_Bias"] = -0.5
+                bias_interpretations["OI_Change_Bias"] = "Rapid CALL OI buildup → Bearish acceleration"
+                bias_emojis["OI_Change_Bias"] = "🐻 Bearish"
+        else:
+            bias_scores["OI_Change_Bias"] = 0
+            bias_interpretations["OI_Change_Bias"] = "Slow OI changes"
+            bias_emojis["OI_Change_Bias"] = "⚖️ Neutral"
+    
+    # Calculate final bias score
+    total_score = sum(bias_scores.values())
+    normalized_score = total_score / len(bias_scores) if bias_scores else 0
+    
+    # Determine overall verdict
+    if normalized_score > 0.3:
+        verdict = "🐂 BULLISH"
+        verdict_color = "#00ff88"
+        verdict_explanation = "ATM zone showing strong bullish bias for sellers"
+    elif normalized_score > 0.1:
+        verdict = "🐂 Mild Bullish"
+        verdict_color = "#00cc66"
+        verdict_explanation = "ATM zone leaning bullish for sellers"
+    elif normalized_score < -0.3:
+        verdict = "🐻 BEARISH"
+        verdict_color = "#ff4444"
+        verdict_explanation = "ATM zone showing strong bearish bias for sellers"
+    elif normalized_score < -0.1:
+        verdict = "🐻 Mild Bearish"
+        verdict_color = "#ff6666"
+        verdict_explanation = "ATM zone leaning bearish for sellers"
+    else:
+        verdict = "⚖️ NEUTRAL"
+        verdict_color = "#66b3ff"
+        verdict_explanation = "ATM zone balanced, no clear bias"
+    
+    return {
+        "instrument": "NIFTY",
+        "strike": atm_strike,
+        "zone": "ATM",
+        "level": "ATM Cluster",
+        "bias_scores": bias_scores,
+        "bias_interpretations": bias_interpretations,
+        "bias_emojis": bias_emojis,
+        "total_score": normalized_score,
+        "verdict": verdict,
+        "verdict_color": verdict_color,
+        "verdict_explanation": verdict_explanation,
+        "metrics": {
+            "ce_oi": int(total_ce_oi_atm),
+            "pe_oi": int(total_pe_oi_atm),
+            "ce_chg": int(total_ce_chg_atm),
+            "pe_chg": int(total_pe_chg_atm),
+            "ce_vol": int(total_ce_vol_atm),
+            "pe_vol": int(total_pe_vol_atm),
+            "net_delta": round(net_delta, 3),
+            "net_gamma": round(net_gamma, 3),
+            "ce_iv": round(ce_iv, 2),
+            "pe_iv": round(pe_iv, 2),
+            "delta_exposure": int(net_delta_exposure),
+            "gamma_exposure": int(net_gamma_exposure)
+        }
+    }
+
+# ============================================
+# 🎯 SUPPORT/RESISTANCE BIAS ANALYZER (NEW)
+# ============================================
+def analyze_support_resistance_bias(merged_df, spot, atm_strike, strike_gap, level_type="Support"):
+    """
+    Analyze bias at key support/resistance levels
+    """
+    
+    # Find key levels
+    if level_type == "Support":
+        # Find highest strike below spot with high PUT OI
+        support_strikes = merged_df[merged_df["strikePrice"] < spot].copy()
+        if support_strikes.empty:
+            return None
+        
+        # Find strike with highest PUT OI as support
+        support_strike = support_strikes.loc[support_strikes["OI_PE"].idxmax()]["strikePrice"]
+        level_df = merged_df[merged_df["strikePrice"] == support_strike]
+    else:  # Resistance
+        # Find lowest strike above spot with high CALL OI
+        resistance_strikes = merged_df[merged_df["strikePrice"] > spot].copy()
+        if resistance_strikes.empty:
+            return None
+        
+        # Find strike with highest CALL OI as resistance
+        resistance_strike = resistance_strikes.loc[resistance_strikes["OI_CE"].idxmax()]["strikePrice"]
+        level_df = merged_df[merged_df["strikePrice"] == resistance_strike]
+    
+    if level_df.empty:
+        return None
+    
+    row = level_df.iloc[0]
+    
+    # Calculate bias
+    bias_scores = {}
+    bias_emojis = {}
+    bias_interpretations = {}
+    
+    # OI Bias
+    oi_ratio = row["OI_PE"] / max(row["OI_CE"], 1)
+    if oi_ratio > 2:
+        bias_scores["OI_Bias"] = 1
+        bias_emojis["OI_Bias"] = "🐂 Bullish"
+        bias_interpretations["OI_Bias"] = "Very high PUT OI"
+    elif oi_ratio > 1:
+        bias_scores["OI_Bias"] = 0.5
+        bias_emojis["OI_Bias"] = "🐂 Bullish"
+        bias_interpretations["OI_Bias"] = "High PUT OI"
+    elif oi_ratio < 0.5:
+        bias_scores["OI_Bias"] = -1
+        bias_emojis["OI_Bias"] = "🐻 Bearish"
+        bias_interpretations["OI_Bias"] = "Very high CALL OI"
+    elif oi_ratio < 1:
+        bias_scores["OI_Bias"] = -0.5
+        bias_emojis["OI_Bias"] = "🐻 Bearish"
+        bias_interpretations["OI_Bias"] = "High CALL OI"
+    else:
+        bias_scores["OI_Bias"] = 0
+        bias_emojis["OI_Bias"] = "⚖️ Neutral"
+        bias_interpretations["OI_Bias"] = "Balanced OI"
+    
+    # OI Change Bias
+    if row["Chg_OI_PE"] > 0 and row["Chg_OI_CE"] > 0:
+        bias_scores["ChgOI_Bias"] = 0
+        bias_emojis["ChgOI_Bias"] = "⚖️ Neutral"
+        bias_interpretations["ChgOI_Bias"] = "Both sides building"
+    elif row["Chg_OI_PE"] > 0:
+        bias_scores["ChgOI_Bias"] = 1
+        bias_emojis["ChgOI_Bias"] = "🐂 Bullish"
+        bias_interpretations["ChgOI_Bias"] = "PUT building"
+    elif row["Chg_OI_CE"] > 0:
+        bias_scores["ChgOI_Bias"] = -1
+        bias_emojis["ChgOI_Bias"] = "🐻 Bearish"
+        bias_interpretations["ChgOI_Bias"] = "CALL building"
+    else:
+        bias_scores["ChgOI_Bias"] = 0
+        bias_emojis["ChgOI_Bias"] = "⚖️ Neutral"
+        bias_interpretations["ChgOI_Bias"] = "No fresh writing"
+    
+    # Volume Bias
+    vol_ratio = row["Vol_PE"] / max(row["Vol_CE"], 1)
+    if vol_ratio > 1.5:
+        bias_scores["Volume_Bias"] = 1
+        bias_emojis["Volume_Bias"] = "🐂 Bullish"
+        bias_interpretations["Volume_Bias"] = "High PUT volume"
+    elif vol_ratio > 1:
+        bias_scores["Volume_Bias"] = 0.5
+        bias_emojis["Volume_Bias"] = "🐂 Bullish"
+        bias_interpretations["Volume_Bias"] = "More PUT volume"
+    elif vol_ratio < 0.7:
+        bias_scores["Volume_Bias"] = -1
+        bias_emojis["Volume_Bias"] = "🐻 Bearish"
+        bias_interpretations["Volume_Bias"] = "High CALL volume"
+    elif vol_ratio < 1:
+        bias_scores["Volume_Bias"] = -0.5
+        bias_emojis["Volume_Bias"] = "🐻 Bearish"
+        bias_interpretations["Volume_Bias"] = "More CALL volume"
+    else:
+        bias_scores["Volume_Bias"] = 0
+        bias_emojis["Volume_Bias"] = "⚖️ Neutral"
+        bias_interpretations["Volume_Bias"] = "Balanced volume"
+    
+    # Calculate total score
+    total_score = sum(bias_scores.values())
+    normalized_score = total_score / len(bias_scores) if bias_scores else 0
+    
+    # Determine verdict
+    if normalized_score > 0.3:
+        verdict = "🐂 BULLISH"
+        verdict_color = "#00ff88"
+    elif normalized_score > 0.1:
+        verdict = "🐂 Mild Bullish"
+        verdict_color = "#00cc66"
+    elif normalized_score < -0.3:
+        verdict = "🐻 BEARISH"
+        verdict_color = "#ff4444"
+    elif normalized_score < -0.1:
+        verdict = "🐻 Mild Bearish"
+        verdict_color = "#ff6666"
+    else:
+        verdict = "⚖️ NEUTRAL"
+        verdict_color = "#66b3ff"
+    
+    return {
+        "instrument": "NIFTY",
+        "strike": int(row["strikePrice"]),
+        "zone": level_type,
+        "level": f"{level_type} Level",
+        "bias_scores": bias_scores,
+        "bias_interpretations": bias_interpretations,
+        "bias_emojis": bias_emojis,
+        "total_score": normalized_score,
+        "verdict": verdict,
+        "verdict_color": verdict_color,
+        "metrics": {
+            "ce_oi": int(row["OI_CE"]),
+            "pe_oi": int(row["OI_PE"]),
+            "ce_chg": int(row["Chg_OI_CE"]),
+            "pe_chg": int(row["Chg_OI_PE"]),
+            "ce_vol": int(row["Vol_CE"]),
+            "pe_vol": int(row["Vol_PE"]),
+            "distance": abs(spot - row["strikePrice"]),
+            "distance_pct": abs(spot - row["strikePrice"]) / spot * 100
+        }
+    }
+
+# ============================================
+# 🎯 COMPREHENSIVE BIAS DASHBOARD (NEW)
+# ============================================
+def display_bias_dashboard(atm_bias, support_bias, resistance_bias):
+    """Display comprehensive bias dashboard"""
+    
+    st.markdown("## 🎯 MULTI-DIMENSIONAL BIAS ANALYSIS")
+    
+    # Create columns for each bias analysis
+    col_atm, col_sup, col_res = st.columns(3)
+    
+    with col_atm:
+        if atm_bias:
+            st.markdown(f"""
+            <div class='card' style='border-color:{atm_bias["verdict_color"]};'>
+                <h4 style='color:{atm_bias["verdict_color"]};'>🏛️ ATM ZONE BIAS</h4>
+                <div style='font-size: 1.8rem; color:{atm_bias["verdict_color"]}; font-weight:900; text-align:center;'>
+                    {atm_bias["verdict"]}
+                </div>
+                <div style='font-size: 1.2rem; color:#ffcc00; text-align:center;'>
+                    ₹{atm_bias["strike"]:,}
+                </div>
+                <div style='font-size: 0.9rem; color:#cccccc; text-align:center; margin-top:10px;'>
+                    Score: {atm_bias["total_score"]:.2f}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Key metrics
+            st.metric("CALL OI", f"{atm_bias['metrics']['ce_oi']:,}")
+            st.metric("PUT OI", f"{atm_bias['metrics']['pe_oi']:,}")
+            st.metric("Net Delta", f"{atm_bias['metrics']['net_delta']:.3f}")
+            st.metric("Net Gamma", f"{atm_bias['metrics']['net_gamma']:.3f}")
+    
+    with col_sup:
+        if support_bias:
+            st.markdown(f"""
+            <div class='card' style='border-color:{support_bias["verdict_color"]};'>
+                <h4 style='color:{support_bias["verdict_color"]};'>🛡️ SUPPORT BIAS</h4>
+                <div style='font-size: 1.8rem; color:{support_bias["verdict_color"]}; font-weight:900; text-align:center;'>
+                    {support_bias["verdict"]}
+                </div>
+                <div style='font-size: 1.2rem; color:#00ffcc; text-align:center;'>
+                    ₹{support_bias["strike"]:,}
+                </div>
+                <div style='font-size: 0.9rem; color:#cccccc; text-align:center; margin-top:10px;'>
+                    Score: {support_bias["total_score"]:.2f}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Key metrics
+            st.metric("Distance", f"₹{support_bias['metrics']['distance']:.0f}")
+            st.metric("CALL OI", f"{support_bias['metrics']['ce_oi']:,}")
+            st.metric("PUT OI", f"{support_bias['metrics']['pe_oi']:,}")
+    
+    with col_res:
+        if resistance_bias:
+            st.markdown(f"""
+            <div class='card' style='border-color:{resistance_bias["verdict_color"]};'>
+                <h4 style='color:{resistance_bias["verdict_color"]};'>⚡ RESISTANCE BIAS</h4>
+                <div style='font-size: 1.8rem; color:{resistance_bias["verdict_color"]}; font-weight:900; text-align:center;'>
+                    {resistance_bias["verdict"]}
+                </div>
+                <div style='font-size: 1.2rem; color:#ff9900; text-align:center;'>
+                    ₹{resistance_bias["strike"]:,}
+                </div>
+                <div style='font-size: 0.9rem; color:#cccccc; text-align:center; margin-top:10px;'>
+                    Score: {resistance_bias["total_score"]:.2f}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Key metrics
+            st.metric("Distance", f"₹{resistance_bias['metrics']['distance']:.0f}")
+            st.metric("CALL OI", f"{resistance_bias['metrics']['ce_oi']:,}")
+            st.metric("PUT OI", f"{resistance_bias['metrics']['pe_oi']:,}")
+    
+    # Detailed ATM Bias Table
+    if atm_bias:
+        st.markdown("### 📊 ATM BIAS DETAILED BREAKDOWN")
+        
+        bias_data = []
+        for bias_name, emoji in atm_bias["bias_emojis"].items():
+            bias_data.append({
+                "Metric": bias_name.replace("_", " ").title(),
+                "Bias": emoji,
+                "Score": f"{atm_bias['bias_scores'][bias_name]:.1f}",
+                "Interpretation": atm_bias["bias_interpretations"][bias_name]
+            })
+        
+        bias_df = pd.DataFrame(bias_data)
+        st.dataframe(bias_df, use_container_width=True)
+        
+        # ATM Bias Summary
+        st.markdown(f"""
+        <div class='seller-explanation'>
+            <h4>🎯 ATM BIAS SUMMARY</h4>
+            <p><strong>Overall Verdict:</strong> <span style='color:{atm_bias["verdict_color"]}'>{atm_bias["verdict"]}</span></p>
+            <p><strong>Total Score:</strong> {atm_bias["total_score"]:.2f}</p>
+            <p><strong>Explanation:</strong> {atm_bias["verdict_explanation"]}</p>
+            <p><strong>Key Insights:</strong></p>
+            <ul>
+                <li>CALL OI: {atm_bias['metrics']['ce_oi']:,} | PUT OI: {atm_bias['metrics']['pe_oi']:,}</li>
+                <li>Net Delta: {atm_bias['metrics']['net_delta']:.3f} | Net Gamma: {atm_bias['metrics']['net_gamma']:.3f}</li>
+                <li>Delta Exposure: ₹{atm_bias['metrics']['delta_exposure']:,}</li>
+                <li>Gamma Exposure: ₹{atm_bias['metrics']['gamma_exposure']:,}</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Trading Implications
+    st.markdown("### 💡 TRADING IMPLICATIONS")
+    
+    implications = []
+    
+    if atm_bias:
+        if atm_bias["total_score"] > 0.2:
+            implications.append("✅ **ATM Bullish Bias:** Favor LONG positions with stops below ATM")
+        elif atm_bias["total_score"] < -0.2:
+            implications.append("✅ **ATM Bearish Bias:** Favor SHORT positions with stops above ATM")
+        
+        if atm_bias["metrics"]["gamma_exposure"] < -100000:
+            implications.append("⚠️ **Negative Gamma Exposure:** Expect whipsaws around ATM")
+        elif atm_bias["metrics"]["gamma_exposure"] > 100000:
+            implications.append("✅ **Positive Gamma Exposure:** Market stabilizing around ATM")
+    
+    if support_bias and support_bias["total_score"] > 0.3:
+        implications.append(f"✅ **Strong Support at ₹{support_bias['strike']:,}:** Good for LONG entries")
+    
+    if resistance_bias and resistance_bias["total_score"] < -0.3:
+        implications.append(f"✅ **Strong Resistance at ₹{resistance_bias['strike']:,}:** Good for SHORT entries")
+    
+    if not implications:
+        implications.append("⚖️ **Balanced Market:** No clear edge, wait for breakout")
+    
+    for imp in implications:
+        st.markdown(f"- {imp}")
+
 # -----------------------
 #  TELEGRAM FUNCTIONS
 # -----------------------
@@ -127,7 +799,7 @@ def send_telegram_message(bot_token, chat_id, message):
 
 def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, seller_max_pain, 
                                    nearest_sup, nearest_res, moment_metrics, seller_breakout_index, 
-                                   expiry, expiry_spike_data):
+                                   expiry, expiry_spike_data, atm_bias=None, support_bias=None, resistance_bias=None):
     """
     Generate Option 3 Telegram signal with stop loss/target and expiry spike info
     Only generate when position_type is not NEUTRAL
@@ -185,6 +857,11 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
     # Calculate entry distance from current spot
     entry_distance = abs(spot - optimal_entry_price)
     
+    # Add ATM bias info if available
+    atm_bias_info = ""
+    if atm_bias:
+        atm_bias_info = f"\n🎯 *ATM Bias*: {atm_bias['verdict']} (Score: {atm_bias['total_score']:.2f})"
+    
     # Add expiry spike info if active
     expiry_info = ""
     if expiry_spike_data.get("active", False) and expiry_spike_data.get("probability", 0) > 50:
@@ -218,6 +895,7 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
 
 *Seller Bias*: {seller_bias_result['bias']}
 *Confidence*: {confidence:.0f}%
+{atm_bias_info}
 
 *Expiry Context*:
 📅 Days to Expiry: {expiry_spike_data.get('days_to_expiry', 0):.1f}
@@ -231,7 +909,7 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
 
 def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pain, 
                          nearest_sup, nearest_res, moment_metrics, seller_breakout_index, 
-                         expiry, expiry_spike_data):
+                         expiry, expiry_spike_data, atm_bias=None, support_bias=None, resistance_bias=None):
     """
     Check if a new signal is generated and return it (simulated)
     Returns signal message if new signal, None otherwise
@@ -250,7 +928,8 @@ def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pai
             telegram_msg = generate_telegram_signal_option3(
                 entry_signal, spot, seller_bias_result, 
                 seller_max_pain, nearest_sup, nearest_res, 
-                moment_metrics, seller_breakout_index, expiry, expiry_spike_data
+                moment_metrics, seller_breakout_index, expiry, expiry_spike_data,
+                atm_bias, support_bias, resistance_bias
             )
             
             if telegram_msg:
@@ -265,7 +944,7 @@ def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pai
     return None
 
 # -----------------------
-#  EXPIRY SPIKE DETECTOR FUNCTIONS
+# 📅 EXPIRY SPIKE DETECTOR FUNCTIONS
 # -----------------------
 def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_date_str):
     """
@@ -289,9 +968,10 @@ def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_dat
     key_levels = []
     
     # Factor 1: ATM OI Concentration (0-25 points)
+    strike_gap_val = strike_gap_from_series(merged_df["strikePrice"])
     atm_window = 2  # ±2 strikes around ATM
     atm_strikes = [s for s in merged_df["strikePrice"] 
-                   if abs(s - atm_strike) <= (atm_window * strike_gap_from_series(merged_df["strikePrice"]))]
+                   if abs(s - atm_strike) <= (atm_window * strike_gap_val)]
     
     atm_ce_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_CE"].sum()
     atm_pe_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_PE"].sum()
@@ -348,7 +1028,7 @@ def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_dat
             spike_score += 20
             spike_factors.append(f"Massive CALL OI at ₹{max_ce_strike:,} ({max_ce_oi:,})")
             key_levels.append(f"CALL Wall: ₹{max_ce_strike:,}")
-            if abs(spot - max_ce_strike) < (strike_gap_from_series(merged_df["strikePrice"]) * 3):
+            if abs(spot - max_ce_strike) < (strike_gap_val * 3):
                 spike_type = "RESISTANCE SPIKE"
     
     if max_pe_oi_strike is not None:
@@ -358,7 +1038,7 @@ def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_dat
             spike_score += 20
             spike_factors.append(f"Massive PUT OI at ₹{max_pe_strike:,} ({max_pe_oi:,})")
             key_levels.append(f"PUT Wall: ₹{max_pe_strike:,}")
-            if abs(spot - max_pe_strike) < (strike_gap_from_series(merged_df["strikePrice"]) * 3):
+            if abs(spot - max_pe_strike) < (strike_gap_val * 3):
                 spike_type = "SUPPORT SPIKE"
     
     # Factor 5: Gamma Flip Zone (0-10 points)
@@ -451,9 +1131,10 @@ def detect_violent_unwinding(merged_df, spot, atm_strike):
         signals.append(f"Violent PUT unwinding: {abs(total_pe_chg):,} contracts")
     
     # Check ATM strikes specifically
+    strike_gap_val = strike_gap_from_series(merged_df["strikePrice"])
     atm_window = 1
     atm_strikes = [s for s in merged_df["strikePrice"] 
-                   if abs(s - atm_strike) <= (atm_window * strike_gap_from_series(merged_df["strikePrice"]))]
+                   if abs(s - atm_strike) <= (atm_window * strike_gap_val)]
     
     atm_unwind = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes)]
     atm_ce_unwind = atm_unwind["Chg_OI_CE"].sum()
@@ -722,7 +1403,7 @@ def analyze_pcr_for_expiry(pcr_value, days_to_expiry):
     return "PCR analysis standard"
 
 # -----------------------
-#  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES + EXPIRY SPIKE + OI/PCR
+#  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES + EXPIRY SPIKE + OI/PCR + ATM BIAS
 # -----------------------
 st.markdown(r"""
 <style>
@@ -750,6 +1431,11 @@ st.markdown(r"""
     .pcr-mild-bearish { color: #ff9900 !important; }
     .pcr-bearish { color: #ff4444 !important; }
     .pcr-extreme-bearish { color: #ff0000 !important; }
+    
+    /* ATM BIAS COLORS */
+    .atm-bias-bullish { color: #00ff88 !important; }
+    .atm-bias-bearish { color: #ff4444 !important; }
+    .atm-bias-neutral { color: #66b3ff !important; }
     
     h1, h2, h3 { color: #ff66cc !important; } /* Seller theme pink */
     
@@ -923,6 +1609,16 @@ st.markdown(r"""
         margin: 10px 0;
     }
     
+    /* ATM BIAS CARD */
+    .card {
+        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid;
+        margin: 10px 0;
+        text-align: center;
+    }
+    
     @keyframes pulse {
         0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
         70% { box-shadow: 0 0 0 10px rgba(255, 0, 0, 0); }
@@ -934,7 +1630,7 @@ st.markdown(r"""
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Nifty Screener v6 - Seller's Perspective + Moment Detector + Expiry Spike Detector + OI/PCR Analytics", layout="wide")
+st.set_page_config(page_title="Nifty Screener v7 - Seller's Perspective + ATM Bias Analyzer + Moment Detector + Expiry Spike + OI/PCR", layout="wide")
 
 def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
     if "last_refresh" not in st.session_state:
@@ -1191,7 +1887,7 @@ def compute_oi_velocity_acceleration(history, atm_strike, window_strikes=3):
             "note": "OI speed-up detected in ATM cluster" if score > 60 else "OI changes are slow/steady"}
 
 # -----------------------
-# 🔥 ENTRY SIGNAL CALCULATION (EXTENDED WITH MOMENT DETECTOR)
+# 🔥 ENTRY SIGNAL CALCULATION (EXTENDED WITH MOMENT DETECTOR & ATM BIAS)
 # -----------------------
 def calculate_realistic_stop_loss_target(position_type, entry_price, nearest_sup, nearest_res, strike_gap, max_risk_pct=1.5):
     """
@@ -1277,10 +1973,13 @@ def calculate_entry_signal_extended(
     nearest_sup, 
     nearest_res, 
     seller_breakout_index,
-    moment_metrics  # NEW: Add moment metrics
+    moment_metrics,  # NEW: Add moment metrics
+    atm_bias=None,   # NEW: Add ATM bias
+    support_bias=None,  # NEW: Add support bias
+    resistance_bias=None  # NEW: Add resistance bias
 ):
     """
-    Calculate optimal entry signal with Moment Detector integration
+    Calculate optimal entry signal with Moment Detector & ATM Bias integration
     """
     
     # Initialize signal components
@@ -1432,6 +2131,33 @@ def calculate_entry_signal_extended(
         signal_reasons.append(f"OI acceleration: {oi_score}/100 ({oi_accel.get('note', '')})")
     
     # ============================================
+    # 8. ATM BIAS INTEGRATION (NEW - 20% weight)
+    # ============================================
+    if atm_bias:
+        atm_score = atm_bias["total_score"]
+        if position_type == "LONG" and atm_score > 0.1:
+            signal_score += int(20 * (atm_score / 1.0))  # Scale to max 20 points
+            signal_reasons.append(f"ATM bias bullish ({atm_score:.2f}) confirms LONG")
+        elif position_type == "SHORT" and atm_score < -0.1:
+            signal_score += int(20 * (abs(atm_score) / 1.0))
+            signal_reasons.append(f"ATM bias bearish ({atm_score:.2f}) confirms SHORT")
+    
+    # ============================================
+    # 9. SUPPORT/RESISTANCE BIAS INTEGRATION (NEW - 15% weight)
+    # ============================================
+    if support_bias and position_type == "LONG":
+        support_score = support_bias["total_score"]
+        if support_score > 0.2:
+            signal_score += int(15 * (support_score / 1.0))
+            signal_reasons.append(f"Strong support bias ({support_score:.2f}) at ₹{support_bias['strike']:,}")
+    
+    if resistance_bias and position_type == "SHORT":
+        resistance_score = resistance_bias["total_score"]
+        if resistance_score < -0.2:
+            signal_score += int(15 * (abs(resistance_score) / 1.0))
+            signal_reasons.append(f"Strong resistance bias ({resistance_score:.2f}) at ₹{resistance_bias['strike']:,}")
+    
+    # ============================================
     # FINAL SIGNAL CALCULATION
     # ============================================
     
@@ -1479,8 +2205,51 @@ def calculate_entry_signal_extended(
         "max_pain": seller_max_pain,
         "nearest_support": nearest_sup["strike"] if nearest_sup else None,
         "nearest_resistance": nearest_res["strike"] if nearest_res else None,
-        "moment_metrics": moment_metrics  # NEW: Include moment metrics in signal
+        "moment_metrics": moment_metrics,  # NEW: Include moment metrics in signal
+        "atm_bias_score": atm_bias["total_score"] if atm_bias else 0,  # NEW: Include ATM bias score
+        "support_bias_score": support_bias["total_score"] if support_bias else 0,  # NEW: Include support bias score
+        "resistance_bias_score": resistance_bias["total_score"] if resistance_bias else 0  # NEW: Include resistance bias score
     }
+
+# ============================================
+# 🎯 ENHANCED ENTRY SIGNAL WITH ATM BIAS (NEW)
+# ============================================
+def calculate_entry_signal_with_atm_bias(
+    spot, 
+    merged_df, 
+    atm_strike, 
+    seller_bias_result, 
+    seller_max_pain, 
+    seller_supports_df, 
+    seller_resists_df, 
+    nearest_sup, 
+    nearest_res, 
+    seller_breakout_index,
+    moment_metrics,
+    atm_bias, 
+    support_bias, 
+    resistance_bias
+):
+    """
+    Enhanced entry signal with comprehensive ATM bias analysis
+    This function wraps the extended entry signal for backward compatibility
+    """
+    return calculate_entry_signal_extended(
+        spot=spot,
+        merged_df=merged_df,
+        atm_strike=atm_strike,
+        seller_bias_result=seller_bias_result,
+        seller_max_pain=seller_max_pain,
+        seller_supports_df=seller_supports_df,
+        seller_resists_df=seller_resists_df,
+        nearest_sup=nearest_sup,
+        nearest_res=nearest_res,
+        seller_breakout_index=seller_breakout_index,
+        moment_metrics=moment_metrics,
+        atm_bias=atm_bias,
+        support_bias=support_bias,
+        resistance_bias=resistance_bias
+    )
 
 # -----------------------
 # 🔥 SELLER'S PERSPECTIVE FUNCTIONS (ORIGINAL)
@@ -1945,9 +2714,9 @@ def parse_dhan_option_chain(chain_data):
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
 # -----------------------
-#  MAIN APP - COMPLETE V6 WITH OI/PCR ANALYTICS
+#  MAIN APP - COMPLETE V7 WITH ATM BIAS ANALYZER
 # -----------------------
-st.title("🎯 NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + Moment Detector + Expiry Spike + OI/PCR ANALYTICS")
+st.title("🎯 NIFTY Option Screener v7.0 — SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + Moment Detector + Expiry Spike + OI/PCR ANALYTICS")
 
 current_ist = get_ist_datetime_str()
 st.markdown(f"""
@@ -1971,6 +2740,23 @@ with st.sidebar:
     <p><em>Market makers & institutions are primarily SELLERS, not buyers.</em></p>
     </div>
     """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    st.markdown("### 🎯 ATM BIAS ANALYZER")
+    st.markdown("""
+    **12 Key Metrics:**
+    1. OI Bias (CALL vs PUT)
+    2. Change in OI Bias
+    3. Volume Bias
+    4. Delta Bias
+    5. Gamma Bias
+    6. Premium Bias
+    7. IV Bias
+    8. Delta Exposure Bias
+    9. Gamma Exposure Bias
+    10. IV Skew Bias
+    11. OI Change Bias
+    """)
     
     st.markdown("---")
     st.markdown("### 🚀 MOMENT DETECTOR FEATURES")
@@ -2252,8 +3038,17 @@ moment_metrics = {
     "oi_accel": compute_oi_velocity_acceleration(st.session_state["moment_history"], atm_strike, window_strikes=2)
 }
 
-# Calculate entry signal with moment detector integration
-entry_signal = calculate_entry_signal_extended(
+# ============================================
+# 🎯 ATM BIAS ANALYSIS (NEW)
+# ============================================
+
+# Compute ATM and Level Biases
+atm_bias = analyze_atm_bias(merged, spot, atm_strike, strike_gap)
+support_bias = analyze_support_resistance_bias(merged, spot, atm_strike, strike_gap, "Support")
+resistance_bias = analyze_support_resistance_bias(merged, spot, atm_strike, strike_gap, "Resistance")
+
+# Calculate entry signal with moment detector & ATM bias integration
+entry_signal = calculate_entry_signal_with_atm_bias(
     spot=spot,
     merged_df=merged,
     atm_strike=atm_strike,
@@ -2264,7 +3059,10 @@ entry_signal = calculate_entry_signal_extended(
     nearest_sup=nearest_sup,
     nearest_res=nearest_res,
     seller_breakout_index=seller_breakout_index,
-    moment_metrics=moment_metrics
+    moment_metrics=moment_metrics,
+    atm_bias=atm_bias,
+    support_bias=support_bias,
+    resistance_bias=resistance_bias
 )
 
 # ============================================
@@ -2464,6 +3262,14 @@ if days_to_expiry <= 5:
     """)
 
 # ============================================
+# 🎯 MULTI-DIMENSIONAL BIAS ANALYSIS (NEW)
+# ============================================
+
+# Display ATM Bias Dashboard
+if atm_bias or support_bias or resistance_bias:
+    display_bias_dashboard(atm_bias, support_bias, resistance_bias)
+
+# ============================================
 # 📅 EXPIRY SPIKE DETECTION
 # ============================================
 
@@ -2483,7 +3289,8 @@ pinning_probability = predict_expiry_pinning_probability(
 telegram_signal = check_and_send_signal(
     entry_signal, spot, seller_bias_result, 
     seller_max_pain, nearest_sup, nearest_res, 
-    moment_metrics, seller_breakout_index, expiry, expiry_spike_data
+    moment_metrics, seller_breakout_index, expiry, expiry_spike_data,
+    atm_bias, support_bias, resistance_bias
 )
 
 # ============================================
@@ -2797,6 +3604,7 @@ else:
         - Signal Strength: {entry_signal['signal_strength']}
         - Confidence: {entry_signal['confidence']:.0f}%
         - Seller Bias: {seller_bias_result['bias']}
+        - ATM Bias: {atm_bias['verdict'] if atm_bias else 'N/A'}
         - Expiry Spike Risk: {expiry_spike_data.get('probability', 0)}%
         - PCR Sentiment: {oi_pcr_metrics['pcr_sentiment']}
         
@@ -2804,6 +3612,7 @@ else:
         ✅ Position Type ≠ NEUTRAL
         ✅ Confidence ≥ 40%
         ✅ Clear directional bias
+        ✅ ATM bias alignment
         """)
     
     # Show last signal if exists
@@ -2940,6 +3749,9 @@ if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 
                 <div style='font-size: 1.2rem; color: #ffdd44; margin-top: 5px;'>
                     Confidence: {entry_signal["confidence"]:.0f}%
                 </div>
+                <div style='font-size: 1.1rem; color: #66b3ff; margin-top: 5px;'>
+                    ATM Bias: {atm_bias['verdict'] if atm_bias else 'N/A'}
+                </div>
             </div>
             """, unsafe_allow_html=True)
         with col3:
@@ -3035,6 +3847,28 @@ if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 
     </div>
     """, unsafe_allow_html=True)
     
+    # ATM Bias Confirmation
+    if atm_bias:
+        st.markdown(f"""
+        <div style="
+            margin-top: 25px; 
+            padding: 20px; 
+            background: rgba(0,0,0,0.2); 
+            border-radius: 10px;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        ">
+            <div style="font-size: 1.2rem; color: {atm_bias['verdict_color']}; margin-bottom: 10px; text-align: center;">🎯 ATM BIAS CONFIRMATION</div>
+            <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
+                <div>ATM Bias: {atm_bias['verdict']}</div>
+                <div>Score: {atm_bias['total_score']:.2f}</div>
+                <div>CALL OI: {atm_bias['metrics']['ce_oi']:,}</div>
+                <div>PUT OI: {atm_bias['metrics']['pe_oi']:,}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
     # Action buttons
     st.markdown("<br>", unsafe_allow_html=True)
     action_col1, action_col2, action_col3 = st.columns([2, 1, 1])
@@ -3063,6 +3897,15 @@ if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 
         for metric_name, metric_data in moment_metrics.items():
             if metric_data.get("available", False):
                 st.markdown(f"**{metric_name.replace('_', ' ').title()}:** {metric_data.get('note', 'N/A')}")
+        
+        # ATM Bias Details
+        if atm_bias:
+            st.markdown("### 🎯 ATM Bias Analysis:")
+            st.markdown(f"• **Overall Verdict:** {atm_bias['verdict']}")
+            st.markdown(f"• **Total Score:** {atm_bias['total_score']:.2f}")
+            st.markdown(f"• **Explanation:** {atm_bias['verdict_explanation']}")
+            st.markdown(f"• **Key Metrics:** CALL OI: {atm_bias['metrics']['ce_oi']:,} | PUT OI: {atm_bias['metrics']['pe_oi']:,}")
+            st.markdown(f"• **Net Delta:** {atm_bias['metrics']['net_delta']:.3f} | **Net Gamma:** {atm_bias['metrics']['net_gamma']:.3f}")
         
         # OI/PCR Details
         st.markdown("### 📊 OI/PCR Analysis:")
@@ -3151,6 +3994,7 @@ else:
     ">
         Signal Confidence: {entry_signal["confidence"]:.0f}% | 
         Seller Bias: {seller_bias_result["bias"]} | 
+        ATM Bias: {atm_bias['verdict'] if atm_bias else 'N/A'} | 
         PCR Sentiment: {oi_pcr_metrics['pcr_sentiment']} | 
         Expiry Spike Risk: {expiry_spike_data.get('probability', 0)}%
     </div>
@@ -3198,6 +4042,28 @@ else:
     </div>
     """, unsafe_allow_html=True)
     
+    # ATM Bias status
+    if atm_bias:
+        st.markdown(f"""
+        <div style="
+            margin-top: 25px; 
+            padding: 20px; 
+            background: rgba(0,0,0,0.2); 
+            border-radius: 10px;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        ">
+            <div style="font-size: 1.2rem; color: {atm_bias['verdict_color']}; margin-bottom: 10px; text-align: center;">🎯 ATM BIAS STATUS</div>
+            <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
+                <div>Verdict: {atm_bias['verdict']}</div>
+                <div>Score: {atm_bias['total_score']:.2f}</div>
+                <div>CALL OI: {atm_bias['metrics']['ce_oi']:,}</div>
+                <div>PUT OI: {atm_bias['metrics']['pe_oi']:,}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
     # Expandable details for no signal
     with st.expander("🔍 Why No Signal? (Click for Details)", expanded=False):
         col_detail1, col_detail2 = st.columns(2)
@@ -3206,6 +4072,8 @@ else:
             st.markdown("### 📊 Current Metrics:")
             st.metric("Seller Bias", seller_bias_result["bias"])
             st.metric("Polarity Score", f"{seller_bias_result['polarity']:.2f}")
+            st.metric("ATM Bias", atm_bias['verdict'] if atm_bias else "N/A")
+            st.metric("ATM Bias Score", f"{atm_bias['total_score']:.2f}" if atm_bias else "N/A")
             st.metric("Breakout Index", f"{seller_breakout_index}%")
             st.metric("Signal Confidence", f"{entry_signal['confidence']:.0f}%")
             st.metric("PCR", f"{oi_pcr_metrics['pcr_total']:.2f}")
@@ -3218,6 +4086,7 @@ else:
                 "✅ Clear directional bias (BULLISH/BEARISH)",
                 "✅ Confidence > 40%",
                 "✅ Strong moment detector scores",
+                "✅ ATM bias alignment",
                 "✅ Support/Resistance alignment",
                 "✅ Momentum burst > 50",
                 "✅ PCR alignment with bias"
@@ -3230,6 +4099,7 @@ else:
             - **Position Type**: {entry_signal["position_type"]}
             - **Signal Strength**: {entry_signal["signal_strength"]}
             - **Optimal Entry**: ₹{entry_signal["optimal_entry_price"]:,.2f}
+            - **ATM Bias**: {atm_bias['verdict'] if atm_bias else 'N/A'}
             - **PCR Sentiment**: {oi_pcr_metrics['pcr_sentiment']}
             - **OI Skew**: CALL: {oi_pcr_metrics['call_oi_skew']}, PUT: {oi_pcr_metrics['put_oi_skew']}
             - **Expiry in**: {days_to_expiry:.1f} days
@@ -3317,6 +4187,7 @@ with col_spot:
         <div class="spot-price">₹{spot:,.2f}</div>
         <div class="distance">ATM: ₹{atm_strike:,}</div>
         <div class="distance">Market Bias: <span style="color:{seller_bias_result['color']}">{seller_bias_result["bias"]}</span></div>
+        <div class="distance">ATM Bias: <span style="color:{atm_bias['verdict_color'] if atm_bias else '#cccccc'}">{atm_bias['verdict'] if atm_bias else 'N/A'}</span></div>
         <div class="distance">PCR: <span style="color:{oi_pcr_metrics['pcr_color']}">{oi_pcr_metrics['pcr_total']:.2f}</span></div>
     </div>
     """, unsafe_allow_html=True)
@@ -3489,10 +4360,10 @@ with col_r:
 st.markdown("---")
 
 # ============================================
-# 📊 DETAILED DATA - SELLER VIEW + MOMENT + EXPIRY + OI/PCR
+# 📊 DETAILED DATA - SELLER VIEW + MOMENT + EXPIRY + OI/PCR + ATM BIAS
 # ============================================
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR", "🚀 Moment Analysis", "📅 Expiry Analysis"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Seller Activity", "🧮 Seller Greeks", "📈 Seller PCR", "🚀 Moment Analysis", "📅 Expiry Analysis", "🎯 ATM Bias"])
 
 with tab1:
     st.markdown("### 📊 SELLER ACTIVITY BY STRIKE")
@@ -3767,11 +4638,163 @@ with tab5:
         else:
             st.success("**LOW PINNING RISK:** Price likely to move freely")
 
+with tab6:
+    st.markdown("### 🎯 ATM BIAS DETAILED ANALYSIS")
+    
+    if atm_bias:
+        # Key metrics
+        col_atm1, col_atm2, col_atm3 = st.columns(3)
+        
+        with col_atm1:
+            st.metric("ATM Strike", f"₹{atm_bias['strike']:,}")
+            st.metric("CALL OI", f"{atm_bias['metrics']['ce_oi']:,}")
+            st.metric("PUT OI", f"{atm_bias['metrics']['pe_oi']:,}")
+        
+        with col_atm2:
+            st.metric("Net Delta", f"{atm_bias['metrics']['net_delta']:.3f}")
+            st.metric("Net Gamma", f"{atm_bias['metrics']['net_gamma']:.3f}")
+            st.metric("Delta Exposure", f"₹{atm_bias['metrics']['delta_exposure']:,}")
+        
+        with col_atm3:
+            st.metric("Gamma Exposure", f"₹{atm_bias['metrics']['gamma_exposure']:,}")
+            st.metric("CALL IV", f"{atm_bias['metrics']['ce_iv']:.2f}%")
+            st.metric("PUT IV", f"{atm_bias['metrics']['pe_iv']:.2f}%")
+        
+        # Bias breakdown
+        st.markdown("#### 📊 BIAS BREAKDOWN BY METRIC")
+        for bias_name, score in atm_bias["bias_scores"].items():
+            emoji = atm_bias["bias_emojis"].get(bias_name, "⚖️")
+            interpretation = atm_bias["bias_interpretations"].get(bias_name, "")
+            
+            # Color based on score
+            if score > 0:
+                color = "#00ff88"
+                bg_color = "#1a2e1a"
+            elif score < 0:
+                color = "#ff4444"
+                bg_color = "#2e1a1a"
+            else:
+                color = "#66b3ff"
+                bg_color = "#1a1f2e"
+            
+            st.markdown(f"""
+            <div style="
+                background: {bg_color};
+                padding: 10px;
+                border-radius: 8px;
+                border-left: 4px solid {color};
+                margin: 5px 0;
+            ">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-weight: 600; color:#ffffff;">
+                        {bias_name.replace('_', ' ').title()}
+                    </div>
+                    <div style="font-size: 1.2rem; color:{color}; font-weight:700;">
+                        {emoji} {score:+.1f}
+                    </div>
+                </div>
+                <div style="font-size: 0.9rem; color:#cccccc; margin-top: 5px;">
+                    {interpretation}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Seller interpretation for ATM
+        st.markdown("#### 🧠 SELLER INTERPRETATION AT ATM")
+        if atm_bias["total_score"] > 0.3:
+            st.success(f"""
+            **Strong Bullish ATM Bias ({atm_bias['total_score']:.2f})**
+            
+            Sellers are heavily writing PUTs at ATM strikes, indicating:
+            1. **Bullish conviction** - Expecting price to stay above ATM
+            2. **PUT selling dominance** - More PUT OI than CALL OI
+            3. **Negative delta exposure** - PUTs creating negative delta
+            4. **Potential support** - ATM acting as strong support
+            
+            **Trading Implication:** Favor LONG positions with stops below ATM
+            """)
+        elif atm_bias["total_score"] > 0.1:
+            st.info(f"""
+            **Mild Bullish ATM Bias ({atm_bias['total_score']:.2f})**
+            
+            Sellers are leaning towards PUT writing at ATM:
+            1. **Slight bullish bias** - More PUT activity than CALL
+            2. **Moderate PUT OI** - PUT OI slightly higher than CALL
+            3. **Balanced delta** - Delta exposure relatively neutral
+            
+            **Trading Implication:** Cautious LONG bias, wait for confirmation
+            """)
+        elif atm_bias["total_score"] < -0.3:
+            st.error(f"""
+            **Strong Bearish ATM Bias ({atm_bias['total_score']:.2f})**
+            
+            Sellers are heavily writing CALLs at ATM strikes, indicating:
+            1. **Bearish conviction** - Expecting price to stay below ATM
+            2. **CALL selling dominance** - More CALL OI than PUT OI
+            3. **Positive delta exposure** - CALLs creating positive delta
+            4. **Potential resistance** - ATM acting as strong resistance
+            
+            **Trading Implication:** Favor SHORT positions with stops above ATM
+            """)
+        elif atm_bias["total_score"] < -0.1:
+            st.warning(f"""
+            **Mild Bearish ATM Bias ({atm_bias['total_score']:.2f})**
+            
+            Sellers are leaning towards CALL writing at ATM:
+            1. **Slight bearish bias** - More CALL activity than PUT
+            2. **Moderate CALL OI** - CALL OI slightly higher than PUT
+            3. **Balanced delta** - Delta exposure relatively neutral
+            
+            **Trading Implication:** Cautious SHORT bias, wait for confirmation
+            """)
+        else:
+            st.info(f"""
+            **Neutral ATM Bias ({atm_bias['total_score']:.2f})**
+            
+            Balanced seller activity at ATM:
+            1. **No clear bias** - CALL and PUT activity balanced
+            2. **Equal OI distribution** - Similar OI on both sides
+            3. **Neutral delta/gamma** - Minimal directional pressure
+            
+            **Trading Implication:** Range-bound expected, wait for breakout
+            """)
+        
+        # Gamma exposure implications
+        st.markdown("#### ⚡ GAMMA EXPOSURE IMPLICATIONS")
+        if atm_bias["metrics"]["gamma_exposure"] > 100000:
+            st.success(f"""
+            **Positive Gamma Exposure (₹{atm_bias['metrics']['gamma_exposure']:,})**
+            
+            Market makers are SHORT gamma at ATM:
+            - **Stabilizing effect** - They'll buy on dips, sell on rallies
+            - **Reduced volatility** - Price moves become smoother
+            - **Mean reversion bias** - Tends to revert to ATM
+            - **Gamma squeeze unlikely** - Less explosive moves
+            
+            **Trading Implication:** Fade extremes, trade mean reversion
+            """)
+        elif atm_bias["metrics"]["gamma_exposure"] < -100000:
+            st.warning(f"""
+            **Negative Gamma Exposure (₹{abs(atm_bias['metrics']['gamma_exposure']):,})**
+            
+            Market makers are LONG gamma at ATM:
+            - **Destabilizing effect** - They'll sell on dips, buy on rallies
+            - **Increased volatility** - Price moves become more explosive
+            - **Momentum bias** - Moves tend to accelerate
+            - **Gamma squeeze possible** - Potential for sharp moves
+            
+            **Trading Implication:** Ride momentum, expect whipsaws
+            """)
+        else:
+            st.info("**Neutral Gamma Exposure** - Minimal impact on price action")
+    else:
+        st.info("ATM bias analysis not available for current data")
+
 # ============================================
-# 🎯 TRADING INSIGHTS - SELLER PERSPECTIVE + MOMENT + EXPIRY + OI/PCR
+# 🎯 TRADING INSIGHTS - SELLER PERSPECTIVE + ATM BIAS + MOMENT + EXPIRY + OI/PCR
 # ============================================
 st.markdown("---")
-st.markdown("## 💡 TRADING INSIGHTS (Seller + Moment + Expiry + OI/PCR Fusion)")
+st.markdown("## 💡 TRADING INSIGHTS (Seller + ATM Bias + Moment + Expiry + OI/PCR Fusion)")
 
 insight_col1, insight_col2 = st.columns(2)
 
@@ -3793,6 +4816,15 @@ with insight_col1:
         st.success("**Gamma Exposure:** Sellers SHORT gamma. Expect reduced volatility and mean reversion.")
     elif total_gex_net < 0:
         st.warning("**Gamma Exposure:** Sellers LONG gamma. Expect increased volatility and momentum moves.")
+    
+    # ATM Bias insight
+    if atm_bias:
+        if atm_bias["total_score"] > 0.2:
+            st.success(f"**ATM Bias Bullish ({atm_bias['total_score']:.2f}):** Heavy PUT selling at ATM confirms bullish sentiment")
+        elif atm_bias["total_score"] < -0.2:
+            st.error(f"**ATM Bias Bearish ({atm_bias['total_score']:.2f}):** Heavy CALL selling at ATM confirms bearish sentiment")
+        else:
+            st.info(f"**ATM Bias Neutral ({atm_bias['total_score']:.2f}):** Balanced activity at ATM")
     
     # PCR insight with OI context
     total_pcr = total_PE_OI / total_CE_OI if total_CE_OI > 0 else 0
@@ -3859,6 +4891,19 @@ with insight_col2:
         if oi_pcr_metrics['max_ce_oi'] > 500000 and oi_pcr_metrics['max_ce_strike'] > spot:
             st.info(f"**Strong CALL Resistance:** Consider ₹{oi_pcr_metrics['max_ce_strike']:,} as major resistance ({oi_pcr_metrics['max_ce_oi']:,} OI)")
     
+    # ATM Bias-based adjustments
+    if atm_bias:
+        st.markdown("#### 🎯 ATM BIAS-BASED ADJUSTMENTS")
+        if atm_bias["total_score"] > 0.3:
+            st.success("**Strong Bullish ATM Bias:** Consider tighter stops on LONG positions, wider stops on SHORT")
+        elif atm_bias["total_score"] < -0.3:
+            st.success("**Strong Bearish ATM Bias:** Consider tighter stops on SHORT positions, wider stops on LONG")
+        
+        if atm_bias["metrics"]["gamma_exposure"] < -200000:
+            st.warning("**High Negative Gamma Exposure:** Expect explosive moves - Use wider stops")
+        elif atm_bias["metrics"]["gamma_exposure"] > 200000:
+            st.info("**High Positive Gamma Exposure:** Expect mean reversion - Tighter stops may work")
+    
     # Expiry-based risk adjustments with OI context
     if expiry_spike_data["active"]:
         st.markdown("#### 📅 EXPIRY-BASED RISK ADJUSTMENTS")
@@ -3890,7 +4935,7 @@ with insight_col2:
     if moment_metrics["gamma_cluster"]["score"] > 70:
         st.warning("**High Gamma Cluster:** Expect whipsaws around ATM - be prepared for volatility")
 
-# Final Seller Summary with Moment, Expiry, and OI/PCR Integration
+# Final Seller Summary with ATM Bias, Moment, Expiry, and OI/PCR Integration
 st.markdown("---")
 moment_summary = ""
 if moment_metrics["momentum_burst"]["score"] > 60:
@@ -3898,6 +4943,8 @@ if moment_metrics["momentum_burst"]["score"] > 60:
 if moment_metrics["orderbook"]["available"] and abs(moment_metrics["orderbook"]["pressure"]) > 0.15:
     direction = "buy" if moment_metrics["orderbook"]["pressure"] > 0 else "sell"
     moment_summary += f"Strong {direction} pressure in orderbook. "
+
+atm_bias_summary = f"ATM Bias: {atm_bias['verdict'] if atm_bias else 'N/A'} ({atm_bias['total_score']:.2f} score)" if atm_bias else "ATM Bias: N/A"
 
 expiry_summary = ""
 if expiry_spike_data["active"]:
@@ -3912,8 +4959,9 @@ oi_pcr_summary = f"PCR: {oi_pcr_metrics['pcr_total']:.2f} ({oi_pcr_metrics['pcr_
 
 st.markdown(f'''
 <div class='seller-explanation'>
-    <h3>🎯 FINAL ASSESSMENT (Seller + Moment + Expiry + OI/PCR)</h3>
+    <h3>🎯 FINAL ASSESSMENT (Seller + ATM Bias + Moment + Expiry + OI/PCR)</h3>
     <p><strong>Market Makers are telling us:</strong> {seller_bias_result["explanation"]}</p>
+    <p><strong>ATM Zone Analysis:</strong> {atm_bias_summary}</p>
     <p><strong>Their game plan:</strong> {seller_bias_result["action"]}</p>
     <p><strong>Moment Detector:</strong> {moment_summary if moment_summary else "Moment indicators neutral"}</p>
     <p><strong>OI/PCR Analysis:</strong> {oi_pcr_summary}</p>
@@ -3927,7 +4975,7 @@ st.markdown(f'''
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
-st.caption("🎯 **NIFTY Option Screener v6.0 — SELLER'S PERSPECTIVE + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS** | All features enabled")
+st.caption("🎯 **NIFTY Option Screener v7.0 — SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS** | All features enabled")
 
 # Requirements note
 st.markdown("""
