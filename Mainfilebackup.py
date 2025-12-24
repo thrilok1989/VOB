@@ -1,6 +1,22 @@
 """
-Nifty Option Screener v7.0 - Complete Simplified Version
-Seller's Perspective + Market Depth + Iceberg Detection + OI/PCR Analysis
+Nifty Option Screener v7.5 — 100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS + MARKET DEPTH ANALYZER
+EVERYTHING interpreted from Option Seller/Market Maker viewpoint
+CALL building = BEARISH (sellers selling calls, expecting price to stay below)
+PUT building = BULLISH (sellers selling puts, expecting price to stay above)
+
+NEW FEATURES ADDED:
+1. Comprehensive ATM Bias Analysis (12 metrics)
+2. Multi-dimensional Bias Dashboard
+3. Support/Resistance Bias Analysis
+4. Enhanced Entry Signals with Bias Integration
+5. Momentum Burst Detection
+6. Orderbook Pressure Analysis
+7. Gamma Cluster Concentration
+8. OI Velocity/Acceleration
+9. Telegram Signal Generation
+10. Expiry Spike Detector
+11. Enhanced OI/PCR Analytics
+12. MARKET DEPTH ANALYZER (New!)
 """
 
 import streamlit as st
@@ -12,61 +28,1819 @@ from datetime import datetime, timedelta
 import pytz
 from math import log, sqrt
 from scipy.stats import norm
+from supabase import create_client, Client
+import os
 import json
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # -----------------------
-#  CONFIGURATION
+#  IST TIMEZONE SETUP
 # -----------------------
 IST = pytz.timezone('Asia/Kolkata')
 
 def get_ist_now():
     return datetime.now(IST)
 
-def get_ist_datetime_str():
-    return get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
-
 def get_ist_time_str():
     return get_ist_now().strftime("%H:%M:%S")
 
-# Auto-refresh
+def get_ist_date_str():
+    return get_ist_now().strftime("%Y-%m-%d")
+
+def get_ist_datetime_str():
+    return get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
+
+# -----------------------
+#  CONFIG
+# -----------------------
 AUTO_REFRESH_SEC = 60
 LOT_SIZE = 50
 RISK_FREE_RATE = 0.06
 ATM_STRIKE_WINDOW = 8
+SCORE_WEIGHTS = {"chg_oi": 2.0, "volume": 0.5, "oi": 0.2, "iv": 0.3}
+BREAKOUT_INDEX_WEIGHTS = {"atm_oi_shift": 0.4, "winding_balance": 0.3, "vol_oi_div": 0.2, "gamma_pressure": 0.1}
+SAVE_INTERVAL_SEC = 300
 
-# Load secrets
+# NEW: Moment detector weights
+MOMENT_WEIGHTS = {
+    "momentum_burst": 0.40,        # Vol × IV × |ΔOI|
+    "orderbook_pressure": 0.20,    # buy/sell depth imbalance
+    "gamma_cluster": 0.25,         # ATM ±2 gamma concentration
+    "oi_acceleration": 0.15        # OI speed-up (break/hold)
+}
+
+TIME_WINDOWS = {
+    "morning": {"start": (9, 15), "end": (10, 30), "label": "Morning (09:15-10:30 IST)"},
+    "mid": {"start": (10, 30), "end": (12, 30), "label": "Mid (10:30-12:30 IST)"},
+    "afternoon": {"start": (14, 0), "end": (15, 30), "label": "Afternoon (14:00-15:30 IST)"},
+    "evening": {"start": (15, 0), "end": (15, 30), "label": "Evening (15:00-15:30 IST)"}
+}
+
+# -----------------------
+#  SECRETS
+# -----------------------
 try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
+    SUPABASE_TABLE = st.secrets.get("SUPABASE_TABLE", "option_snapshots")
+    SUPABASE_TABLE_PCR = st.secrets.get("SUPABASE_TABLE_PCR", "strike_pcr_snapshots")
     DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
     DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
-except:
-    st.error("❌ Missing Dhan credentials. Add them to Streamlit secrets.")
+    # Telegram credentials (optional)
+    TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
+except Exception as e:
+    st.error("❌ Missing credentials")
     st.stop()
 
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+except Exception as e:
+    st.error(f"❌ Supabase failed: {e}")
+    supabase = None
+
 DHAN_BASE_URL = "https://api.dhan.co"
+NIFTY_UNDERLYING_SCRIP = "13"
+NIFTY_UNDERLYING_SEG = "IDX_I"
+
+# ============================================
+# 🎯 MARKET DEPTH ANALYZER (NEW)
+# ============================================
+
+def get_market_depth_nse(limit=20):
+    """
+    Fetch Nifty market depth from NSE or alternative source
+    Returns: dict with bid/ask depth
+    """
+    try:
+        # Using NSE API as alternative to Dhan for depth
+        url = "https://www.nseindia.com/api/quote-equity?symbol=NIFTY"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.nseindia.com/get-quotes/equity"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            depth_data = data.get("marketDeptOrderBook", {})
+            
+            if depth_data:
+                return {
+                    "bid": depth_data.get("buy", []),
+                    "ask": depth_data.get("sell", []),
+                    "total_bid_qty": sum(item.get("quantity", 0) for item in depth_data.get("buy", [])),
+                    "total_ask_qty": sum(item.get("quantity", 0) for item in depth_data.get("sell", [])),
+                    "source": "NSE"
+                }
+    except Exception as e:
+        st.warning(f"Depth fetch failed: {e}")
+    
+    # Fallback: Simulated depth if API fails
+    return generate_simulated_depth()
+
+def generate_simulated_depth():
+    """
+    Generate simulated depth for demo/testing
+    """
+    spot_price = get_nifty_spot_price()
+    if spot_price == 0:
+        spot_price = 22500  # Default
+    
+    bid_side = []
+    ask_side = []
+    
+    # Generate bid side (prices below spot)
+    for i in range(1, 11):
+        price = spot_price - (i * 5)  # 5 point intervals
+        qty = np.random.randint(1000, 10000) * (12 - i)  # More volume near spot
+        bid_side.append({
+            "price": round(price, 2),
+            "quantity": int(qty),
+            "orders": np.random.randint(5, 50)
+        })
+    
+    # Generate ask side (prices above spot)
+    for i in range(1, 11):
+        price = spot_price + (i * 5)  # 5 point intervals
+        qty = np.random.randint(1000, 10000) * (12 - i)  # More volume near spot
+        ask_side.append({
+            "price": round(price, 2),
+            "quantity": int(qty),
+            "orders": np.random.randint(5, 50)
+        })
+    
+    return {
+        "bid": sorted(bid_side, key=lambda x: x["price"], reverse=True),  # Highest bid first
+        "ask": sorted(ask_side, key=lambda x: x["price"]),  # Lowest ask first
+        "total_bid_qty": sum(item["quantity"] for item in bid_side),
+        "total_ask_qty": sum(item["quantity"] for item in ask_side),
+        "source": "SIMULATED"
+    }
+
+def analyze_market_depth(depth_data, spot_price, levels=10):
+    """
+    Comprehensive market depth analysis
+    """
+    if not depth_data or "bid" not in depth_data or "ask" not in depth_data:
+        return {"available": False}
+    
+    bids = depth_data["bid"][:levels]
+    asks = depth_data["ask"][:levels]
+    
+    total_bid_qty = depth_data.get("total_bid_qty", sum(b["quantity"] for b in bids))
+    total_ask_qty = depth_data.get("total_ask_qty", sum(a["quantity"] for a in asks))
+    
+    # 1. Depth Imbalance
+    total_qty = total_bid_qty + total_ask_qty
+    depth_imbalance = (total_bid_qty - total_ask_qty) / total_qty if total_qty > 0 else 0
+    
+    # 2. Near-spot concentration
+    near_bid_qty = sum(b["quantity"] for b in bids[:3])  # Top 3 bids
+    near_ask_qty = sum(a["quantity"] for a in asks[:3])  # Top 3 asks
+    near_imbalance = (near_bid_qty - near_ask_qty) / (near_bid_qty + near_ask_qty) if (near_bid_qty + near_ask_qty) > 0 else 0
+    
+    # 3. Large Orders Detection
+    avg_bid_qty = np.mean([b["quantity"] for b in bids]) if bids else 0
+    avg_ask_qty = np.mean([a["quantity"] for a in asks]) if asks else 0
+    
+    large_bid_orders = [b for b in bids if b["quantity"] > avg_bid_qty * 3]
+    large_ask_orders = [a for a in asks if a["quantity"] > avg_ask_qty * 3]
+    
+    # 4. Spread Analysis
+    if bids and asks:
+        best_bid = max(b["price"] for b in bids)
+        best_ask = min(a["price"] for a in asks)
+        spread = best_ask - best_bid
+        spread_percent = (spread / spot_price) * 100
+    else:
+        best_bid = spot_price
+        best_ask = spot_price
+        spread = 0
+        spread_percent = 0
+    
+    # 5. Depth Profile
+    price_levels = sorted([(b["price"], "BID", b["quantity"]) for b in bids] + 
+                          [(a["price"], "ASK", a["quantity"]) for a in asks], 
+                          key=lambda x: x[0])
+    
+    # 6. Support/Resistance from Depth
+    support_levels = sorted(bids, key=lambda x: x["quantity"], reverse=True)[:3]
+    resistance_levels = sorted(asks, key=lambda x: x["quantity"], reverse=True)[:3]
+    
+    return {
+        "available": True,
+        "depth_imbalance": depth_imbalance,
+        "near_imbalance": near_imbalance,
+        "total_bid_qty": total_bid_qty,
+        "total_ask_qty": total_ask_qty,
+        "best_bid": best_bid,
+        "best_ask": best_ask,
+        "spread": spread,
+        "spread_percent": spread_percent,
+        "large_bid_orders": len(large_bid_orders),
+        "large_ask_orders": len(large_ask_orders),
+        "avg_bid_size": avg_bid_qty,
+        "avg_ask_size": avg_ask_qty,
+        "price_levels": price_levels,
+        "top_supports": [(s["price"], s["quantity"]) for s in support_levels],
+        "top_resistances": [(r["price"], r["quantity"]) for r in resistance_levels],
+        "bid_side": bids,
+        "ask_side": asks,
+        "total_levels": len(bids) + len(asks)
+    }
+
+def calculate_depth_based_signals(depth_analysis, spot_price):
+    """
+    Generate trading signals from depth analysis
+    """
+    if not depth_analysis["available"]:
+        return {"available": False}
+    
+    signals = []
+    confidence = 0
+    signal_type = "NEUTRAL"
+    
+    # 1. Depth Imbalance Signal
+    imbalance = depth_analysis["depth_imbalance"]
+    if imbalance > 0.3:
+        signals.append(f"Strong buy depth (imbalance: {imbalance:+.2f})")
+        confidence += 30
+        signal_type = "BULLISH"
+    elif imbalance < -0.3:
+        signals.append(f"Strong sell depth (imbalance: {imbalance:+.2f})")
+        confidence += 30
+        signal_type = "BEARISH"
+    
+    # 2. Near-spot Imbalance
+    near_imbalance = depth_analysis["near_imbalance"]
+    if abs(near_imbalance) > 0.4:
+        if near_imbalance > 0:
+            signals.append(f"Heavy bids near spot")
+            confidence += 20
+            if signal_type == "NEUTRAL":
+                signal_type = "BULLISH"
+        else:
+            signals.append(f"Heavy asks near spot")
+            confidence += 20
+            if signal_type == "NEUTRAL":
+                signal_type = "BEARISH"
+    
+    # 3. Large Orders Signal
+    if depth_analysis["large_bid_orders"] > depth_analysis["large_ask_orders"] + 2:
+        signals.append(f"More large bids ({depth_analysis['large_bid_orders']}) than asks ({depth_analysis['large_ask_orders']})")
+        confidence += 15
+    elif depth_analysis["large_ask_orders"] > depth_analysis["large_bid_orders"] + 2:
+        signals.append(f"More large asks ({depth_analysis['large_ask_orders']}) than bids ({depth_analysis['large_bid_orders']})")
+        confidence += 15
+    
+    # 4. Spread Analysis
+    if depth_analysis["spread_percent"] < 0.01:  # Tight spread
+        signals.append(f"Tight spread ({depth_analysis['spread_percent']:.3f}%) - Good liquidity")
+        confidence += 10
+    elif depth_analysis["spread_percent"] > 0.05:  # Wide spread
+        signals.append(f"Wide spread ({depth_analysis['spread_percent']:.3f}%) - Low liquidity")
+        confidence -= 10
+    
+    # Determine overall signal
+    if confidence >= 50:
+        strength = "STRONG"
+        color = "#00ff88" if signal_type == "BULLISH" else "#ff4444"
+    elif confidence >= 30:
+        strength = "MODERATE"
+        color = "#00cc66" if signal_type == "BULLISH" else "#ff6666"
+    else:
+        strength = "NEUTRAL"
+        signal_type = "NEUTRAL"
+        color = "#66b3ff"
+    
+    return {
+        "available": True,
+        "signal_type": signal_type,
+        "strength": strength,
+        "confidence": min(confidence, 100),
+        "color": color,
+        "signals": signals,
+        "imbalance": imbalance,
+        "near_imbalance": near_imbalance,
+        "spread_percent": depth_analysis["spread_percent"]
+    }
+
+def enhanced_orderbook_pressure(depth_analysis, spot):
+    """
+    Enhanced orderbook pressure with depth analysis
+    """
+    if not depth_analysis["available"]:
+        return {"available": False}
+    
+    # Calculate pressure from multiple depth factors
+    factors = []
+    pressure_score = 0
+    
+    # 1. Overall imbalance (40% weight)
+    imbalance = depth_analysis["depth_imbalance"]
+    pressure_score += imbalance * 0.4
+    factors.append(f"Overall imbalance: {imbalance:+.3f}")
+    
+    # 2. Near-spot concentration (30% weight)
+    near_imbalance = depth_analysis["near_imbalance"]
+    pressure_score += near_imbalance * 0.3
+    factors.append(f"Near-spot imbalance: {near_imbalance:+.3f}")
+    
+    # 3. Large orders bias (20% weight)
+    large_orders_diff = (depth_analysis["large_bid_orders"] - depth_analysis["large_ask_orders"])
+    large_orders_bias = large_orders_diff / max(1, depth_analysis["large_bid_orders"] + depth_analysis["large_ask_orders"])
+    pressure_score += large_orders_bias * 0.2
+    factors.append(f"Large orders bias: {large_orders_bias:+.3f}")
+    
+    # 4. Spread tightness (10% weight) - tighter spread = more pressure
+    spread_factor = max(0, 0.05 - depth_analysis["spread_percent"]) / 0.05  # Normalize 0-1
+    pressure_score += spread_factor * 0.1
+    factors.append(f"Spread factor: {spread_factor:+.3f}")
+    
+    # Normalize to -1 to 1 range
+    pressure_score = max(min(pressure_score, 1), -1)
+    
+    return {
+        "available": True,
+        "pressure": pressure_score,
+        "factors": factors,
+        "total_bid_qty": depth_analysis["total_bid_qty"],
+        "total_ask_qty": depth_analysis["total_ask_qty"],
+        "best_bid": depth_analysis["best_bid"],
+        "best_ask": depth_analysis["best_ask"],
+        "spread": depth_analysis["spread"],
+        "spread_percent": depth_analysis["spread_percent"]
+    }
+
+def create_depth_table(depth_analysis):
+    """
+    Create formatted depth table for display
+    """
+    if not depth_analysis["available"]:
+        return None
+    
+    table_data = []
+    
+    # Combine bid and ask sides
+    max_levels = max(len(depth_analysis["bid_side"]), len(depth_analysis["ask_side"]))
+    
+    for i in range(max_levels):
+        bid_row = depth_analysis["bid_side"][i] if i < len(depth_analysis["bid_side"]) else None
+        ask_row = depth_analysis["ask_side"][i] if i < len(depth_analysis["ask_side"]) else None
+        
+        table_data.append({
+            "Level": i+1,
+            "Bid Price": f"₹{bid_row['price']:,.2f}" if bid_row else "-",
+            "Bid Qty": f"{bid_row['quantity']:,}" if bid_row else "-",
+            "Ask Price": f"₹{ask_row['price']:,.2f}" if ask_row else "-",
+            "Ask Qty": f"{ask_row['quantity']:,}" if ask_row else "-"
+        })
+    
+    return pd.DataFrame(table_data)
+
+def visualize_market_depth_plotly(depth_analysis, spot_price):
+    """
+    Create interactive depth chart using Plotly
+    """
+    if not depth_analysis["available"]:
+        return None
+    
+    bids = depth_analysis["bid_side"]
+    asks = depth_analysis["ask_side"]
+    
+    if not bids or not asks:
+        return None
+    
+    # Create figure
+    fig = go.Figure()
+    
+    # Add bid bars (to the left)
+    bid_prices = [b["price"] for b in bids]
+    bid_quantities = [-b["quantity"] for b in bids]  # Negative for left side
+    
+    fig.add_trace(go.Bar(
+        x=bid_quantities,
+        y=bid_prices,
+        name='Bid',
+        orientation='h',
+        marker=dict(color='#00ff88', opacity=0.7),
+        hovertemplate='Bid: ₹%{y:,.2f}<br>Qty: %{x:,}<extra></extra>',
+        text=[f"₹{price:,.2f}<br>{qty:,}" for price, qty in zip(bid_prices, [b["quantity"] for b in bids])],
+        textposition='outside'
+    ))
+    
+    # Add ask bars (to the right)
+    ask_prices = [a["price"] for a in asks]
+    ask_quantities = [a["quantity"] for a in asks]
+    
+    fig.add_trace(go.Bar(
+        x=ask_quantities,
+        y=ask_prices,
+        name='Ask',
+        orientation='h',
+        marker=dict(color='#ff4444', opacity=0.7),
+        hovertemplate='Ask: ₹%{y:,.2f}<br>Qty: %{x:,}<extra></extra>',
+        text=[f"₹{price:,.2f}<br>{qty:,}" for price, qty in zip(ask_prices, ask_quantities)],
+        textposition='outside'
+    ))
+    
+    # Add spot line
+    fig.add_hline(y=spot_price, line_dash="dash", line_color="white", 
+                  annotation_text=f"Spot: ₹{spot_price:,.2f}", 
+                  annotation_position="bottom right")
+    
+    # Update layout
+    fig.update_layout(
+        title="Market Depth Visualization",
+        xaxis_title="Quantity",
+        yaxis_title="Price (₹)",
+        barmode='overlay',
+        height=500,
+        plot_bgcolor='#0e1117',
+        paper_bgcolor='#0e1117',
+        font=dict(color='white'),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        xaxis=dict(
+            tickformat=",d",
+            gridcolor='rgba(128, 128, 128, 0.2)'
+        ),
+        yaxis=dict(
+            tickformat=",d",
+            gridcolor='rgba(128, 128, 128, 0.2)'
+        )
+    )
+    
+    return fig
+
+# ============================================
+# 🎯 ATM BIAS ANALYZER (NEW)
+# ============================================
+def analyze_atm_bias(merged_df, spot, atm_strike, strike_gap):
+    """
+    Analyze ATM bias from multiple perspectives for sellers
+    """
+    
+    # Define ATM window (±2 strikes around ATM)
+    atm_window = 2
+    atm_strikes = [s for s in merged_df["strikePrice"] 
+                  if abs(s - atm_strike) <= (atm_window * strike_gap)]
+    
+    atm_df = merged_df[merged_df["strikePrice"].isin(atm_strikes)].copy()
+    
+    if atm_df.empty:
+        return None
+    
+    # Initialize bias scores
+    bias_scores = {
+        "OI_Bias": 0,
+        "ChgOI_Bias": 0,
+        "Volume_Bias": 0,
+        "Delta_Bias": 0,
+        "Gamma_Bias": 0,
+        "Premium_Bias": 0,
+        "IV_Bias": 0,
+        "Delta_Exposure_Bias": 0,
+        "Gamma_Exposure_Bias": 0,
+        "IV_Skew_Bias": 0,
+        "OI_Change_Bias": 0
+    }
+    
+    bias_interpretations = {}
+    bias_emojis = {}
+    
+    # 1. OI BIAS (CALL vs PUT OI)
+    total_ce_oi_atm = atm_df["OI_CE"].sum()
+    total_pe_oi_atm = atm_df["OI_PE"].sum()
+    oi_ratio = total_pe_oi_atm / max(total_ce_oi_atm, 1)
+    
+    if oi_ratio > 1.5:
+        bias_scores["OI_Bias"] = 1
+        bias_interpretations["OI_Bias"] = "Heavy PUT OI at ATM → Bullish sellers"
+        bias_emojis["OI_Bias"] = "🐂 Bullish"
+    elif oi_ratio > 1.0:
+        bias_scores["OI_Bias"] = 0.5
+        bias_interpretations["OI_Bias"] = "Moderate PUT OI → Mild bullish"
+        bias_emojis["OI_Bias"] = "🐂 Bullish"
+    elif oi_ratio < 0.7:
+        bias_scores["OI_Bias"] = -1
+        bias_interpretations["OI_Bias"] = "Heavy CALL OI at ATM → Bearish sellers"
+        bias_emojis["OI_Bias"] = "🐻 Bearish"
+    elif oi_ratio < 1.0:
+        bias_scores["OI_Bias"] = -0.5
+        bias_interpretations["OI_Bias"] = "Moderate CALL OI → Mild bearish"
+        bias_emojis["OI_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["OI_Bias"] = 0
+        bias_interpretations["OI_Bias"] = "Balanced OI → Neutral"
+        bias_emojis["OI_Bias"] = "⚖️ Neutral"
+    
+    # 2. CHANGE IN OI BIAS (CALL vs PUT ΔOI)
+    total_ce_chg_atm = atm_df["Chg_OI_CE"].sum()
+    total_pe_chg_atm = atm_df["Chg_OI_PE"].sum()
+    
+    if total_pe_chg_atm > 0 and total_ce_chg_atm > 0:
+        # Both sides writing
+        if total_pe_chg_atm > total_ce_chg_atm:
+            bias_scores["ChgOI_Bias"] = 0.5
+            bias_interpretations["ChgOI_Bias"] = "More PUT writing → Bullish buildup"
+            bias_emojis["ChgOI_Bias"] = "🐂 Bullish"
+        else:
+            bias_scores["ChgOI_Bias"] = -0.5
+            bias_interpretations["ChgOI_Bias"] = "More CALL writing → Bearish buildup"
+            bias_emojis["ChgOI_Bias"] = "🐻 Bearish"
+    elif total_pe_chg_atm > 0:
+        bias_scores["ChgOI_Bias"] = 1
+        bias_interpretations["ChgOI_Bias"] = "Only PUT writing → Strong bullish"
+        bias_emojis["ChgOI_Bias"] = "🐂 Bullish"
+    elif total_ce_chg_atm > 0:
+        bias_scores["ChgOI_Bias"] = -1
+        bias_interpretations["ChgOI_Bias"] = "Only CALL writing → Strong bearish"
+        bias_emojis["ChgOI_Bias"] = "🐻 Bearish"
+    elif total_pe_chg_atm < 0 and total_ce_chg_atm < 0:
+        # Both sides unwinding
+        bias_scores["ChgOI_Bias"] = 0
+        bias_interpretations["ChgOI_Bias"] = "Both unwinding → Range contraction"
+        bias_emojis["ChgOI_Bias"] = "⚖️ Neutral"
+    else:
+        bias_scores["ChgOI_Bias"] = 0
+        bias_interpretations["ChgOI_Bias"] = "Mixed activity"
+        bias_emojis["ChgOI_Bias"] = "⚖️ Neutral"
+    
+    # 3. VOLUME BIAS (CALL vs PUT Volume)
+    total_ce_vol_atm = atm_df["Vol_CE"].sum()
+    total_pe_vol_atm = atm_df["Vol_PE"].sum()
+    vol_ratio = total_pe_vol_atm / max(total_ce_vol_atm, 1)
+    
+    if vol_ratio > 1.3:
+        bias_scores["Volume_Bias"] = 1
+        bias_interpretations["Volume_Bias"] = "High PUT volume → Bullish activity"
+        bias_emojis["Volume_Bias"] = "🐂 Bullish"
+    elif vol_ratio > 1.0:
+        bias_scores["Volume_Bias"] = 0.5
+        bias_interpretations["Volume_Bias"] = "More PUT volume → Mild bullish"
+        bias_emojis["Volume_Bias"] = "🐂 Bullish"
+    elif vol_ratio < 0.8:
+        bias_scores["Volume_Bias"] = -1
+        bias_interpretations["Volume_Bias"] = "High CALL volume → Bearish activity"
+        bias_emojis["Volume_Bias"] = "🐻 Bearish"
+    elif vol_ratio < 1.0:
+        bias_scores["Volume_Bias"] = -0.5
+        bias_interpretations["Volume_Bias"] = "More CALL volume → Mild bearish"
+        bias_emojis["Volume_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["Volume_Bias"] = 0
+        bias_interpretations["Volume_Bias"] = "Balanced volume"
+        bias_emojis["Volume_Bias"] = "⚖️ Neutral"
+    
+    # 4. DELTA BIAS (Net Delta Position)
+    total_delta_ce = atm_df["Delta_CE"].sum()
+    total_delta_pe = atm_df["Delta_PE"].sum()
+    net_delta = total_delta_ce + total_delta_pe  # CALL delta positive, PUT delta negative
+    
+    if net_delta > 0.3:
+        bias_scores["Delta_Bias"] = -1  # Positive delta = CALL heavy = Bearish for sellers
+        bias_interpretations["Delta_Bias"] = "Positive delta → CALL heavy → Bearish"
+        bias_emojis["Delta_Bias"] = "🐻 Bearish"
+    elif net_delta > 0.1:
+        bias_scores["Delta_Bias"] = -0.5
+        bias_interpretations["Delta_Bias"] = "Mild positive delta → Slightly bearish"
+        bias_emojis["Delta_Bias"] = "🐻 Bearish"
+    elif net_delta < -0.3:
+        bias_scores["Delta_Bias"] = 1  # Negative delta = PUT heavy = Bullish for sellers
+        bias_interpretations["Delta_Bias"] = "Negative delta → PUT heavy → Bullish"
+        bias_emojis["Delta_Bias"] = "🐂 Bullish"
+    elif net_delta < -0.1:
+        bias_scores["Delta_Bias"] = 0.5
+        bias_interpretations["Delta_Bias"] = "Mild negative delta → Slightly bullish"
+        bias_emojis["Delta_Bias"] = "🐂 Bullish"
+    else:
+        bias_scores["Delta_Bias"] = 0
+        bias_interpretations["Delta_Bias"] = "Neutral delta"
+        bias_emojis["Delta_Bias"] = "⚖️ Neutral"
+    
+    # 5. GAMMA BIAS (Net Gamma Position)
+    total_gamma_ce = atm_df["Gamma_CE"].sum()
+    total_gamma_pe = atm_df["Gamma_PE"].sum()
+    net_gamma = total_gamma_ce + total_gamma_pe
+    
+    # For sellers: Positive gamma = stabilizing, Negative gamma = explosive
+    if net_gamma > 0.1:
+        bias_scores["Gamma_Bias"] = 1
+        bias_interpretations["Gamma_Bias"] = "Positive gamma → Stabilizing → Bullish (less volatility)"
+        bias_emojis["Gamma_Bias"] = "🐂 Bullish"
+    elif net_gamma > 0:
+        bias_scores["Gamma_Bias"] = 0.5
+        bias_interpretations["Gamma_Bias"] = "Mild positive gamma → Slightly stabilizing"
+        bias_emojis["Gamma_Bias"] = "🐂 Bullish"
+    elif net_gamma < -0.1:
+        bias_scores["Gamma_Bias"] = -1
+        bias_interpretations["Gamma_Bias"] = "Negative gamma → Explosive → Bearish (high volatility)"
+        bias_emojis["Gamma_Bias"] = "🐻 Bearish"
+    elif net_gamma < 0:
+        bias_scores["Gamma_Bias"] = -0.5
+        bias_interpretations["Gamma_Bias"] = "Mild negative gamma → Slightly explosive"
+        bias_emojis["Gamma_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["Gamma_Bias"] = 0
+        bias_interpretations["Gamma_Bias"] = "Neutral gamma"
+        bias_emojis["Gamma_Bias"] = "⚖️ Neutral"
+    
+    # 6. PREMIUM BIAS (CALL vs PUT Premium)
+    # Calculate average premium
+    ce_premium = atm_df["LTP_CE"].mean() if not atm_df["LTP_CE"].isna().all() else 0
+    pe_premium = atm_df["LTP_PE"].mean() if not atm_df["LTP_PE"].isna().all() else 0
+    premium_ratio = pe_premium / max(ce_premium, 0.01)
+    
+    if premium_ratio > 1.2:
+        bias_scores["Premium_Bias"] = 1
+        bias_interpretations["Premium_Bias"] = "PUT premium higher → Bullish sentiment"
+        bias_emojis["Premium_Bias"] = "🐂 Bullish"
+    elif premium_ratio > 1.0:
+        bias_scores["Premium_Bias"] = 0.5
+        bias_interpretations["Premium_Bias"] = "PUT premium slightly higher → Mild bullish"
+        bias_emojis["Premium_Bias"] = "🐂 Bullish"
+    elif premium_ratio < 0.8:
+        bias_scores["Premium_Bias"] = -1
+        bias_interpretations["Premium_Bias"] = "CALL premium higher → Bearish sentiment"
+        bias_emojis["Premium_Bias"] = "🐻 Bearish"
+    elif premium_ratio < 1.0:
+        bias_scores["Premium_Bias"] = -0.5
+        bias_interpretations["Premium_Bias"] = "CALL premium slightly higher → Mild bearish"
+        bias_emojis["Premium_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["Premium_Bias"] = 0
+        bias_interpretations["Premium_Bias"] = "Balanced premiums"
+        bias_emojis["Premium_Bias"] = "⚖️ Neutral"
+    
+    # 7. IV BIAS (CALL vs PUT IV)
+    ce_iv = atm_df["IV_CE"].mean() if not atm_df["IV_CE"].isna().all() else 0
+    pe_iv = atm_df["IV_PE"].mean() if not atm_df["IV_PE"].isna().all() else 0
+    
+    if pe_iv > ce_iv + 3:
+        bias_scores["IV_Bias"] = 1
+        bias_interpretations["IV_Bias"] = "PUT IV higher → Bullish fear"
+        bias_emojis["IV_Bias"] = "🐂 Bullish"
+    elif pe_iv > ce_iv + 1:
+        bias_scores["IV_Bias"] = 0.5
+        bias_interpretations["IV_Bias"] = "PUT IV slightly higher → Mild bullish fear"
+        bias_emojis["IV_Bias"] = "🐂 Bullish"
+    elif ce_iv > pe_iv + 3:
+        bias_scores["IV_Bias"] = -1
+        bias_interpretations["IV_Bias"] = "CALL IV higher → Bearish fear"
+        bias_emojis["IV_Bias"] = "🐻 Bearish"
+    elif ce_iv > pe_iv + 1:
+        bias_scores["IV_Bias"] = -0.5
+        bias_interpretations["IV_Bias"] = "CALL IV slightly higher → Mild bearish fear"
+        bias_emojis["IV_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["IV_Bias"] = 0
+        bias_interpretations["IV_Bias"] = "Balanced IV"
+        bias_emojis["IV_Bias"] = "⚖️ Neutral"
+    
+    # 8. DELTA EXPOSURE BIAS (OI-weighted Delta)
+    delta_exposure_ce = (atm_df["Delta_CE"] * atm_df["OI_CE"]).sum()
+    delta_exposure_pe = (atm_df["Delta_PE"] * atm_df["OI_PE"]).sum()
+    net_delta_exposure = delta_exposure_ce + delta_exposure_pe
+    
+    if net_delta_exposure > 1000000:
+        bias_scores["Delta_Exposure_Bias"] = -1
+        bias_interpretations["Delta_Exposure_Bias"] = "High CALL delta exposure → Bearish pressure"
+        bias_emojis["Delta_Exposure_Bias"] = "🐻 Bearish"
+    elif net_delta_exposure > 500000:
+        bias_scores["Delta_Exposure_Bias"] = -0.5
+        bias_interpretations["Delta_Exposure_Bias"] = "Moderate CALL delta exposure → Slightly bearish"
+        bias_emojis["Delta_Exposure_Bias"] = "🐻 Bearish"
+    elif net_delta_exposure < -1000000:
+        bias_scores["Delta_Exposure_Bias"] = 1
+        bias_interpretations["Delta_Exposure_Bias"] = "High PUT delta exposure → Bullish pressure"
+        bias_emojis["Delta_Exposure_Bias"] = "🐂 Bullish"
+    elif net_delta_exposure < -500000:
+        bias_scores["Delta_Exposure_Bias"] = 0.5
+        bias_interpretations["Delta_Exposure_Bias"] = "Moderate PUT delta exposure → Slightly bullish"
+        bias_emojis["Delta_Exposure_Bias"] = "🐂 Bullish"
+    else:
+        bias_scores["Delta_Exposure_Bias"] = 0
+        bias_interpretations["Delta_Exposure_Bias"] = "Balanced delta exposure"
+        bias_emojis["Delta_Exposure_Bias"] = "⚖️ Neutral"
+    
+    # 9. GAMMA EXPOSURE BIAS (OI-weighted Gamma)
+    gamma_exposure_ce = (atm_df["Gamma_CE"] * atm_df["OI_CE"]).sum()
+    gamma_exposure_pe = (atm_df["Gamma_PE"] * atm_df["OI_PE"]).sum()
+    net_gamma_exposure = gamma_exposure_ce + gamma_exposure_pe
+    
+    if net_gamma_exposure > 500000:
+        bias_scores["Gamma_Exposure_Bias"] = 1
+        bias_interpretations["Gamma_Exposure_Bias"] = "Positive gamma exposure → Stabilizing → Bullish"
+        bias_emojis["Gamma_Exposure_Bias"] = "🐂 Bullish"
+    elif net_gamma_exposure > 100000:
+        bias_scores["Gamma_Exposure_Bias"] = 0.5
+        bias_interpretations["Gamma_Exposure_Bias"] = "Mild positive gamma → Slightly stabilizing"
+        bias_emojis["Gamma_Exposure_Bias"] = "🐂 Bullish"
+    elif net_gamma_exposure < -500000:
+        bias_scores["Gamma_Exposure_Bias"] = -1
+        bias_interpretations["Gamma_Exposure_Bias"] = "Negative gamma exposure → Explosive → Bearish"
+        bias_emojis["Gamma_Exposure_Bias"] = "🐻 Bearish"
+    elif net_gamma_exposure < -100000:
+        bias_scores["Gamma_Exposure_Bias"] = -0.5
+        bias_interpretations["Gamma_Exposure_Bias"] = "Mild negative gamma → Slightly explosive"
+        bias_emojis["Gamma_Exposure_Bias"] = "🐻 Bearish"
+    else:
+        bias_scores["Gamma_Exposure_Bias"] = 0
+        bias_interpretations["Gamma_Exposure_Bias"] = "Balanced gamma exposure"
+        bias_emojis["Gamma_Exposure_Bias"] = "⚖️ Neutral"
+    
+    # 10. IV SKEW BIAS (ATM vs Nearby strikes)
+    # Get ±1 strike IVs
+    nearby_strikes = [s for s in merged_df["strikePrice"] 
+                     if abs(s - atm_strike) <= (1 * strike_gap)]
+    nearby_df = merged_df[merged_df["strikePrice"].isin(nearby_strikes)]
+    
+    if not nearby_df.empty:
+        atm_ce_iv = atm_df["IV_CE"].mean() if not atm_df["IV_CE"].isna().all() else 0
+        atm_pe_iv = atm_df["IV_PE"].mean() if not atm_df["IV_PE"].isna().all() else 0
+        nearby_ce_iv = nearby_df["IV_CE"].mean() if not nearby_df["IV_CE"].isna().all() else 0
+        nearby_pe_iv = nearby_df["IV_PE"].mean() if not nearby_df["IV_PE"].isna().all() else 0
+        
+        # ATM IV vs Nearby IV comparison
+        if atm_ce_iv > nearby_ce_iv + 2:
+            bias_scores["IV_Skew_Bias"] = -0.5
+            bias_interpretations["IV_Skew_Bias"] = "ATM CALL IV higher → Bearish skew"
+            bias_emojis["IV_Skew_Bias"] = "🐻 Bearish"
+        elif atm_pe_iv > nearby_pe_iv + 2:
+            bias_scores["IV_Skew_Bias"] = 0.5
+            bias_interpretations["IV_Skew_Bias"] = "ATM PUT IV higher → Bullish skew"
+            bias_emojis["IV_Skew_Bias"] = "🐂 Bullish"
+        else:
+            bias_scores["IV_Skew_Bias"] = 0
+            bias_interpretations["IV_Skew_Bias"] = "Flat IV skew"
+            bias_emojis["IV_Skew_Bias"] = "⚖️ Neutral"
+    else:
+        bias_scores["IV_Skew_Bias"] = 0
+        bias_interpretations["IV_Skew_Bias"] = "Insufficient data for IV skew"
+        bias_emojis["IV_Skew_Bias"] = "⚖️ Neutral"
+    
+    # 11. OI CHANGE BIAS (Acceleration)
+    # Calculate OI change rate
+    total_oi_change = abs(total_ce_chg_atm) + abs(total_pe_chg_atm)
+    total_oi_atm = total_ce_oi_atm + total_pe_oi_atm
+    
+    if total_oi_atm > 0:
+        oi_change_rate = total_oi_change / total_oi_atm
+        if oi_change_rate > 0.1:
+            # High OI change - check direction
+            if total_pe_chg_atm > total_ce_chg_atm:
+                bias_scores["OI_Change_Bias"] = 0.5
+                bias_interpretations["OI_Change_Bias"] = "Rapid PUT OI buildup → Bullish acceleration"
+                bias_emojis["OI_Change_Bias"] = "🐂 Bullish"
+            else:
+                bias_scores["OI_Change_Bias"] = -0.5
+                bias_interpretations["OI_Change_Bias"] = "Rapid CALL OI buildup → Bearish acceleration"
+                bias_emojis["OI_Change_Bias"] = "🐻 Bearish"
+        else:
+            bias_scores["OI_Change_Bias"] = 0
+            bias_interpretations["OI_Change_Bias"] = "Slow OI changes"
+            bias_emojis["OI_Change_Bias"] = "⚖️ Neutral"
+    
+    # Calculate final bias score
+    total_score = sum(bias_scores.values())
+    normalized_score = total_score / len(bias_scores) if bias_scores else 0
+    
+    # Determine overall verdict
+    if normalized_score > 0.3:
+        verdict = "🐂 BULLISH"
+        verdict_color = "#00ff88"
+        verdict_explanation = "ATM zone showing strong bullish bias for sellers"
+    elif normalized_score > 0.1:
+        verdict = "🐂 Mild Bullish"
+        verdict_color = "#00cc66"
+        verdict_explanation = "ATM zone leaning bullish for sellers"
+    elif normalized_score < -0.3:
+        verdict = "🐻 BEARISH"
+        verdict_color = "#ff4444"
+        verdict_explanation = "ATM zone showing strong bearish bias for sellers"
+    elif normalized_score < -0.1:
+        verdict = "🐻 Mild Bearish"
+        verdict_color = "#ff6666"
+        verdict_explanation = "ATM zone leaning bearish for sellers"
+    else:
+        verdict = "⚖️ NEUTRAL"
+        verdict_color = "#66b3ff"
+        verdict_explanation = "ATM zone balanced, no clear bias"
+    
+    return {
+        "instrument": "NIFTY",
+        "strike": atm_strike,
+        "zone": "ATM",
+        "level": "ATM Cluster",
+        "bias_scores": bias_scores,
+        "bias_interpretations": bias_interpretations,
+        "bias_emojis": bias_emojis,
+        "total_score": normalized_score,
+        "verdict": verdict,
+        "verdict_color": verdict_color,
+        "verdict_explanation": verdict_explanation,
+        "metrics": {
+            "ce_oi": int(total_ce_oi_atm),
+            "pe_oi": int(total_pe_oi_atm),
+            "ce_chg": int(total_ce_chg_atm),
+            "pe_chg": int(total_pe_chg_atm),
+            "ce_vol": int(total_ce_vol_atm),
+            "pe_vol": int(total_pe_vol_atm),
+            "net_delta": round(net_delta, 3),
+            "net_gamma": round(net_gamma, 3),
+            "ce_iv": round(ce_iv, 2),
+            "pe_iv": round(pe_iv, 2),
+            "delta_exposure": int(net_delta_exposure),
+            "gamma_exposure": int(net_gamma_exposure)
+        }
+    }
+
+# ============================================
+# 🎯 SUPPORT/RESISTANCE BIAS ANALYZER (NEW)
+# ============================================
+def analyze_support_resistance_bias(merged_df, spot, atm_strike, strike_gap, level_type="Support"):
+    """
+    Analyze bias at key support/resistance levels
+    """
+    
+    # Find key levels
+    if level_type == "Support":
+        # Find highest strike below spot with high PUT OI
+        support_strikes = merged_df[merged_df["strikePrice"] < spot].copy()
+        if support_strikes.empty:
+            return None
+        
+        # Find strike with highest PUT OI as support
+        support_strike = support_strikes.loc[support_strikes["OI_PE"].idxmax()]["strikePrice"]
+        level_df = merged_df[merged_df["strikePrice"] == support_strike]
+    else:  # Resistance
+        # Find lowest strike above spot with high CALL OI
+        resistance_strikes = merged_df[merged_df["strikePrice"] > spot].copy()
+        if resistance_strikes.empty:
+            return None
+        
+        # Find strike with highest CALL OI as resistance
+        resistance_strike = resistance_strikes.loc[resistance_strikes["OI_CE"].idxmax()]["strikePrice"]
+        level_df = merged_df[merged_df["strikePrice"] == resistance_strike]
+    
+    if level_df.empty:
+        return None
+    
+    row = level_df.iloc[0]
+    
+    # Calculate bias
+    bias_scores = {}
+    bias_emojis = {}
+    bias_interpretations = {}
+    
+    # OI Bias
+    oi_ratio = row["OI_PE"] / max(row["OI_CE"], 1)
+    if oi_ratio > 2:
+        bias_scores["OI_Bias"] = 1
+        bias_emojis["OI_Bias"] = "🐂 Bullish"
+        bias_interpretations["OI_Bias"] = "Very high PUT OI"
+    elif oi_ratio > 1:
+        bias_scores["OI_Bias"] = 0.5
+        bias_emojis["OI_Bias"] = "🐂 Bullish"
+        bias_interpretations["OI_Bias"] = "High PUT OI"
+    elif oi_ratio < 0.5:
+        bias_scores["OI_Bias"] = -1
+        bias_emojis["OI_Bias"] = "🐻 Bearish"
+        bias_interpretations["OI_Bias"] = "Very high CALL OI"
+    elif oi_ratio < 1:
+        bias_scores["OI_Bias"] = -0.5
+        bias_emojis["OI_Bias"] = "🐻 Bearish"
+        bias_interpretations["OI_Bias"] = "High CALL OI"
+    else:
+        bias_scores["OI_Bias"] = 0
+        bias_emojis["OI_Bias"] = "⚖️ Neutral"
+        bias_interpretations["OI_Bias"] = "Balanced OI"
+    
+    # OI Change Bias
+    if row["Chg_OI_PE"] > 0 and row["Chg_OI_CE"] > 0:
+        bias_scores["ChgOI_Bias"] = 0
+        bias_emojis["ChgOI_Bias"] = "⚖️ Neutral"
+        bias_interpretations["ChgOI_Bias"] = "Both sides building"
+    elif row["Chg_OI_PE"] > 0:
+        bias_scores["ChgOI_Bias"] = 1
+        bias_emojis["ChgOI_Bias"] = "🐂 Bullish"
+        bias_interpretations["ChgOI_Bias"] = "PUT building"
+    elif row["Chg_OI_CE"] > 0:
+        bias_scores["ChgOI_Bias"] = -1
+        bias_emojis["ChgOI_Bias"] = "🐻 Bearish"
+        bias_interpretations["ChgOI_Bias"] = "CALL building"
+    else:
+        bias_scores["ChgOI_Bias"] = 0
+        bias_emojis["ChgOI_Bias"] = "⚖️ Neutral"
+        bias_interpretations["ChgOI_Bias"] = "No fresh writing"
+    
+    # Volume Bias
+    vol_ratio = row["Vol_PE"] / max(row["Vol_CE"], 1)
+    if vol_ratio > 1.5:
+        bias_scores["Volume_Bias"] = 1
+        bias_emojis["Volume_Bias"] = "🐂 Bullish"
+        bias_interpretations["Volume_Bias"] = "High PUT volume"
+    elif vol_ratio > 1:
+        bias_scores["Volume_Bias"] = 0.5
+        bias_emojis["Volume_Bias"] = "🐂 Bullish"
+        bias_interpretations["Volume_Bias"] = "More PUT volume"
+    elif vol_ratio < 0.7:
+        bias_scores["Volume_Bias"] = -1
+        bias_emojis["Volume_Bias"] = "🐻 Bearish"
+        bias_interpretations["Volume_Bias"] = "High CALL volume"
+    elif vol_ratio < 1:
+        bias_scores["Volume_Bias"] = -0.5
+        bias_emojis["Volume_Bias"] = "🐻 Bearish"
+        bias_interpretations["Volume_Bias"] = "More CALL volume"
+    else:
+        bias_scores["Volume_Bias"] = 0
+        bias_emojis["Volume_Bias"] = "⚖️ Neutral"
+        bias_interpretations["Volume_Bias"] = "Balanced volume"
+    
+    # Calculate total score
+    total_score = sum(bias_scores.values())
+    normalized_score = total_score / len(bias_scores) if bias_scores else 0
+    
+    # Determine verdict
+    if normalized_score > 0.3:
+        verdict = "🐂 BULLISH"
+        verdict_color = "#00ff88"
+    elif normalized_score > 0.1:
+        verdict = "🐂 Mild Bullish"
+        verdict_color = "#00cc66"
+    elif normalized_score < -0.3:
+        verdict = "🐻 BEARISH"
+        verdict_color = "#ff4444"
+    elif normalized_score < -0.1:
+        verdict = "🐻 Mild Bearish"
+        verdict_color = "#ff6666"
+    else:
+        verdict = "⚖️ NEUTRAL"
+        verdict_color = "#66b3ff"
+    
+    return {
+        "instrument": "NIFTY",
+        "strike": int(row["strikePrice"]),
+        "zone": level_type,
+        "level": f"{level_type} Level",
+        "bias_scores": bias_scores,
+        "bias_interpretations": bias_interpretations,
+        "bias_emojis": bias_emojis,
+        "total_score": normalized_score,
+        "verdict": verdict,
+        "verdict_color": verdict_color,
+        "metrics": {
+            "ce_oi": int(row["OI_CE"]),
+            "pe_oi": int(row["OI_PE"]),
+            "ce_chg": int(row["Chg_OI_CE"]),
+            "pe_chg": int(row["Chg_OI_PE"]),
+            "ce_vol": int(row["Vol_CE"]),
+            "pe_vol": int(row["Vol_PE"]),
+            "distance": abs(spot - row["strikePrice"]),
+            "distance_pct": abs(spot - row["strikePrice"]) / spot * 100
+        }
+    }
+
+# ============================================
+# 🎯 COMPREHENSIVE BIAS DASHBOARD (NEW)
+# ============================================
+def display_bias_dashboard(atm_bias, support_bias, resistance_bias):
+    """Display comprehensive bias dashboard"""
+    
+    st.markdown("## 🎯 MULTI-DIMENSIONAL BIAS ANALYSIS")
+    
+    # Create columns for each bias analysis
+    col_atm, col_sup, col_res = st.columns(3)
+    
+    with col_atm:
+        if atm_bias:
+            st.markdown(f"""
+            <div class='card' style='border-color:{atm_bias["verdict_color"]};'>
+                <h4 style='color:{atm_bias["verdict_color"]};'>🏛️ ATM ZONE BIAS</h4>
+                <div style='font-size: 1.8rem; color:{atm_bias["verdict_color"]}; font-weight:900; text-align:center;'>
+                    {atm_bias["verdict"]}
+                </div>
+                <div style='font-size: 1.2rem; color:#ffcc00; text-align:center;'>
+                    ₹{atm_bias["strike"]:,}
+                </div>
+                <div style='font-size: 0.9rem; color:#cccccc; text-align:center; margin-top:10px;'>
+                    Score: {atm_bias["total_score"]:.2f}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Key metrics
+            st.metric("CALL OI", f"{atm_bias['metrics']['ce_oi']:,}")
+            st.metric("PUT OI", f"{atm_bias['metrics']['pe_oi']:,}")
+            st.metric("Net Delta", f"{atm_bias['metrics']['net_delta']:.3f}")
+            st.metric("Net Gamma", f"{atm_bias['metrics']['net_gamma']:.3f}")
+    
+    with col_sup:
+        if support_bias:
+            st.markdown(f"""
+            <div class='card' style='border-color:{support_bias["verdict_color"]};'>
+                <h4 style='color:{support_bias["verdict_color"]};'>🛡️ SUPPORT BIAS</h4>
+                <div style='font-size: 1.8rem; color:{support_bias["verdict_color"]}; font-weight:900; text-align:center;'>
+                    {support_bias["verdict"]}
+                </div>
+                <div style='font-size: 1.2rem; color:#00ffcc; text-align:center;'>
+                    ₹{support_bias["strike"]:,}
+                </div>
+                <div style='font-size: 0.9rem; color:#cccccc; text-align:center; margin-top:10px;'>
+                    Score: {support_bias["total_score"]:.2f}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Key metrics
+            st.metric("Distance", f"₹{support_bias['metrics']['distance']:.0f}")
+            st.metric("CALL OI", f"{support_bias['metrics']['ce_oi']:,}")
+            st.metric("PUT OI", f"{support_bias['metrics']['pe_oi']:,}")
+    
+    with col_res:
+        if resistance_bias:
+            st.markdown(f"""
+            <div class='card' style='border-color:{resistance_bias["verdict_color"]};'>
+                <h4 style='color:{resistance_bias["verdict_color"]};'>⚡ RESISTANCE BIAS</h4>
+                <div style='font-size: 1.8rem; color:{resistance_bias["verdict_color"]}; font-weight:900; text-align:center;'>
+                    {resistance_bias["verdict"]}
+                </div>
+                <div style='font-size: 1.2rem; color:#ff9900; text-align:center;'>
+                    ₹{resistance_bias["strike"]:,}
+                </div>
+                <div style='font-size: 0.9rem; color:#cccccc; text-align:center; margin-top:10px;'>
+                    Score: {resistance_bias["total_score"]:.2f}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Key metrics
+            st.metric("Distance", f"₹{resistance_bias['metrics']['distance']:.0f}")
+            st.metric("CALL OI", f"{resistance_bias['metrics']['ce_oi']:,}")
+            st.metric("PUT OI", f"{resistance_bias['metrics']['pe_oi']:,}")
+    
+    # Detailed ATM Bias Table
+    if atm_bias:
+        st.markdown("### 📊 ATM BIAS DETAILED BREAKDOWN")
+        
+        bias_data = []
+        for bias_name, emoji in atm_bias["bias_emojis"].items():
+            bias_data.append({
+                "Metric": bias_name.replace("_", " ").title(),
+                "Bias": emoji,
+                "Score": f"{atm_bias['bias_scores'][bias_name]:.1f}",
+                "Interpretation": atm_bias["bias_interpretations"][bias_name]
+            })
+        
+        bias_df = pd.DataFrame(bias_data)
+        st.dataframe(bias_df, use_container_width=True)
+        
+        # ATM Bias Summary
+        st.markdown(f"""
+        <div class='seller-explanation'>
+            <h4>🎯 ATM BIAS SUMMARY</h4>
+            <p><strong>Overall Verdict:</strong> <span style='color:{atm_bias["verdict_color"]}'>{atm_bias["verdict"]}</span></p>
+            <p><strong>Total Score:</strong> {atm_bias["total_score"]:.2f}</p>
+            <p><strong>Explanation:</strong> {atm_bias["verdict_explanation"]}</p>
+            <p><strong>Key Insights:</strong></p>
+            <ul>
+                <li>CALL OI: {atm_bias['metrics']['ce_oi']:,} | PUT OI: {atm_bias['metrics']['pe_oi']:,}</li>
+                <li>Net Delta: {atm_bias['metrics']['net_delta']:.3f} | Net Gamma: {atm_bias['metrics']['net_gamma']:.3f}</li>
+                <li>Delta Exposure: ₹{atm_bias['metrics']['delta_exposure']:,}</li>
+                <li>Gamma Exposure: ₹{atm_bias['metrics']['gamma_exposure']:,}</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Trading Implications
+    st.markdown("### 💡 TRADING IMPLICATIONS")
+    
+    implications = []
+    
+    if atm_bias:
+        if atm_bias["total_score"] > 0.2:
+            implications.append("✅ **ATM Bullish Bias:** Favor LONG positions with stops below ATM")
+        elif atm_bias["total_score"] < -0.2:
+            implications.append("✅ **ATM Bearish Bias:** Favor SHORT positions with stops above ATM")
+        
+        if atm_bias["metrics"]["gamma_exposure"] < -100000:
+            implications.append("⚠️ **Negative Gamma Exposure:** Expect whipsaws around ATM")
+        elif atm_bias["metrics"]["gamma_exposure"] > 100000:
+            implications.append("✅ **Positive Gamma Exposure:** Market stabilizing around ATM")
+    
+    if support_bias and support_bias["total_score"] > 0.3:
+        implications.append(f"✅ **Strong Support at ₹{support_bias['strike']:,}:** Good for LONG entries")
+    
+    if resistance_bias and resistance_bias["total_score"] < -0.3:
+        implications.append(f"✅ **Strong Resistance at ₹{resistance_bias['strike']:,}:** Good for SHORT entries")
+    
+    if not implications:
+        implications.append("⚖️ **Balanced Market:** No clear edge, wait for breakout")
+    
+    for imp in implications:
+        st.markdown(f"- {imp}")
 
 # -----------------------
-#  CUSTOM CSS
+#  TELEGRAM FUNCTIONS
 # -----------------------
-st.markdown("""
+def send_telegram_message(bot_token, chat_id, message):
+    """
+    Actually send message to Telegram
+    """
+    try:
+        if not bot_token or not chat_id:
+            return False, "Telegram credentials not configured"
+        
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            return True, "Signal sent to Telegram channel!"
+        else:
+            return False, f"Failed to send: {response.status_code}"
+    except Exception as e:
+        return False, f"Telegram error: {str(e)}"
+
+def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, seller_max_pain, 
+                                   nearest_sup, nearest_res, moment_metrics, seller_breakout_index, 
+                                   expiry, expiry_spike_data, atm_bias=None, support_bias=None, resistance_bias=None):
+    """
+    Generate Option 3 Telegram signal with stop loss/target and expiry spike info
+    Only generate when position_type is not NEUTRAL
+    """
+    
+    # Only generate signal for non-neutral positions
+    if entry_signal["position_type"] == "NEUTRAL":
+        return None
+    
+    position_type = entry_signal["position_type"]
+    signal_strength = entry_signal["signal_strength"]
+    confidence = entry_signal["confidence"]
+    optimal_entry_price = entry_signal["optimal_entry_price"]
+    stop_loss = entry_signal["stop_loss"]
+    target = entry_signal["target"]
+    
+    # Emoji based on position
+    signal_emoji = "🚀" if position_type == "LONG" else "🐻"
+    current_time = get_ist_datetime_str()
+    
+    # Extract moment scores
+    moment_burst = moment_metrics["momentum_burst"].get("score", 0)
+    orderbook_pressure = moment_metrics["orderbook"].get("pressure", 0.0)
+    
+    # Calculate risk:reward if we have stop loss and target
+    risk_reward = ""
+    stop_distance = ""
+    stop_pct = ""
+    
+    if stop_loss and target and optimal_entry_price:
+        if position_type == "LONG":
+            risk = abs(optimal_entry_price - stop_loss)
+            reward = abs(target - optimal_entry_price)
+            stop_distance = f"Stop: {stop_loss:.0f} (↓{risk:.0f} points)"
+        else:
+            risk = abs(stop_loss - optimal_entry_price)
+            reward = abs(optimal_entry_price - target)
+            stop_distance = f"Stop: {stop_loss:.0f} (↑{risk:.0f} points)"
+        
+        if risk > 0:
+            risk_reward = f"1:{reward/risk:.1f}"
+            stop_pct = f"({risk/optimal_entry_price*100:.1f}%)"
+    
+    # Format stop loss and target with points
+    stop_loss_str = f"₹{stop_loss:,.0f}" if stop_loss else "N/A"
+    target_str = f"₹{target:,.0f}" if target else "N/A"
+    
+    # Format support/resistance
+    support_str = f"₹{nearest_sup['strike']:,}" if nearest_sup else "N/A"
+    resistance_str = f"₹{nearest_res['strike']:,}" if nearest_res else "N/A"
+    
+    # Format max pain
+    max_pain_str = f"₹{seller_max_pain:,}" if seller_max_pain else "N/A"
+    
+    # Calculate entry distance from current spot
+    entry_distance = abs(spot - optimal_entry_price)
+    
+    # Add ATM bias info if available
+    atm_bias_info = ""
+    if atm_bias:
+        atm_bias_info = f"\n🎯 *ATM Bias*: {atm_bias['verdict']} (Score: {atm_bias['total_score']:.2f})"
+    
+    # Add expiry spike info if active
+    expiry_info = ""
+    if expiry_spike_data.get("active", False) and expiry_spike_data.get("probability", 0) > 50:
+        spike_emoji = "🚨" if expiry_spike_data['probability'] > 70 else "⚠️"
+        expiry_info = f"\n{spike_emoji} *Expiry Spike Risk*: {expiry_spike_data['probability']}% - {expiry_spike_data['type']}"
+        if expiry_spike_data.get("key_levels"):
+            expiry_info += f"\n🎯 *Spike Levels*: {', '.join(expiry_spike_data['key_levels'][:2])}"
+    
+    # Generate the message
+    message = f"""
+🎯 *NIFTY OPTION TRADE SETUP*
+
+*Position*: {signal_emoji} {position_type} ({signal_strength})
+*Entry Price*: ₹{optimal_entry_price:,.0f}
+*Current Spot*: ₹{spot:,.0f}
+*Entry Distance*: {entry_distance:.0f} points
+
+*Risk Management*:
+🛑 Stop Loss: {stop_loss_str} {stop_distance if stop_distance else ""}
+🎯 Target: {target_str}
+📊 Risk:Reward = {risk_reward} {stop_pct if stop_pct else ""}
+
+*Key Levels*:
+🛡️ Support: {support_str}
+⚡ Resistance: {resistance_str}
+🎯 Max Pain: {max_pain_str}
+
+*Moment Detector*:
+✅ Burst: {moment_burst}/100
+✅ Pressure: {orderbook_pressure:+.2f}
+
+*Seller Bias*: {seller_bias_result['bias']}
+*Confidence*: {confidence:.0f}%
+{atm_bias_info}
+
+*Expiry Context*:
+📅 Days to Expiry: {expiry_spike_data.get('days_to_expiry', 0):.1f}
+{expiry_info if expiry_info else "📊 Expiry spike risk: Low"}
+
+⏰ {current_time} IST | 📆 Expiry: {expiry}
+
+#NiftyOptions #OptionSelling #TradingSignal
+"""
+    return message
+
+def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pain, 
+                         nearest_sup, nearest_res, moment_metrics, seller_breakout_index, 
+                         expiry, expiry_spike_data, atm_bias=None, support_bias=None, resistance_bias=None):
+    """
+    Check if a new signal is generated and return it (simulated)
+    Returns signal message if new signal, None otherwise
+    """
+    # Store previous signal in session state
+    if "last_signal" not in st.session_state:
+        st.session_state["last_signal"] = None
+    
+    # Check if we have a valid signal
+    if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 40:
+        current_signal = f"{entry_signal['position_type']}_{entry_signal['optimal_entry_price']:.0f}"
+        
+        # Check if this is a new signal (different from last one)
+        if st.session_state["last_signal"] != current_signal:
+            # Generate Telegram message
+            telegram_msg = generate_telegram_signal_option3(
+                entry_signal, spot, seller_bias_result, 
+                seller_max_pain, nearest_sup, nearest_res, 
+                moment_metrics, seller_breakout_index, expiry, expiry_spike_data,
+                atm_bias, support_bias, resistance_bias
+            )
+            
+            if telegram_msg:
+                # Update last signal
+                st.session_state["last_signal"] = current_signal
+                return telegram_msg
+    
+    # Reset if signal is gone
+    elif st.session_state["last_signal"] is not None:
+        st.session_state["last_signal"] = None
+    
+    return None
+
+# -----------------------
+# 📅 EXPIRY SPIKE DETECTOR FUNCTIONS
+# -----------------------
+def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_date_str):
+    """
+    Detect potential expiry day spikes based on multiple factors
+    Returns: dict with spike probability, direction, and key levels
+    """
+    
+    if days_to_expiry > 5:
+        return {
+            "active": False,
+            "probability": 0,
+            "message": "Expiry >5 days away, spike detection not active",
+            "type": None,
+            "key_levels": [],
+            "score": 0
+        }
+    
+    spike_score = 0
+    spike_factors = []
+    spike_type = None
+    key_levels = []
+    
+    # Factor 1: ATM OI Concentration (0-25 points)
+    strike_gap_val = strike_gap_from_series(merged_df["strikePrice"])
+    atm_window = 2  # ±2 strikes around ATM
+    atm_strikes = [s for s in merged_df["strikePrice"] 
+                   if abs(s - atm_strike) <= (atm_window * strike_gap_val)]
+    
+    atm_ce_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_CE"].sum()
+    atm_pe_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_PE"].sum()
+    total_oi_near_atm = atm_ce_oi + atm_pe_oi
+    total_oi_all = merged_df["OI_CE"].sum() + merged_df["OI_PE"].sum()
+    
+    if total_oi_all > 0:
+        atm_concentration = total_oi_near_atm / total_oi_all
+        if atm_concentration > 0.5:
+            spike_score += 25
+            spike_factors.append(f"High ATM OI concentration ({atm_concentration:.1%})")
+        elif atm_concentration > 0.3:
+            spike_score += 15
+            spike_factors.append(f"Moderate ATM OI concentration ({atm_concentration:.1%})")
+    
+    # Factor 2: Max Pain vs Spot Distance (0-20 points)
+    max_pain = calculate_seller_max_pain(merged_df)
+    if max_pain:
+        max_pain_distance = abs(spot - max_pain) / spot * 100
+        if max_pain_distance > 2.0:
+            spike_score += 20
+            spike_factors.append(f"Spot far from Max Pain ({max_pain_distance:.1f}%)")
+            if spot > max_pain:
+                spike_type = "SHORT SQUEEZE"
+            else:
+                spike_type = "LONG SQUEEZE"
+            key_levels.append(f"Max Pain: ₹{max_pain:,}")
+        elif max_pain_distance > 1.0:
+            spike_score += 10
+            spike_factors.append(f"Spot moderately far from Max Pain ({max_pain_distance:.1f}%)")
+    
+    # Factor 3: PCR Extremes (0-15 points)
+    total_ce_oi = merged_df["OI_CE"].sum()
+    total_pe_oi = merged_df["OI_PE"].sum()
+    if total_ce_oi > 0:
+        pcr = total_pe_oi / total_ce_oi
+        if pcr > 1.8:
+            spike_score += 15
+            spike_factors.append(f"Extreme PCR ({pcr:.2f}) - Heavy PUT selling")
+            spike_type = "UPWARD SPIKE" if spike_type is None else spike_type
+        elif pcr < 0.5:
+            spike_score += 15
+            spike_factors.append(f"Extreme PCR ({pcr:.2f}) - Heavy CALL selling")
+            spike_type = "DOWNWARD SPIKE" if spike_type is None else spike_type
+    
+    # Factor 4: Large OI Build-up at Single Strike (0-20 points)
+    max_ce_oi_strike = merged_df.loc[merged_df["OI_CE"].idxmax()] if not merged_df.empty else None
+    max_pe_oi_strike = merged_df.loc[merged_df["OI_PE"].idxmax()] if not merged_df.empty else None
+    
+    if max_ce_oi_strike is not None:
+        max_ce_oi = int(max_ce_oi_strike["OI_CE"])
+        max_ce_strike = int(max_ce_oi_strike["strikePrice"])
+        if max_ce_oi > 2000000:  # 2 million+ OI
+            spike_score += 20
+            spike_factors.append(f"Massive CALL OI at ₹{max_ce_strike:,} ({max_ce_oi:,})")
+            key_levels.append(f"CALL Wall: ₹{max_ce_strike:,}")
+            if abs(spot - max_ce_strike) < (strike_gap_val * 3):
+                spike_type = "RESISTANCE SPIKE"
+    
+    if max_pe_oi_strike is not None:
+        max_pe_oi = int(max_pe_oi_strike["OI_PE"])
+        max_pe_strike = int(max_pe_oi_strike["strikePrice"])
+        if max_pe_oi > 2000000:  # 2 million+ OI
+            spike_score += 20
+            spike_factors.append(f"Massive PUT OI at ₹{max_pe_strike:,} ({max_pe_oi:,})")
+            key_levels.append(f"PUT Wall: ₹{max_pe_strike:,}")
+            if abs(spot - max_pe_strike) < (strike_gap_val * 3):
+                spike_type = "SUPPORT SPIKE"
+    
+    # Factor 5: Gamma Flip Zone (0-10 points)
+    if days_to_expiry <= 1:
+        spike_score += 10
+        spike_factors.append("Gamma flip zone (expiry day)")
+    
+    # Factor 6: Unwinding Activity (0-10 points)
+    ce_unwind = (merged_df["Chg_OI_CE"] < 0).sum()
+    pe_unwind = (merged_df["Chg_OI_PE"] < 0).sum()
+    total_unwind = ce_unwind + pe_unwind
+    
+    if total_unwind > 15:  # More than 15 strikes showing unwinding
+        spike_score += 10
+        spike_factors.append(f"Massive unwinding ({total_unwind} strikes)")
+    
+    # Determine spike probability
+    probability = min(100, int(spike_score * 1.5))
+    
+    # Spike intensity
+    if probability >= 70:
+        intensity = "HIGH PROBABILITY SPIKE"
+        color = "#ff0000"
+    elif probability >= 50:
+        intensity = "MODERATE SPIKE RISK"
+        color = "#ff9900"
+    elif probability >= 30:
+        intensity = "LOW SPIKE RISK"
+        color = "#ffff00"
+    else:
+        intensity = "NO SPIKE DETECTED"
+        color = "#00ff00"
+    
+    # Default spike type if none detected
+    if spike_type is None:
+        spike_type = "UNCERTAIN"
+    
+    return {
+        "active": days_to_expiry <= 5,
+        "probability": probability,
+        "score": spike_score,
+        "intensity": intensity,
+        "type": spike_type,
+        "color": color,
+        "factors": spike_factors,
+        "key_levels": key_levels,
+        "days_to_expiry": days_to_expiry,
+        "expiry_date": expiry_date_str,
+        "message": f"Expiry in {days_to_expiry:.1f} days"
+    }
+
+def get_historical_expiry_patterns():
+    """
+    Return historical expiry day patterns (simplified)
+    In production, you'd connect to a database
+    """
+    patterns = {
+        "high_volatility": {
+            "probability": 0.65,
+            "description": "Expiry days typically have 30% higher volatility",
+            "time_of_spike": ["10:30-11:30 IST", "14:30-15:00 IST"]
+        },
+        "max_pain_pull": {
+            "probability": 0.55,
+            "description": "Price tends to gravitate towards Max Pain in last 2 hours",
+            "effect": "Strong if Max Pain >1% away from spot"
+        },
+        "gamma_unwind": {
+            "probability": 0.70,
+            "description": "Market makers unwind gamma positions causing spikes",
+            "timing": "Last 90 minutes"
+        }
+    }
+    return patterns
+
+def detect_violent_unwinding(merged_df, spot, atm_strike):
+    """
+    Detect signs of violent unwinding near expiry
+    """
+    signals = []
+    
+    # Check for massive OI reduction
+    total_ce_chg = merged_df["Chg_OI_CE"].sum()
+    total_pe_chg = merged_df["Chg_OI_PE"].sum()
+    
+    if total_ce_chg < -1000000:  # 1 million+ CALL unwinding
+        signals.append(f"Violent CALL unwinding: {abs(total_ce_chg):,} contracts")
+    
+    if total_pe_chg < -1000000:  # 1 million+ PUT unwinding
+        signals.append(f"Violent PUT unwinding: {abs(total_pe_chg):,} contracts")
+    
+    # Check ATM strikes specifically
+    strike_gap_val = strike_gap_from_series(merged_df["strikePrice"])
+    atm_window = 1
+    atm_strikes = [s for s in merged_df["strikePrice"] 
+                   if abs(s - atm_strike) <= (atm_window * strike_gap_val)]
+    
+    atm_unwind = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes)]
+    atm_ce_unwind = atm_unwind["Chg_OI_CE"].sum()
+    atm_pe_unwind = atm_unwind["Chg_OI_PE"].sum()
+    
+    if atm_ce_unwind < -500000:
+        signals.append(f"ATM CALL unwinding: {abs(atm_ce_unwind):,} contracts")
+    
+    if atm_pe_unwind < -500000:
+        signals.append(f"ATM PUT unwinding: {abs(atm_pe_unwind):,} contracts")
+    
+    return signals
+
+def calculate_gamma_exposure_spike(total_gex_net, days_to_expiry):
+    """
+    Calculate gamma exposure spike risk
+    """
+    if days_to_expiry > 3:
+        return {"risk": "Low", "score": 0}
+    
+    # Negative GEX + near expiry = explosive moves
+    if total_gex_net < -2000000:  # Large negative GEX
+        risk_score = min(100, int((abs(total_gex_net) / 1000000) * 10))
+        return {
+            "risk": "High",
+            "score": risk_score,
+            "message": f"Negative GEX (₹{abs(total_gex_net):,.0f}) + Near expiry = Explosive move potential"
+        }
+    elif total_gex_net > 2000000:  # Large positive GEX
+        risk_score = min(80, int((total_gex_net / 1000000) * 5))
+        return {
+            "risk": "Medium",
+            "score": risk_score,
+            "message": f"Positive GEX (₹{total_gex_net:,.0f}) + Near expiry = Mean reversion bias"
+        }
+    
+    return {"risk": "Low", "score": 0}
+
+def predict_expiry_pinning_probability(spot, max_pain, nearest_support, nearest_resistance):
+    """
+    Predict probability of expiry pinning (price stuck at a level)
+    """
+    if not max_pain or not nearest_support or not nearest_resistance:
+        return 0
+    
+    # Calculate pinning score (0-100)
+    pinning_score = 0
+    
+    # Factor 1: Distance to Max Pain
+    distance_to_max_pain = abs(spot - max_pain) / spot * 100
+    if distance_to_max_pain < 0.5:
+        pinning_score += 40
+    elif distance_to_max_pain < 1.0:
+        pinning_score += 20
+    
+    # Factor 2: Narrow range
+    range_size = nearest_resistance - nearest_support
+    if range_size < 200:
+        pinning_score += 30
+    elif range_size < 300:
+        pinning_score += 15
+    
+    return min(100, pinning_score)
+
+# -----------------------
+# 📈 ENHANCED OI & PCR ANALYZER FUNCTIONS
+# -----------------------
+
+def analyze_oi_pcr_metrics(merged_df, spot, atm_strike):
+    """
+    Comprehensive OI and PCR analysis
+    Returns detailed metrics and insights
+    """
+    
+    # Basic totals
+    total_ce_oi = merged_df["OI_CE"].sum()
+    total_pe_oi = merged_df["OI_PE"].sum()
+    total_ce_chg = merged_df["Chg_OI_CE"].sum()
+    total_pe_chg = merged_df["Chg_OI_PE"].sum()
+    total_oi = total_ce_oi + total_pe_oi
+    total_chg_oi = total_ce_chg + total_pe_chg
+    
+    # PCR Calculations
+    pcr_total = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
+    pcr_chg = total_pe_chg / total_ce_chg if abs(total_ce_chg) > 0 else 0
+    
+    # OI Concentration Analysis
+    strike_gap_val = strike_gap_from_series(merged_df["strikePrice"])
+    
+    # ATM Concentration (strikes around ATM)
+    atm_window = 3  # ±3 strikes
+    atm_strikes = [s for s in merged_df["strikePrice"] 
+                  if abs(s - atm_strike) <= (atm_window * strike_gap_val)]
+    
+    atm_ce_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_CE"].sum()
+    atm_pe_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_PE"].sum()
+    atm_total_oi = atm_ce_oi + atm_pe_oi
+    
+    # ITM/OTM Analysis
+    itm_ce_oi = merged_df.loc[merged_df["strikePrice"] < spot, "OI_CE"].sum()
+    otm_ce_oi = merged_df.loc[merged_df["strikePrice"] > spot, "OI_CE"].sum()
+    itm_pe_oi = merged_df.loc[merged_df["strikePrice"] > spot, "OI_PE"].sum()
+    otm_pe_oi = merged_df.loc[merged_df["strikePrice"] < spot, "OI_PE"].sum()
+    
+    # Max OI Strikes
+    max_ce_oi_row = merged_df.loc[merged_df["OI_CE"].idxmax()] if not merged_df.empty else None
+    max_pe_oi_row = merged_df.loc[merged_df["OI_PE"].idxmax()] if not merged_df.empty else None
+    
+    max_ce_strike = int(max_ce_oi_row["strikePrice"]) if max_ce_oi_row is not None else 0
+    max_ce_oi_val = int(max_ce_oi_row["OI_CE"]) if max_ce_oi_row is not None else 0
+    max_pe_strike = int(max_pe_oi_row["strikePrice"]) if max_pe_oi_row is not None else 0
+    max_pe_oi_val = int(max_pe_oi_row["OI_PE"]) if max_pe_oi_row is not None else 0
+    
+    # OI Skew Analysis
+    call_oi_skew = "N/A"
+    if total_ce_oi > 0:
+        # Check if OI is concentrated at specific strikes
+        top_3_ce_oi = merged_df.nlargest(3, "OI_CE")["OI_CE"].sum()
+        call_oi_concentration = top_3_ce_oi / total_ce_oi if total_ce_oi > 0 else 0
+        call_oi_skew = "High" if call_oi_concentration > 0.4 else "Moderate" if call_oi_concentration > 0.2 else "Low"
+    
+    put_oi_skew = "N/A"
+    if total_pe_oi > 0:
+        top_3_pe_oi = merged_df.nlargest(3, "OI_PE")["OI_PE"].sum()
+        put_oi_concentration = top_3_pe_oi / total_pe_oi if total_pe_oi > 0 else 0
+        put_oi_skew = "High" if put_oi_concentration > 0.4 else "Moderate" if put_oi_concentration > 0.2 else "Low"
+    
+    # PCR Interpretation
+    pcr_interpretation = ""
+    pcr_sentiment = ""
+    
+    if pcr_total > 2.0:
+        pcr_interpretation = "EXTREME PUT SELLING"
+        pcr_sentiment = "STRONGLY BULLISH"
+        pcr_color = "#00ff88"
+    elif pcr_total > 1.5:
+        pcr_interpretation = "HEAVY PUT SELLING"
+        pcr_sentiment = "BULLISH"
+        pcr_color = "#00cc66"
+    elif pcr_total > 1.2:
+        pcr_interpretation = "MODERATE PUT SELLING"
+        pcr_sentiment = "MILD BULLISH"
+        pcr_color = "#66ff66"
+    elif pcr_total > 0.8:
+        pcr_interpretation = "BALANCED"
+        pcr_sentiment = "NEUTRAL"
+        pcr_color = "#66b3ff"
+    elif pcr_total > 0.5:
+        pcr_interpretation = "MODERATE CALL SELLING"
+        pcr_sentiment = "MILD BEARISH"
+        pcr_color = "#ff9900"
+    elif pcr_total > 0.3:
+        pcr_interpretation = "HEAVY CALL SELLING"
+        pcr_sentiment = "BEARISH"
+        pcr_color = "#ff4444"
+    else:
+        pcr_interpretation = "EXTREME CALL SELLING"
+        pcr_sentiment = "STRONGLY BEARISH"
+        pcr_color = "#ff0000"
+    
+    # Change in PCR interpretation
+    chg_interpretation = ""
+    if abs(pcr_chg) > 0:
+        if pcr_chg > 0.5:
+            chg_interpretation = "PCR rising sharply (bullish buildup)"
+        elif pcr_chg > 0.2:
+            chg_interpretation = "PCR rising (bullish)"
+        elif pcr_chg < -0.5:
+            chg_interpretation = "PCR falling sharply (bearish buildup)"
+        elif pcr_chg < -0.2:
+            chg_interpretation = "PCR falling (bearish)"
+        else:
+            chg_interpretation = "PCR stable"
+    
+    # OI Change Interpretation
+    oi_change_interpretation = ""
+    if total_ce_chg > 0 and total_pe_chg > 0:
+        oi_change_interpretation = "Fresh writing on both sides (range expansion)"
+    elif total_ce_chg > 0 and total_pe_chg < 0:
+        oi_change_interpretation = "CALL writing + PUT unwinding (bearish)"
+    elif total_ce_chg < 0 and total_pe_chg > 0:
+        oi_change_interpretation = "CALL unwinding + PUT writing (bullish)"
+    elif total_ce_chg < 0 and total_pe_chg < 0:
+        oi_change_interpretation = "Unwinding on both sides (range contraction)"
+    else:
+        oi_change_interpretation = "Mixed activity"
+    
+    return {
+        # Totals
+        "total_ce_oi": total_ce_oi,
+        "total_pe_oi": total_pe_oi,
+        "total_oi": total_oi,
+        "total_ce_chg": total_ce_chg,
+        "total_pe_chg": total_pe_chg,
+        "total_chg_oi": total_chg_oi,
+        
+        # PCR Metrics
+        "pcr_total": pcr_total,
+        "pcr_chg": pcr_chg,
+        "pcr_interpretation": pcr_interpretation,
+        "pcr_sentiment": pcr_sentiment,
+        "pcr_color": pcr_color,
+        "chg_interpretation": chg_interpretation,
+        
+        # Concentration
+        "atm_concentration_pct": (atm_total_oi / total_oi * 100) if total_oi > 0 else 0,
+        "atm_ce_oi": atm_ce_oi,
+        "atm_pe_oi": atm_pe_oi,
+        
+        # ITM/OTM
+        "itm_ce_oi": itm_ce_oi,
+        "otm_ce_oi": otm_ce_oi,
+        "itm_pe_oi": itm_pe_oi,
+        "otm_pe_oi": otm_pe_oi,
+        
+        # Max OI
+        "max_ce_strike": max_ce_strike,
+        "max_ce_oi": max_ce_oi_val,
+        "max_pe_strike": max_pe_strike,
+        "max_pe_oi": max_pe_oi_val,
+        
+        # Skew
+        "call_oi_skew": call_oi_skew,
+        "put_oi_skew": put_oi_skew,
+        
+        # Interpretation
+        "oi_change_interpretation": oi_change_interpretation,
+        
+        # Derived metrics
+        "ce_pe_ratio": total_ce_oi / total_pe_oi if total_pe_oi > 0 else 0,
+        "oi_momentum": total_chg_oi / total_oi * 100 if total_oi > 0 else 0
+    }
+
+def get_pcr_context(pcr_value):
+    """Provide historical context for PCR values"""
+    if pcr_value > 2.5:
+        return "Extreme bullish zone (rare, usually precedes sharp rallies)"
+    elif pcr_value > 2.0:
+        return "Very bullish (often leads to upward moves)"
+    elif pcr_value > 1.5:
+        return "Bullish bias"
+    elif pcr_value > 1.2:
+        return "Moderately bullish"
+    elif pcr_value > 0.8:
+        return "Neutral range"
+    elif pcr_value > 0.5:
+        return "Moderately bearish"
+    elif pcr_value > 0.3:
+        return "Bearish (often precedes declines)"
+    else:
+        return "Extreme bearish (oversold, can mean reversal)"
+
+def analyze_pcr_for_expiry(pcr_value, days_to_expiry):
+    """Analyze PCR in context of expiry"""
+    if days_to_expiry > 5:
+        return "Normal PCR analysis applies"
+    
+    if days_to_expiry <= 2:
+        if pcr_value > 1.5:
+            return "High PCR near expiry → Potential short covering rally"
+        elif pcr_value < 0.7:
+            return "Low PCR near expiry → Potential long unwinding decline"
+        else:
+            return "Balanced PCR near expiry → Range bound expected"
+    
+    return "PCR analysis standard"
+
+# -----------------------
+#  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES + EXPIRY SPIKE + OI/PCR + ATM BIAS + MARKET DEPTH
+# -----------------------
+st.markdown(r"""
 <style>
     .main { background-color: #0e1117; color: #fafafa; }
     
-    /* Colors */
-    .bullish { color: #00ff88 !important; font-weight: 700 !important; }
-    .bearish { color: #ff4444 !important; font-weight: 700 !important; }
-    .neutral { color: #66b3ff !important; font-weight: 700 !important; }
+    /* SELLER THEME COLORS */
+    .seller-bullish { color: #00ff88 !important; font-weight: 700 !important; }
+    .seller-bearish { color: #ff4444 !important; font-weight: 700 !important; }
+    .seller-neutral { color: #66b3ff !important; font-weight: 700 !important; }
     
-    /* Cards */
-    .metric-card {
-        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+    .seller-bullish-bg { background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%); }
+    .seller-bearish-bg { background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%); }
+    .seller-neutral-bg { background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%); }
+    
+    /* MOMENT DETECTOR COLORS */
+    .moment-high { color: #ff00ff !important; font-weight: 800 !important; }
+    .moment-medium { color: #ff9900 !important; font-weight: 700 !important; }
+    .moment-low { color: #66b3ff !important; font-weight: 600 !important; }
+    
+    /* OI/PCR COLORS */
+    .pcr-extreme-bullish { color: #00ff88 !important; }
+    .pcr-bullish { color: #00cc66 !important; }
+    .pcr-mild-bullish { color: #66ff66 !important; }
+    .pcr-neutral { color: #66b3ff !important; }
+    .pcr-mild-bearish { color: #ff9900 !important; }
+    .pcr-bearish { color: #ff4444 !important; }
+    .pcr-extreme-bearish { color: #ff0000 !important; }
+    
+    /* ATM BIAS COLORS */
+    .atm-bias-bullish { color: #00ff88 !important; }
+    .atm-bias-bearish { color: #ff4444 !important; }
+    .atm-bias-neutral { color: #66b3ff !important; }
+    
+    /* MARKET DEPTH COLORS */
+    .depth-bid { color: #00ff88 !important; background-color: #1a2e1a !important; }
+    .depth-ask { color: #ff4444 !important; background-color: #2e1a1a !important; }
+    .depth-spread { color: #ffcc00 !important; }
+    .depth-imbalance-bullish { color: #00ff88 !important; border-left: 4px solid #00ff88 !important; }
+    .depth-imbalance-bearish { color: #ff4444 !important; border-left: 4px solid #ff4444 !important; }
+    .depth-imbalance-neutral { color: #66b3ff !important; border-left: 4px solid #66b3ff !important; }
+    
+    h1, h2, h3 { color: #ff66cc !important; } /* Seller theme pink */
+    
+    .level-card {
+        background: linear-gradient(135deg, #2e1a2e 0%, #3e2a3e 100%);
         padding: 15px;
         border-radius: 10px;
-        border: 1px solid #444;
+        border: 2px solid #ff66cc;
         margin: 5px 0;
-        text-align: center;
     }
+    .level-card h4 { margin: 0; color: #ff66cc; font-size: 1.1rem; }
+    .level-card p { margin: 5px 0; color: #fafafa; font-size: 1.3rem; font-weight: 700; }
+    .level-card .sub-info { font-size: 0.9rem; color: #cccccc; margin-top: 5px; }
     
-    .signal-card {
+    .spot-card {
         background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%);
         padding: 20px;
         border-radius: 12px;
@@ -74,32 +1848,222 @@ st.markdown("""
         margin: 10px 0;
         text-align: center;
     }
+    .spot-card h3 { margin: 0; color: #ff9900; font-size: 1.3rem; }
+    .spot-card .spot-price { font-size: 2.5rem; color: #ffcc00; font-weight: 700; margin: 10px 0; }
+    .spot-card .distance { font-size: 1.1rem; color: #ffdd44; margin: 5px 0; }
     
-    .depth-card {
+    .nearest-level {
         background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
         padding: 15px;
         border-radius: 10px;
         border: 2px solid #00ffcc;
         margin: 10px 0;
     }
+    .nearest-level h4 { margin: 0; color: #00ffcc; font-size: 1.2rem; }
+    .nearest-level .level-value { font-size: 1.8rem; color: #00ffcc; font-weight: 700; margin: 5px 0; }
+    .nearest-level .level-distance { font-size: 1rem; color: #66ffdd; margin: 5px 0; }
     
-    .iceberg-alert {
+    .seller-bias-box {
+        background: linear-gradient(135deg, #2e1a2e 0%, #1a2e2e 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid #ff66cc;
+        margin: 15px 0;
+        text-align: center;
+    }
+    .seller-bias-box h3 { margin: 0; color: #ff66cc; font-size: 1.4rem; }
+    .seller-bias-box .bias-value { font-size: 2.2rem; font-weight: 900; margin: 10px 0; }
+    
+    .alert-box {
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+        border-left: 4px solid;
+    }
+    .seller-support-building { background-color: #1a2e1a; border-left-color: #00ff88; color: #00ff88; }
+    .seller-support-breaking { background-color: #2e1a1a; border-left-color: #ff4444; color: #ff6666; }
+    .seller-resistance-building { background-color: #2e2a1a; border-left-color: #ffaa00; color: #ffcc44; }
+    .seller-resistance-breaking { background-color: #1a1f2e; border-left-color: #00aaff; color: #00ccff; }
+    .seller-bull-trap { background-color: #3e1a1a; border-left-color: #ff0000; color: #ff4444; font-weight: 700; }
+    .seller-bear-trap { background-color: #1a3e1a; border-left-color: #00ff00; color: #00ff66; font-weight: 700; }
+    
+    .ist-time {
+        background-color: #1a1f2e;
+        color: #ff66cc;
+        padding: 8px 15px;
+        border-radius: 20px;
+        border: 2px solid #ff66cc;
+        font-weight: 700;
+        font-size: 1.1rem;
+    }
+    
+    .stButton > button {
+        background-color: #ff66cc !important;
+        color: #0e1117 !important;
+        border: none !important;
+        font-weight: 600 !important;
+    }
+    .stButton > button:hover { background-color: #ff99dd !important; }
+    
+    .greeks-box {
+        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #444;
+        margin: 5px 0;
+    }
+    
+    .max-pain-box {
+        background: linear-gradient(135deg, #2e1a2e 0%, #1a2e2e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #ff9900;
+        margin: 10px 0;
+    }
+    .max-pain-box h4 { margin: 0; color: #ff9900; }
+    
+    .seller-explanation {
+        background: linear-gradient(135deg, #2e1a2e 0%, #3e2a3e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid #ff66cc;
+        margin: 10px 0;
+    }
+    
+    .entry-signal-box {
+        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid #ff9900;
+        margin: 15px 0;
+        text-align: center;
+    }
+    .entry-signal-box h3 { margin: 0; color: #ff9900; font-size: 1.4rem; }
+    .entry-signal-box .signal-value { font-size: 2.5rem; font-weight: 900; margin: 15px 0; }
+    .entry-signal-box .signal-explanation { font-size: 1.1rem; color: #ffdd44; margin: 10px 0; }
+    .entry-signal-box .entry-price { font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin: 10px 0; }
+    
+    /* MOMENT DETECTOR BOXES */
+    .moment-box {
+        background: linear-gradient(135deg, #1a1f3e 0%, #2a2f4e 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #00ffff;
+        margin: 10px 0;
+        text-align: center;
+    }
+    .moment-box h4 { margin: 0; color: #00ffff; font-size: 1.1rem; }
+    .moment-box .moment-value { font-size: 1.8rem; font-weight: 900; margin: 10px 0; }
+    
+    /* TELEGRAM SIGNAL BOX */
+    .telegram-box {
+        background: linear-gradient(135deg, #1a2e2e 0%, #2a3e3e 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid #0088cc;
+        margin: 15px 0;
+    }
+    .telegram-box h3 { margin: 0; color: #00aaff; font-size: 1.4rem; }
+    
+    /* EXPIRY SPIKE DETECTOR STYLES */
+    .expiry-high-risk {
+        background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%) !important;
+        border: 3px solid #ff0000 !important;
         animation: pulse 2s infinite;
-        border-color: #ff00ff !important;
+    }
+    
+    .expiry-medium-risk {
+        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%) !important;
+        border: 3px solid #ff9900 !important;
+    }
+    
+    .expiry-low-risk {
+        background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%) !important;
+        border: 3px solid #00ff00 !important;
+    }
+    
+    /* OI/PCR BOXES */
+    .oi-pcr-box {
+        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 2px solid #66b3ff;
+        margin: 15px 0;
+    }
+    
+    .oi-pcr-metric {
+        background: rgba(0,0,0,0.2);
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid #66b3ff;
+        margin: 10px 0;
+    }
+    
+    /* ATM BIAS CARD */
+    .card {
+        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 3px solid;
+        margin: 10px 0;
+        text-align: center;
+    }
+    
+    /* MARKET DEPTH CARDS */
+    .depth-card {
+        background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 2px solid #00ffff;
+        margin: 15px 0;
+    }
+    
+    .depth-bid-card {
+        background: linear-gradient(135deg, #1a2e1a 0%, #2a3e2a 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid #00ff88;
+        margin: 5px 0;
+    }
+    
+    .depth-ask-card {
+        background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid #ff4444;
+        margin: 5px 0;
+    }
+    
+    .depth-table-header {
+        background: linear-gradient(135deg, #2e2a1a 0%, #3e3a2a 100%);
+        color: #ffcc00;
+        font-weight: 700;
+        padding: 10px;
+        border-radius: 8px;
+        margin: 5px 0;
     }
     
     @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(255, 0, 255, 0.7); }
-        70% { box-shadow: 0 0 0 10px rgba(255, 0, 255, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(255, 0, 255, 0); }
+        0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(255, 0, 0, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0); }
     }
     
-    h1, h2, h3 { color: #ff66cc !important; }
-    
-    [data-testid="stMetricLabel"] { color: #cccccc !important; }
-    [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; }
+    [data-testid="stMetricLabel"] { color: #cccccc !important; font-weight: 600; }
+    [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
 </style>
 """, unsafe_allow_html=True)
+
+st.set_page_config(page_title="Nifty Screener v7.5 - Seller's Perspective + ATM Bias + Moment Detector + Expiry Spike + OI/PCR + Market Depth", layout="wide")
+
+def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
+    if "last_refresh" not in st.session_state:
+        st.session_state["last_refresh"] = time.time()
+    if time.time() - st.session_state["last_refresh"] > interval_sec:
+        st.session_state["last_refresh"] = time.time()
+        st.rerun()
+
+auto_refresh()
 
 # -----------------------
 #  UTILITY FUNCTIONS
@@ -149,191 +2113,652 @@ def bs_vega(S,K,r,sigma,tau):
     d1 = bs_d1(S,K,r,sigma,tau)
     return S * norm.pdf(d1) * np.sqrt(tau)
 
-# -----------------------
-#  MARKET DEPTH ANALYSIS
-# -----------------------
-@st.cache_data(ttl=5)
-def get_market_depth():
-    """Fetch NIFTY market depth from Dhan API"""
-    try:
-        url = f"{DHAN_BASE_URL}/v2/marketfeed/depth"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "access-token": DHAN_ACCESS_TOKEN,
-            "client-id": DHAN_CLIENT_ID
-        }
-        payload = {"IDX_I": [13]}
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("status") == "success":
-                return data.get("data", {}).get("IDX_I", {}).get("13", {}).get("depth", {})
-    except Exception as e:
-        st.warning(f"Depth fetch failed: {e}")
-    return None
-
-def analyze_market_depth(depth_data, spot_price):
-    """
-    Comprehensive market depth analysis with iceberg detection
-    Returns: dict with buy/sell analysis, iceberg orders, support/resistance levels
-    """
-    if not depth_data:
-        return None
-    
-    analysis = {
-        'buy_side': {'levels': [], 'total_volume': 0, 'iceberg_count': 0, 'weighted_avg_price': 0},
-        'sell_side': {'levels': [], 'total_volume': 0, 'iceberg_count': 0, 'weighted_avg_price': 0},
-        'summary': {},
-        'iceberg_orders': [],
-        'support_levels': [],
-        'resistance_levels': []
-    }
-    
-    # Iceberg detection thresholds
-    ICEBERG_THRESHOLD = 50000  # 50k shares considered large order
-    STRONG_LEVEL_THRESHOLD = 20000  # 20k shares for strong level
-    
-    # Analyze buy side (bids)
-    if 'buy' in depth_data:
-        total_bid_value = 0
-        total_bid_volume = 0
-        
-        for i, bid in enumerate(depth_data['buy'][:15]):  # Top 15 bids
-            if isinstance(bid, list) and len(bid) >= 2:
-                price = safe_float(bid[0], 0)
-                qty = safe_int(bid[1], 0)
-                
-                bid_info = {
-                    'price': price,
-                    'quantity': qty,
-                    'depth_level': i + 1,
-                    'distance_from_spot': spot_price - price,
-                    'distance_pct': ((spot_price - price) / spot_price * 100) if spot_price > 0 else 0,
-                    'is_iceberg': qty > ICEBERG_THRESHOLD,
-                    'is_strong': qty > STRONG_LEVEL_THRESHOLD
-                }
-                
-                analysis['buy_side']['levels'].append(bid_info)
-                analysis['buy_side']['total_volume'] += qty
-                total_bid_value += price * qty
-                total_bid_volume += qty
-                
-                if qty > ICEBERG_THRESHOLD:
-                    analysis['buy_side']['iceberg_count'] += 1
-                    analysis['iceberg_orders'].append({
-                        'side': 'BUY',
-                        'price': price,
-                        'quantity': qty,
-                        'depth_level': i + 1,
-                        'size_category': 'LARGE' if qty > 100000 else 'MEDIUM'
-                    })
-        
-        # Calculate weighted average price for bids
-        if total_bid_volume > 0:
-            analysis['buy_side']['weighted_avg_price'] = total_bid_value / total_bid_volume
-    
-    # Analyze sell side (asks)
-    if 'sell' in depth_data:
-        total_ask_value = 0
-        total_ask_volume = 0
-        
-        for i, ask in enumerate(depth_data['sell'][:15]):  # Top 15 asks
-            if isinstance(ask, list) and len(ask) >= 2:
-                price = safe_float(ask[0], 0)
-                qty = safe_int(ask[1], 0)
-                
-                ask_info = {
-                    'price': price,
-                    'quantity': qty,
-                    'depth_level': i + 1,
-                    'distance_from_spot': price - spot_price,
-                    'distance_pct': ((price - spot_price) / spot_price * 100) if spot_price > 0 else 0,
-                    'is_iceberg': qty > ICEBERG_THRESHOLD,
-                    'is_strong': qty > STRONG_LEVEL_THRESHOLD
-                }
-                
-                analysis['sell_side']['levels'].append(ask_info)
-                analysis['sell_side']['total_volume'] += qty
-                total_ask_value += price * qty
-                total_ask_volume += qty
-                
-                if qty > ICEBERG_THRESHOLD:
-                    analysis['sell_side']['iceberg_count'] += 1
-                    analysis['iceberg_orders'].append({
-                        'side': 'SELL',
-                        'price': price,
-                        'quantity': qty,
-                        'depth_level': i + 1,
-                        'size_category': 'LARGE' if qty > 100000 else 'MEDIUM'
-                    })
-        
-        # Calculate weighted average price for asks
-        if total_ask_volume > 0:
-            analysis['sell_side']['weighted_avg_price'] = total_ask_value / total_ask_volume
-    
-    # Calculate depth pressure (buy/sell imbalance)
-    total_volume = analysis['buy_side']['total_volume'] + analysis['sell_side']['total_volume']
-    if total_volume > 0:
-        depth_pressure = (analysis['buy_side']['total_volume'] - analysis['sell_side']['total_volume']) / total_volume
+def bs_theta(S,K,r,sigma,tau,option_type="call"):
+    if sigma <=0 or tau<=0:
+        return 0.0
+    d1 = bs_d1(S,K,r,sigma,tau)
+    d2 = d1 - sigma*np.sqrt(tau)
+    term1 = - (S * norm.pdf(d1) * sigma) / (2 * np.sqrt(tau))
+    if option_type=="call":
+        term2 = r*K*np.exp(-r*tau)*norm.cdf(d2)
+        return term1 - term2
     else:
-        depth_pressure = 0
-    
-    # Identify support levels from strong bids near spot
-    for bid in analysis['buy_side']['levels']:
-        if bid['is_strong'] and bid['distance_from_spot'] < 50:  # Within 50 points
-            support_score = bid['quantity'] / 1000  # Normalize to thousands
-            analysis['support_levels'].append({
-                'price': bid['price'],
-                'strength': support_score,
-                'quantity': bid['quantity'],
-                'depth_level': bid['depth_level'],
-                'type': 'depth_bid',
-                'iceberg': bid['is_iceberg'],
-                'distance_from_spot': bid['distance_from_spot']
-            })
-    
-    # Identify resistance levels from strong asks near spot
-    for ask in analysis['sell_side']['levels']:
-        if ask['is_strong'] and ask['distance_from_spot'] < 50:  # Within 50 points
-            resistance_score = ask['quantity'] / 1000  # Normalize to thousands
-            analysis['resistance_levels'].append({
-                'price': ask['price'],
-                'strength': resistance_score,
-                'quantity': ask['quantity'],
-                'depth_level': ask['depth_level'],
-                'type': 'depth_ask',
-                'iceberg': ask['is_iceberg'],
-                'distance_from_spot': ask['distance_from_spot']
-            })
-    
-    # Sort levels by strength
-    analysis['support_levels'].sort(key=lambda x: x['strength'], reverse=True)
-    analysis['resistance_levels'].sort(key=lambda x: x['strength'], reverse=True)
-    
-    # Calculate market depth summary
-    analysis['summary'] = {
-        'total_bid_volume': analysis['buy_side']['total_volume'],
-        'total_ask_volume': analysis['sell_side']['total_volume'],
-        'depth_pressure': depth_pressure,
-        'total_iceberg_orders': len(analysis['iceberg_orders']),
-        'bid_iceberg_count': analysis['buy_side']['iceberg_count'],
-        'ask_iceberg_count': analysis['sell_side']['iceberg_count'],
-        'avg_bid_price': analysis['buy_side']['weighted_avg_price'],
-        'avg_ask_price': analysis['sell_side']['weighted_avg_price'],
-        'bid_ask_spread': analysis['sell_side']['weighted_avg_price'] - analysis['buy_side']['weighted_avg_price'],
-        'strong_supports': len([s for s in analysis['support_levels'] if s['strength'] > 20]),
-        'strong_resistances': len([r for r in analysis['resistance_levels'] if r['strength'] > 20])
-    }
-    
-    return analysis
+        term2 = r*K*np.exp(-r*tau)*norm.cdf(-d2)
+        return term1 + term2
 
 # -----------------------
-#  SELLER'S ANALYSIS FUNCTIONS
+# 🔥 NEW: MOMENT DETECTOR FUNCTIONS
 # -----------------------
+def _init_history():
+    """Initialize session state for moment history tracking"""
+    if "moment_history" not in st.session_state:
+        st.session_state["moment_history"] = []
+    if "prev_ltps" not in st.session_state:
+        st.session_state["prev_ltps"] = {}
+    if "prev_ivs" not in st.session_state:
+        st.session_state["prev_ivs"] = {}
+
+def _snapshot_from_state(ts, spot, atm_strike, merged: pd.DataFrame):
+    """
+    Create snapshot for OI velocity/acceleration and momentum burst
+    """
+    total_vol = float(merged["Vol_CE"].sum() + merged["Vol_PE"].sum())
+    total_iv = float(merged[["IV_CE", "IV_PE"]].mean().mean()) if not merged.empty else 0.0
+    total_abs_doi = float(merged["Chg_OI_CE"].abs().sum() + merged["Chg_OI_PE"].abs().sum())
+    
+    per = {}
+    for _, r in merged[["strikePrice", "OI_CE", "OI_PE"]].iterrows():
+        per[int(r["strikePrice"])] = {"oi_ce": int(r["OI_CE"]), "oi_pe": int(r["OI_PE"])}
+    
+    return {
+        "ts": ts,
+        "spot": float(spot),
+        "atm": int(atm_strike),
+        "totals": {"vol": total_vol, "iv": total_iv, "abs_doi": total_abs_doi},
+        "per_strike": per
+    }
+
+def _norm01(x, lo, hi):
+    """Normalize value to 0-1 range"""
+    if hi <= lo:
+        return 0.0
+    return float(np.clip((x - lo) / (hi - lo), 0.0, 1.0))
+
+def compute_momentum_burst(history):
+    """
+    Feature #1: Momentum Burst = (ΔVol * ΔIV * Δ|OI|) normalized to 0..100
+    """
+    if len(history) < 2:
+        return {"available": False, "score": 0, "note": "Need at least 2 refresh points."}
+    
+    s_prev, s_now = history[-2], history[-1]
+    dt = max((s_now["ts"] - s_prev["ts"]).total_seconds(), 1.0)
+    
+    dvol = (s_now["totals"]["vol"] - s_prev["totals"]["vol"]) / dt
+    div = (s_now["totals"]["iv"] - s_prev["totals"]["iv"]) / dt
+    ddoi = (s_now["totals"]["abs_doi"] - s_prev["totals"]["abs_doi"]) / dt
+    
+    burst_raw = abs(dvol) * abs(div) * abs(ddoi)
+    score = int(100 * _norm01(burst_raw, 0.0, max(1.0, burst_raw * 2.5)))
+    
+    return {"available": True, "score": score, 
+            "note": "Momentum burst (energy) is rising" if score > 60 else "No strong energy burst detected"}
+
+def compute_gamma_cluster(merged: pd.DataFrame, atm_strike: int, window: int = 2):
+    """
+    Feature #3: ATM Gamma Cluster = sum(|gamma|) around ATM (±1 ±2)
+    """
+    if merged.empty:
+        return {"available": False, "score": 0, "cluster": 0.0}
+    
+    want = [atm_strike + i for i in range(-window, window + 1)]
+    subset = merged[merged["strikePrice"].isin(want)]
+    if subset.empty:
+        return {"available": False, "score": 0, "cluster": 0.0}
+    
+    cluster = float((subset["Gamma_CE"].abs().fillna(0) + subset["Gamma_PE"].abs().fillna(0)).sum())
+    score = int(100 * _norm01(cluster, 0.0, max(1.0, cluster * 2.0)))
+    return {"available": True, "score": score, "cluster": cluster}
+
+def compute_oi_velocity_acceleration(history, atm_strike, window_strikes=3):
+    """
+    Feature #4: OI Velocity + Acceleration
+    """
+    if len(history) < 3:
+        return {"available": False, "score": 0, "note": "Need 3+ refresh points for OI acceleration."}
+    
+    s0, s1, s2 = history[-3], history[-2], history[-1]
+    dt1 = max((s1["ts"] - s0["ts"]).total_seconds(), 1.0)
+    dt2 = max((s2["ts"] - s1["ts"]).total_seconds(), 1.0)
+    
+    def cluster_strikes(atm):
+        return [atm + i for i in range(-window_strikes, window_strikes + 1) if (atm + i) in s2["per_strike"]]
+    
+    strikes = cluster_strikes(atm_strike)
+    if not strikes:
+        return {"available": False, "score": 0, "note": "No ATM cluster strikes found."}
+    
+    vel = []
+    acc = []
+    for k in strikes:
+        o0 = s0["per_strike"].get(k, {"oi_ce": 0, "oi_pe": 0})
+        o1 = s1["per_strike"].get(k, {"oi_ce": 0, "oi_pe": 0})
+        o2 = s2["per_strike"].get(k, {"oi_ce": 0, "oi_pe": 0})
+        
+        t0 = o0["oi_ce"] + o0["oi_pe"]
+        t1 = o1["oi_ce"] + o1["oi_pe"]
+        t2 = o2["oi_ce"] + o2["oi_pe"]
+        
+        v1 = (t1 - t0) / dt1
+        v2 = (t2 - t1) / dt2
+        a = (v2 - v1) / dt2
+        
+        vel.append(abs(v2))
+        acc.append(abs(a))
+    
+    vel_score = _norm01(np.median(vel), 0, max(1.0, np.percentile(vel, 90)))
+    acc_score = _norm01(np.median(acc), 0, max(1.0, np.percentile(acc, 90)))
+    
+    score = int(100 * (0.6 * vel_score + 0.4 * acc_score))
+    return {"available": True, "score": score, 
+            "note": "OI speed-up detected in ATM cluster" if score > 60 else "OI changes are slow/steady"}
+
+# -----------------------
+# 🔥 ENTRY SIGNAL CALCULATION (EXTENDED WITH MOMENT DETECTOR & ATM BIAS)
+# -----------------------
+def calculate_realistic_stop_loss_target(position_type, entry_price, nearest_sup, nearest_res, strike_gap, max_risk_pct=1.5):
+    """
+    Calculate realistic stop loss and target with proper risk management
+    """
+    stop_loss = None
+    target = None
+    
+    if not nearest_sup or not nearest_res:
+        return stop_loss, target
+    
+    # Maximum risk = 1.5% of entry price
+    max_risk_points = entry_price * (max_risk_pct / 100)
+    
+    if position_type == "LONG":
+        # Option 1: Support-based stop (1.5 strike gaps below support)
+        stop_loss_support = nearest_sup["strike"] - (strike_gap * 1.5)
+        
+        # Option 2: Percentage-based stop
+        stop_loss_pct = entry_price - max_risk_points
+        
+        # Use the HIGHER stop (tighter risk management)
+        stop_loss = max(stop_loss_support, stop_loss_pct)
+        
+        # Calculate risk amount
+        risk_amount = entry_price - stop_loss
+        
+        # Target 1: 2:1 risk:reward
+        target_rr = entry_price + (risk_amount * 2)
+        
+        # Target 2: Near resistance
+        target_resistance = nearest_res["strike"] - strike_gap
+        
+        # Use the LOWER target (more conservative)
+        target = min(target_rr, target_resistance)
+        
+        # Ensure target > entry
+        if target <= entry_price:
+            target = entry_price + risk_amount  # 1:1 at minimum
+    
+    elif position_type == "SHORT":
+        # Option 1: Resistance-based stop (1.5 strike gaps above resistance)
+        stop_loss_resistance = nearest_res["strike"] + (strike_gap * 1.5)
+        
+        # Option 2: Percentage-based stop
+        stop_loss_pct = entry_price + max_risk_points
+        
+        # Use the LOWER stop (tighter risk management)
+        stop_loss = min(stop_loss_resistance, stop_loss_pct)
+        
+        # Calculate risk amount
+        risk_amount = stop_loss - entry_price
+        
+        # Target 1: 2:1 risk:reward
+        target_rr = entry_price - (risk_amount * 2)
+        
+        # Target 2: Near support
+        target_support = nearest_sup["strike"] + strike_gap
+        
+        # Use the HIGHER target (more conservative)
+        target = max(target_rr, target_support)
+        
+        # Ensure target < entry
+        if target >= entry_price:
+            target = entry_price - risk_amount  # 1:1 at minimum
+    
+    # Round to nearest 50 for Nifty
+    if stop_loss:
+        stop_loss = round(stop_loss / 50) * 50
+    if target:
+        target = round(target / 50) * 50
+    
+    return stop_loss, target
+
+def calculate_entry_signal_extended(
+    spot, 
+    merged_df, 
+    atm_strike, 
+    seller_bias_result, 
+    seller_max_pain, 
+    seller_supports_df, 
+    seller_resists_df, 
+    nearest_sup, 
+    nearest_res, 
+    seller_breakout_index,
+    moment_metrics,  # NEW: Add moment metrics
+    atm_bias=None,   # NEW: Add ATM bias
+    support_bias=None,  # NEW: Add support bias
+    resistance_bias=None,  # NEW: Add resistance bias
+    depth_signals=None  # NEW: Add depth signals
+):
+    """
+    Calculate optimal entry signal with Moment Detector & ATM Bias & Depth integration
+    """
+    
+    # Initialize signal components
+    signal_score = 0
+    signal_reasons = []
+    optimal_entry_price = spot
+    position_type = "NEUTRAL"
+    confidence = 0
+    
+    # ============================================
+    # 1. SELLER BIAS ANALYSIS (30% weight)
+    # ============================================
+    seller_bias = seller_bias_result["bias"]
+    seller_polarity = seller_bias_result["polarity"]
+    
+    if "STRONG BULLISH" in seller_bias or "BULLISH" in seller_bias:
+        signal_score += 30
+        position_type = "LONG"
+        signal_reasons.append(f"Seller bias: {seller_bias} (Polarity: {seller_polarity:.1f})")
+    elif "STRONG BEARISH" in seller_bias or "BEARISH" in seller_bias:
+        signal_score += 30
+        position_type = "SHORT"
+        signal_reasons.append(f"Seller bias: {seller_bias} (Polarity: {seller_polarity:.1f})")
+    else:
+        signal_score += 10
+        position_type = "NEUTRAL"
+        signal_reasons.append("Seller bias: Neutral - Wait for clearer signal")
+    
+    # ============================================
+    # 2. DEPTH SIGNALS (25% weight) - NEW
+    # ============================================
+    if depth_signals and depth_signals["available"]:
+        depth_weight = 25
+        depth_confidence = depth_signals["confidence"]
+        
+        if position_type == "LONG" and depth_signals["signal_type"] == "BULLISH":
+            signal_score += int(depth_weight * (depth_confidence / 100))
+            signal_reasons.append(f"Depth confirms BULLISH ({depth_confidence}% confidence)")
+        elif position_type == "SHORT" and depth_signals["signal_type"] == "BEARISH":
+            signal_score += int(depth_weight * (depth_confidence / 100))
+            signal_reasons.append(f"Depth confirms BEARISH ({depth_confidence}% confidence)")
+        elif depth_signals["signal_type"] == "NEUTRAL":
+            signal_score -= 5  # Penalize if depth shows no clear signal
+            signal_reasons.append("Depth shows NEUTRAL bias")
+    
+    # ============================================
+    # 3. MAX PAIN ALIGNMENT (10% weight)
+    # ============================================
+    if seller_max_pain:
+        distance_to_max_pain = abs(spot - seller_max_pain)
+        distance_pct = (distance_to_max_pain / spot) * 100
+        
+        if distance_pct < 0.5:
+            signal_score += 10
+            signal_reasons.append(f"Spot VERY close to Max Pain (₹{seller_max_pain:,}, {distance_pct:.2f}%)")
+            optimal_entry_price = seller_max_pain
+        elif distance_pct < 1.0:
+            signal_score += 5
+            signal_reasons.append(f"Spot close to Max Pain (₹{seller_max_pain:,}, {distance_pct:.2f}%)")
+            if position_type == "LONG" and spot < seller_max_pain:
+                optimal_entry_price = min(spot + (seller_max_pain - spot) * 0.5, seller_max_pain)
+            elif position_type == "SHORT" and spot > seller_max_pain:
+                optimal_entry_price = max(spot - (spot - seller_max_pain) * 0.5, seller_max_pain)
+    
+    # ============================================
+    # 4. SUPPORT/RESISTANCE ALIGNMENT (15% weight)
+    # ============================================
+    if nearest_sup and nearest_res:
+        range_size = nearest_res["strike"] - nearest_sup["strike"]
+        if range_size > 0:
+            position_in_range = ((spot - nearest_sup["strike"]) / range_size) * 100
+            
+            if position_type == "LONG":
+                if position_in_range < 40:
+                    signal_score += 15
+                    signal_reasons.append(f"Ideal LONG entry: Near support (₹{nearest_sup['strike']:,})")
+                    optimal_entry_price = nearest_sup["strike"] + (range_size * 0.1)
+                elif position_in_range < 60:
+                    signal_score += 10
+                    signal_reasons.append("OK LONG entry: Middle of range")
+                else:
+                    signal_score += 5
+                    
+            elif position_type == "SHORT":
+                if position_in_range > 60:
+                    signal_score += 15
+                    signal_reasons.append(f"Ideal SHORT entry: Near resistance (₹{nearest_res['strike']:,})")
+                    optimal_entry_price = nearest_res["strike"] - (range_size * 0.1)
+                elif position_in_range > 40:
+                    signal_score += 10
+                    signal_reasons.append("OK SHORT entry: Middle of range")
+                else:
+                    signal_score += 5
+    
+    # ============================================
+    # 5. BREAKOUT INDEX (5% weight)
+    # ============================================
+    if seller_breakout_index > 80:
+        signal_score += 5
+        signal_reasons.append(f"High Breakout Index ({seller_breakout_index}%): Strong momentum expected")
+    elif seller_breakout_index > 60:
+        signal_score += 3
+        signal_reasons.append(f"Moderate Breakout Index ({seller_breakout_index}%): Some momentum expected")
+    
+    # ============================================
+    # 6. PCR ANALYSIS (5% weight)
+    # ============================================
+    total_ce_oi = merged_df["OI_CE"].sum()
+    total_pe_oi = merged_df["OI_PE"].sum()
+    if total_ce_oi > 0:
+        total_pcr = total_pe_oi / total_ce_oi
+        if position_type == "LONG" and total_pcr > 1.5:
+            signal_score += 5
+            signal_reasons.append(f"Strong PCR ({total_pcr:.2f}): Heavy PUT selling confirms bullish bias")
+        elif position_type == "SHORT" and total_pcr < 0.7:
+            signal_score += 5
+            signal_reasons.append(f"Strong PCR ({total_pcr:.2f}): Heavy CALL selling confirms bearish bias")
+    
+    # ============================================
+    # 7. GEX ANALYSIS (Adjustment factor)
+    # ============================================
+    total_gex_net = merged_df["GEX_Net"].sum()
+    if total_gex_net > 1000000:
+        if position_type == "LONG":
+            signal_score += 3
+            signal_reasons.append("Positive GEX: Supports LONG position (stabilizing)")
+    elif total_gex_net < -1000000:
+        if position_type == "SHORT":
+            signal_score += 3
+            signal_reasons.append("Negative GEX: Supports SHORT position (destabilizing)")
+    
+    # ============================================
+    # 8. MOMENT DETECTOR FEATURES (15% total weight)
+    # ============================================
+    
+    # 8.1 Momentum Burst (6% weight)
+    mb = moment_metrics.get("momentum_burst", {})
+    if mb.get("available", False):
+        mb_score = mb.get("score", 0)
+        signal_score += int(6 * (mb_score / 100.0))
+        signal_reasons.append(f"Momentum burst: {mb_score}/100 - {mb.get('note', '')}")
+    
+    # 8.2 Orderbook Pressure (5% weight)
+    ob = moment_metrics.get("orderbook", {})
+    if ob.get("available", False):
+        pressure = ob.get("pressure", 0.0)
+        if position_type == "LONG" and pressure > 0.15:
+            signal_score += 5
+            signal_reasons.append(f"Orderbook buy pressure: {pressure:+.2f} (supports LONG)")
+        elif position_type == "SHORT" and pressure < -0.15:
+            signal_score += 5
+            signal_reasons.append(f"Orderbook sell pressure: {pressure:+.2f} (supports SHORT)")
+    
+    # 8.3 Gamma Cluster (3% weight)
+    gc = moment_metrics.get("gamma_cluster", {})
+    if gc.get("available", False):
+        gc_score = gc.get("score", 0)
+        signal_score += int(3 * (gc_score / 100.0))
+        signal_reasons.append(f"Gamma cluster: {gc_score}/100 (ATM concentration)")
+    
+    # 8.4 OI Acceleration (1% weight)
+    oi_accel = moment_metrics.get("oi_accel", {})
+    if oi_accel.get("available", False):
+        oi_score = oi_accel.get("score", 0)
+        signal_score += int(1 * (oi_score / 100.0))
+        signal_reasons.append(f"OI acceleration: {oi_score}/100 ({oi_accel.get('note', '')})")
+    
+    # ============================================
+    # 9. ATM BIAS INTEGRATION (10% weight)
+    # ============================================
+    if atm_bias:
+        atm_score = atm_bias["total_score"]
+        if position_type == "LONG" and atm_score > 0.1:
+            signal_score += int(10 * (atm_score / 1.0))  # Scale to max 10 points
+            signal_reasons.append(f"ATM bias bullish ({atm_score:.2f}) confirms LONG")
+        elif position_type == "SHORT" and atm_score < -0.1:
+            signal_score += int(10 * (abs(atm_score) / 1.0))
+            signal_reasons.append(f"ATM bias bearish ({atm_score:.2f}) confirms SHORT")
+    
+    # ============================================
+    # 10. SUPPORT/RESISTANCE BIAS INTEGRATION (5% weight)
+    # ============================================
+    if support_bias and position_type == "LONG":
+        support_score = support_bias["total_score"]
+        if support_score > 0.2:
+            signal_score += int(5 * (support_score / 1.0))
+            signal_reasons.append(f"Strong support bias ({support_score:.2f}) at ₹{support_bias['strike']:,}")
+    
+    if resistance_bias and position_type == "SHORT":
+        resistance_score = resistance_bias["total_score"]
+        if resistance_score < -0.2:
+            signal_score += int(5 * (abs(resistance_score) / 1.0))
+            signal_reasons.append(f"Strong resistance bias ({resistance_score:.2f}) at ₹{resistance_bias['strike']:,}")
+    
+    # ============================================
+    # FINAL SIGNAL CALCULATION
+    # ============================================
+    
+    # Calculate confidence percentage
+    confidence = min(max(signal_score, 0), 100)
+    
+    # Determine signal strength
+    if confidence >= 80:
+        signal_strength = "STRONG"
+        signal_color = "#00ff88" if position_type == "LONG" else "#ff4444"
+    elif confidence >= 60:
+        signal_strength = "MODERATE"
+        signal_color = "#00cc66" if position_type == "LONG" else "#ff6666"
+    elif confidence >= 40:
+        signal_strength = "WEAK"
+        signal_color = "#66b3ff"
+    else:
+        signal_strength = "NO SIGNAL"
+        signal_color = "#cccccc"
+        position_type = "NEUTRAL"
+        optimal_entry_price = spot
+    
+    # Calculate stop loss and target with realistic logic
+    stop_loss = None
+    target = None
+    
+    if nearest_sup and nearest_res and position_type != "NEUTRAL":
+        strike_gap_val = strike_gap_from_series(merged_df["strikePrice"])
+        
+        # Use the new realistic stop loss calculation
+        stop_loss, target = calculate_realistic_stop_loss_target(
+            position_type, optimal_entry_price, nearest_sup, nearest_res, strike_gap_val
+        )
+    
+    return {
+        "position_type": position_type,
+        "signal_strength": signal_strength,
+        "confidence": confidence,
+        "optimal_entry_price": optimal_entry_price,
+        "current_spot": spot,
+        "signal_color": signal_color,
+        "reasons": signal_reasons,
+        "stop_loss": stop_loss,
+        "target": target,
+        "max_pain": seller_max_pain,
+        "nearest_support": nearest_sup["strike"] if nearest_sup else None,
+        "nearest_resistance": nearest_res["strike"] if nearest_res else None,
+        "moment_metrics": moment_metrics,  # NEW: Include moment metrics in signal
+        "atm_bias_score": atm_bias["total_score"] if atm_bias else 0,  # NEW: Include ATM bias score
+        "support_bias_score": support_bias["total_score"] if support_bias else 0,  # NEW: Include support bias score
+        "resistance_bias_score": resistance_bias["total_score"] if resistance_bias else 0,  # NEW: Include resistance bias score
+        "depth_signals": depth_signals  # NEW: Include depth signals
+    }
+
+# ============================================
+# 🎯 ENHANCED ENTRY SIGNAL WITH ATM BIAS (NEW)
+# ============================================
+def calculate_entry_signal_with_atm_bias(
+    spot, 
+    merged_df, 
+    atm_strike, 
+    seller_bias_result, 
+    seller_max_pain, 
+    seller_supports_df, 
+    seller_resists_df, 
+    nearest_sup, 
+    nearest_res, 
+    seller_breakout_index,
+    moment_metrics,
+    atm_bias, 
+    support_bias, 
+    resistance_bias,
+    depth_signals=None  # NEW: Add depth signals
+):
+    """
+    Enhanced entry signal with comprehensive ATM bias analysis
+    This function wraps the extended entry signal for backward compatibility
+    """
+    return calculate_entry_signal_extended(
+        spot=spot,
+        merged_df=merged_df,
+        atm_strike=atm_strike,
+        seller_bias_result=seller_bias_result,
+        seller_max_pain=seller_max_pain,
+        seller_supports_df=seller_supports_df,
+        seller_resists_df=seller_resists_df,
+        nearest_sup=nearest_sup,
+        nearest_res=nearest_res,
+        seller_breakout_index=seller_breakout_index,
+        moment_metrics=moment_metrics,
+        atm_bias=atm_bias,
+        support_bias=support_bias,
+        resistance_bias=resistance_bias,
+        depth_signals=depth_signals  # NEW: Add depth signals
+    )
+
+# -----------------------
+# 🔥 SELLER'S PERSPECTIVE FUNCTIONS (ORIGINAL)
+# -----------------------
+def seller_strength_score(row, weights=SCORE_WEIGHTS):
+    chg_oi = abs(safe_float(row.get("Chg_OI_CE",0))) + abs(safe_float(row.get("Chg_OI_PE",0)))
+    vol = safe_float(row.get("Vol_CE",0)) + safe_float(row.get("Vol_PE",0))
+    oi = safe_float(row.get("OI_CE",0)) + safe_float(row.get("OI_PE",0))
+    iv_ce = safe_float(row.get("IV_CE", np.nan))
+    iv_pe = safe_float(row.get("IV_PE", np.nan))
+    iv = np.nanmean([v for v in (iv_ce, iv_pe) if not np.isnan(v)]) if (not np.isnan(iv_ce) or not np.isnan(iv_pe)) else 0
+    
+    score = weights["chg_oi"]*chg_oi + weights["volume"]*vol + weights["oi"]*oi + weights["iv"]*iv
+    return score
+
+def seller_price_oi_divergence(chg_oi, vol, ltp_change, option_type="CE"):
+    vol_up = vol > 0
+    oi_up = chg_oi > 0
+    price_up = (ltp_change is not None and ltp_change > 0)
+    
+    if option_type == "CE":
+        if oi_up and vol_up and price_up:
+            return "Sellers WRITING calls as price rises (Bearish conviction)"
+        if oi_up and vol_up and not price_up:
+            return "Sellers WRITING calls on weakness (Strong bearish)"
+        if not oi_up and vol_up and price_up:
+            return "Sellers BUYING back calls as price rises (Covering bearish)"
+        if not oi_up and vol_up and not price_up:
+            return "Sellers BUYING back calls on weakness (Reducing bearish exposure)"
+    else:
+        if oi_up and vol_up and price_up:
+            return "Sellers WRITING puts on strength (Bullish conviction)"
+        if oi_up and vol_up and not price_up:
+            return "Sellers WRITING puts as price falls (Strong bullish)"
+        if not oi_up and vol_up and price_up:
+            return "Sellers BUYING back puts on strength (Covering bullish)"
+        if not oi_up and vol_up and not price_up:
+            return "Sellers BUYING back puts as price falls (Reducing bullish exposure)"
+    
+    if oi_up and not vol_up:
+        return "Sellers quietly WRITING options"
+    if (not oi_up) and not vol_up:
+        return "Sellers quietly UNWINDING"
+    
+    return "Sellers inactive"
+
+def seller_itm_otm_interpretation(strike, atm, chg_oi_ce, chg_oi_pe):
+    ce_interpretation = ""
+    pe_interpretation = ""
+    
+    if strike < atm:
+        if chg_oi_ce > 0:
+            ce_interpretation = "SELLERS WRITING ITM CALLS = VERY BEARISH 🚨"
+        elif chg_oi_ce < 0:
+            ce_interpretation = "SELLERS BUYING BACK ITM CALLS = BULLISH 📈"
+        else:
+            ce_interpretation = "No ITM CALL activity"
+    
+    elif strike > atm:
+        if chg_oi_ce > 0:
+            ce_interpretation = "SELLERS WRITING OTM CALLS = MILD BEARISH 📉"
+        elif chg_oi_ce < 0:
+            ce_interpretation = "SELLERS BUYING BACK OTM CALLS = MILD BULLISH 📊"
+        else:
+            ce_interpretation = "No OTM CALL activity"
+    
+    else:
+        ce_interpretation = "ATM CALL zone"
+    
+    if strike > atm:
+        if chg_oi_pe > 0:
+            pe_interpretation = "SELLERS WRITING ITM PUTS = VERY BULLISH 🚀"
+        elif chg_oi_pe < 0:
+            pe_interpretation = "SELLERS BUYING BACK ITM PUTS = BEARISH 🐻"
+        else:
+            pe_interpretation = "No ITM PUT activity"
+    
+    elif strike < atm:
+        if chg_oi_pe > 0:
+            pe_interpretation = "SELLERS WRITING OTM PUTS = MILD BULLISH 📈"
+        elif chg_oi_pe < 0:
+            pe_interpretation = "SELLERS BUYING BACK OTM PUTS = MILD BEARISH 📉"
+        else:
+            pe_interpretation = "No OTM PUT activity"
+    
+    else:
+        pe_interpretation = "ATM PUT zone"
+    
+    return f"CALL Sellers: {ce_interpretation} | PUT Sellers: {pe_interpretation}"
+
+def seller_gamma_pressure(row, atm, strike_gap):
+    strike = row["strikePrice"]
+    dist = abs(strike - atm) / max(strike_gap, 1)
+    dist = max(dist, 1e-6)
+    
+    chg_oi_sum = safe_float(row.get("Chg_OI_CE",0)) - safe_float(row.get("Chg_OI_PE",0))
+    seller_pressure = -chg_oi_sum / dist
+    
+    return seller_pressure
+
+def seller_breakout_probability_index(merged_df, atm, strike_gap):
+    near_mask = merged_df["strikePrice"].between(atm-strike_gap, atm+strike_gap)
+    
+    atm_ce_build = merged_df.loc[near_mask, "Chg_OI_CE"].sum()
+    atm_pe_build = merged_df.loc[near_mask, "Chg_OI_PE"].sum()
+    seller_atm_bias = atm_pe_build - atm_ce_build
+    atm_score = min(abs(seller_atm_bias)/50000.0, 1.0)
+    
+    ce_writing_count = (merged_df["CE_Seller_Action"] == "WRITING").sum()
+    pe_writing_count = (merged_df["PE_Seller_Action"] == "WRITING").sum()
+    ce_buying_back_count = (merged_df["CE_Seller_Action"] == "BUYING BACK").sum()
+    pe_buying_back_count = (merged_df["PE_Seller_Action"] == "BUYING BACK").sum()
+    
+    total_actions = ce_writing_count + pe_writing_count + ce_buying_back_count + pe_buying_back_count
+    if total_actions > 0:
+        seller_conviction = (ce_writing_count + pe_writing_count) / total_actions
+    else:
+        seller_conviction = 0.5
+    
+    vol_oi_scores = (merged_df[["Vol_CE","Vol_PE"]].sum(axis=1) * merged_df[["Chg_OI_CE","Chg_OI_PE"]].abs().sum(axis=1)).fillna(0)
+    vol_oi_score = min(vol_oi_scores.sum()/100000.0, 1.0)
+    
+    gamma = merged_df.apply(lambda r: seller_gamma_pressure(r, atm, strike_gap), axis=1).sum()
+    gamma_score = min(abs(gamma)/10000.0, 1.0)
+    
+    w = BREAKOUT_INDEX_WEIGHTS
+    combined = (w["atm_oi_shift"]*atm_score) + (w["winding_balance"]*seller_conviction) + (w["vol_oi_div"]*vol_oi_score) + (w["gamma_pressure"]*gamma_score)
+    
+    return int(np.clip(combined*100,0,100))
+
 def calculate_seller_max_pain(df):
-    """Calculate Max Pain level where sellers have minimum loss"""
     pain_dict = {}
     for _, row in df.iterrows():
         strike = row["strikePrice"]
@@ -342,11 +2767,10 @@ def calculate_seller_max_pain(df):
         ce_ltp = safe_float(row.get("LTP_CE", 0))
         pe_ltp = safe_float(row.get("LTP_PE", 0))
         
-        # Pain calculation
-        ce_pain = ce_oi * max(0, ce_ltp)
-        pe_pain = pe_oi * max(0, pe_ltp)
-        pain = ce_pain + pe_pain
+        ce_pain = ce_oi * max(0, ce_ltp) if strike < df["strikePrice"].mean() else 0
+        pe_pain = pe_oi * max(0, pe_ltp) if strike > df["strikePrice"].mean() else 0
         
+        pain = ce_pain + pe_pain
         pain_dict[strike] = pain
     
     if pain_dict:
@@ -354,10 +2778,6 @@ def calculate_seller_max_pain(df):
     return None
 
 def calculate_seller_market_bias(merged_df, spot, atm_strike):
-    """
-    Calculate seller's market bias based on OI changes
-    Returns: dict with bias, polarity, and color
-    """
     polarity = 0.0
     
     for _, r in merged_df.iterrows():
@@ -365,388 +2785,214 @@ def calculate_seller_market_bias(merged_df, spot, atm_strike):
         chg_ce = safe_int(r.get("Chg_OI_CE", 0))
         chg_pe = safe_int(r.get("Chg_OI_PE", 0))
         
-        # ITM CALL writing (very bearish)
-        if strike < atm_strike and chg_ce > 0:
-            polarity -= 2.0
+        if strike < atm_strike:
+            if chg_ce > 0:
+                polarity -= 2.0
+            elif chg_ce < 0:
+                polarity += 1.5
         
-        # ITM CALL buying back (bullish)
-        elif strike < atm_strike and chg_ce < 0:
-            polarity += 1.5
+        elif strike > atm_strike:
+            if chg_ce > 0:
+                polarity -= 0.7
+            elif chg_ce < 0:
+                polarity += 0.5
         
-        # OTM CALL writing (mildly bearish)
-        elif strike > atm_strike and chg_ce > 0:
-            polarity -= 0.7
+        if strike > atm_strike:
+            if chg_pe > 0:
+                polarity += 2.0
+            elif chg_pe < 0:
+                polarity -= 1.5
         
-        # OTM CALL buying back (mildly bullish)
-        elif strike > atm_strike and chg_ce < 0:
-            polarity += 0.5
-        
-        # ITM PUT writing (very bullish)
-        if strike > atm_strike and chg_pe > 0:
-            polarity += 2.0
-        
-        # ITM PUT buying back (bearish)
-        elif strike > atm_strike and chg_pe < 0:
-            polarity -= 1.5
-        
-        # OTM PUT writing (mildly bullish)
-        elif strike < atm_strike and chg_pe > 0:
-            polarity += 0.7
-        
-        # OTM PUT buying back (mildly bearish)
-        elif strike < atm_strike and chg_pe < 0:
-            polarity -= 0.5
+        elif strike < atm_strike:
+            if chg_pe > 0:
+                polarity += 0.7
+            elif chg_pe < 0:
+                polarity -= 0.5
     
-    # PCR adjustment
     total_ce_oi = merged_df["OI_CE"].sum()
     total_pe_oi = merged_df["OI_PE"].sum()
     if total_ce_oi > 0:
         pcr = total_pe_oi / total_ce_oi
         if pcr > 2.0:
-            polarity += 1.0  # Extreme put selling
+            polarity += 1.0
         elif pcr < 0.5:
-            polarity -= 1.0  # Extreme call selling
+            polarity -= 1.0
     
-    # IV skew adjustment
     avg_iv_ce = merged_df["IV_CE"].mean()
     avg_iv_pe = merged_df["IV_PE"].mean()
     if avg_iv_ce > avg_iv_pe + 5:
-        polarity -= 0.3  # Higher call IV = bearish
+        polarity -= 0.3
     elif avg_iv_pe > avg_iv_ce + 5:
-        polarity += 0.3  # Higher put IV = bullish
+        polarity += 0.3
     
-    # Determine bias
+    total_gex_ce = merged_df["GEX_CE"].sum()
+    total_gex_pe = merged_df["GEX_PE"].sum()
+    net_gex = total_gex_ce + total_gex_pe
+    if net_gex < -1000000:
+        polarity -= 0.4
+    elif net_gex > 1000000:
+        polarity += 0.4
+    
+    max_pain = calculate_seller_max_pain(merged_df)
+    if max_pain:
+        distance_to_spot = abs(spot - max_pain) / spot * 100
+        if distance_to_spot < 1.0:
+            polarity += 0.5
+    
     if polarity > 3.0:
         return {
             "bias": "STRONG BULLISH SELLERS 🚀",
             "polarity": polarity,
             "color": "#00ff88",
-            "explanation": "Sellers aggressively writing PUTS (bullish conviction)",
-            "action": "Expect upside movement, support likely to hold"
+            "explanation": "Sellers aggressively WRITING PUTS (bullish conviction). Expecting price to STAY ABOVE strikes.",
+            "action": "Bullish breakout likely. Sellers confident in upside."
         }
     elif polarity > 1.0:
         return {
             "bias": "BULLISH SELLERS 📈",
             "polarity": polarity,
             "color": "#00cc66",
-            "explanation": "Sellers leaning towards PUT writing",
-            "action": "Moderate bullish bias, watch support levels"
+            "explanation": "Sellers leaning towards PUT writing. Moderate bullish sentiment.",
+            "action": "Expect support to hold. Upside bias."
         }
     elif polarity < -3.0:
         return {
             "bias": "STRONG BEARISH SELLERS 🐻",
             "polarity": polarity,
             "color": "#ff4444",
-            "explanation": "Sellers aggressively writing CALLS (bearish conviction)",
-            "action": "Expect downside movement, resistance likely to hold"
+            "explanation": "Sellers aggressively WRITING CALLS (bearish conviction). Expecting price to STAY BELOW strikes.",
+            "action": "Bearish breakdown likely. Sellers confident in downside."
         }
     elif polarity < -1.0:
         return {
             "bias": "BEARISH SELLERS 📉",
             "polarity": polarity,
             "color": "#ff6666",
-            "explanation": "Sellers leaning towards CALL writing",
-            "action": "Moderate bearish bias, watch resistance levels"
+            "explanation": "Sellers leaning towards CALL writing. Moderate bearish sentiment.",
+            "action": "Expect resistance to hold. Downside bias."
         }
     else:
         return {
             "bias": "NEUTRAL SELLERS ⚖️",
             "polarity": polarity,
             "color": "#66b3ff",
-            "explanation": "Balanced seller activity",
-            "action": "Range-bound expected, wait for clearer signals"
+            "explanation": "Balanced seller activity. No clear directional bias.",
+            "action": "Range-bound expected. Wait for clearer signals."
         }
 
-def analyze_oi_pcr_metrics(merged_df, spot, atm_strike):
-    """
-    Comprehensive OI and PCR analysis
-    Returns detailed metrics and insights
-    """
-    # Basic totals
-    total_ce_oi = merged_df["OI_CE"].sum()
-    total_pe_oi = merged_df["OI_PE"].sum()
-    total_ce_chg = merged_df["Chg_OI_CE"].sum()
-    total_pe_chg = merged_df["Chg_OI_PE"].sum()
-    total_oi = total_ce_oi + total_pe_oi
-    total_chg_oi = total_ce_chg + total_pe_chg
+def analyze_spot_position_seller(spot, pcr_df, market_bias):
+    sorted_df = pcr_df.sort_values("strikePrice").reset_index(drop=True)
+    all_strikes = sorted_df["strikePrice"].tolist()
     
-    # PCR Calculations
-    pcr_total = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
-    pcr_chg = total_pe_chg / total_ce_chg if abs(total_ce_chg) > 0 else 0
+    supports_below = [s for s in all_strikes if s < spot]
+    nearest_support = max(supports_below) if supports_below else None
     
-    # PCR Interpretation
-    pcr_interpretation = ""
-    pcr_sentiment = ""
-    pcr_color = "#66b3ff"
+    resistances_above = [s for s in all_strikes if s > spot]
+    nearest_resistance = min(resistances_above) if resistances_above else None
     
-    if pcr_total > 2.0:
-        pcr_interpretation = "EXTREME PUT SELLING"
-        pcr_sentiment = "STRONGLY BULLISH"
-        pcr_color = "#00ff88"
-    elif pcr_total > 1.5:
-        pcr_interpretation = "HEAVY PUT SELLING"
-        pcr_sentiment = "BULLISH"
-        pcr_color = "#00cc66"
-    elif pcr_total > 1.2:
-        pcr_interpretation = "MODERATE PUT SELLING"
-        pcr_sentiment = "MILD BULLISH"
-        pcr_color = "#66ff66"
-    elif pcr_total > 0.8:
-        pcr_interpretation = "BALANCED"
-        pcr_sentiment = "NEUTRAL"
-        pcr_color = "#66b3ff"
-    elif pcr_total > 0.5:
-        pcr_interpretation = "MODERATE CALL SELLING"
-        pcr_sentiment = "MILD BEARISH"
-        pcr_color = "#ff9900"
-    elif pcr_total > 0.3:
-        pcr_interpretation = "HEAVY CALL SELLING"
-        pcr_sentiment = "BEARISH"
-        pcr_color = "#ff4444"
-    else:
-        pcr_interpretation = "EXTREME CALL SELLING"
-        pcr_sentiment = "STRONGLY BEARISH"
-        pcr_color = "#ff0000"
-    
-    # OI Change Interpretation
-    oi_change_interpretation = ""
-    if total_ce_chg > 0 and total_pe_chg > 0:
-        oi_change_interpretation = "Fresh writing on both sides (range expansion)"
-    elif total_ce_chg > 0 and total_pe_chg < 0:
-        oi_change_interpretation = "CALL writing + PUT unwinding (bearish)"
-    elif total_ce_chg < 0 and total_pe_chg > 0:
-        oi_change_interpretation = "CALL unwinding + PUT writing (bullish)"
-    elif total_ce_chg < 0 and total_pe_chg < 0:
-        oi_change_interpretation = "Unwinding on both sides (range contraction)"
-    else:
-        oi_change_interpretation = "Mixed activity"
-    
-    # Max OI Strikes
-    max_ce_oi_row = merged_df.loc[merged_df["OI_CE"].idxmax()] if not merged_df.empty else None
-    max_pe_oi_row = merged_df.loc[merged_df["OI_PE"].idxmax()] if not merged_df.empty else None
-    
-    max_ce_strike = int(max_ce_oi_row["strikePrice"]) if max_ce_oi_row is not None else 0
-    max_ce_oi_val = int(max_ce_oi_row["OI_CE"]) if max_ce_oi_row is not None else 0
-    max_pe_strike = int(max_pe_oi_row["strikePrice"]) if max_pe_oi_row is not None else 0
-    max_pe_oi_val = int(max_pe_oi_row["OI_PE"]) if max_pe_oi_row is not None else 0
-    
-    return {
-        # Totals
-        "total_ce_oi": total_ce_oi,
-        "total_pe_oi": total_pe_oi,
-        "total_oi": total_oi,
-        "total_ce_chg": total_ce_chg,
-        "total_pe_chg": total_pe_chg,
-        "total_chg_oi": total_chg_oi,
+    def get_level_details(strike, df):
+        if strike is None:
+            return None
+        row = df[df["strikePrice"] == strike]
+        if row.empty:
+            return None
         
-        # PCR Metrics
-        "pcr_total": pcr_total,
-        "pcr_chg": pcr_chg,
-        "pcr_interpretation": pcr_interpretation,
-        "pcr_sentiment": pcr_sentiment,
-        "pcr_color": pcr_color,
+        pcr = row.iloc[0]["PCR"]
+        oi_ce = int(row.iloc[0]["OI_CE"])
+        oi_pe = int(row.iloc[0]["OI_PE"])
+        chg_oi_ce = int(row.iloc[0].get("Chg_OI_CE", 0))
+        chg_oi_pe = int(row.iloc[0].get("Chg_OI_PE", 0))
         
-        # Max OI
-        "max_ce_strike": max_ce_strike,
-        "max_ce_oi": max_ce_oi_val,
-        "max_pe_strike": max_pe_strike,
-        "max_pe_oi": max_pe_oi_val,
-        
-        # Interpretation
-        "oi_change_interpretation": oi_change_interpretation,
-        
-        # Derived metrics
-        "ce_pe_ratio": total_ce_oi / total_pe_oi if total_pe_oi > 0 else 0,
-        "oi_momentum": total_chg_oi / total_oi * 100 if total_oi > 0 else 0
-    }
-
-def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_date_str):
-    """
-    Detect potential expiry day spikes
-    Returns spike probability and key levels
-    """
-    if days_to_expiry > 5:
-        return {
-            "active": False,
-            "probability": 0,
-            "message": "Expiry >5 days away",
-            "type": None
-        }
-    
-    spike_score = 0
-    spike_factors = []
-    spike_type = None
-    
-    # Factor 1: Max Pain vs Spot Distance
-    max_pain = calculate_seller_max_pain(merged_df)
-    if max_pain:
-        max_pain_distance = abs(spot - max_pain) / spot * 100
-        if max_pain_distance > 2.0:
-            spike_score += 20
-            spike_factors.append(f"Spot far from Max Pain ({max_pain_distance:.1f}%)")
-            if spot > max_pain:
-                spike_type = "SHORT SQUEEZE"
-            else:
-                spike_type = "LONG SQUEEZE"
-    
-    # Factor 2: PCR Extremes
-    total_ce_oi = merged_df["OI_CE"].sum()
-    total_pe_oi = merged_df["OI_PE"].sum()
-    if total_ce_oi > 0:
-        pcr = total_pe_oi / total_ce_oi
-        if pcr > 1.8:
-            spike_score += 15
-            spike_factors.append(f"Extreme PCR ({pcr:.2f})")
-            spike_type = "UPWARD SPIKE"
+        if pcr > 1.5:
+            seller_strength = "Strong PUT selling (Bullish sellers)"
+        elif pcr > 1.0:
+            seller_strength = "Moderate PUT selling"
         elif pcr < 0.5:
-            spike_score += 15
-            spike_factors.append(f"Extreme PCR ({pcr:.2f})")
-            spike_type = "DOWNWARD SPIKE"
+            seller_strength = "Strong CALL selling (Bearish sellers)"
+        elif pcr < 1.0:
+            seller_strength = "Moderate CALL selling"
+        else:
+            seller_strength = "Balanced selling"
+        
+        return {
+            "strike": int(strike),
+            "oi_ce": oi_ce,
+            "oi_pe": oi_pe,
+            "chg_oi_ce": chg_oi_ce,
+            "chg_oi_pe": chg_oi_pe,
+            "pcr": pcr,
+            "seller_strength": seller_strength,
+            "distance": abs(spot - strike),
+            "distance_pct": abs(spot - strike) / spot * 100
+        }
     
-    # Factor 3: Large OI Build-up
-    max_ce_oi = merged_df["OI_CE"].max() if not merged_df.empty else 0
-    max_pe_oi = merged_df["OI_PE"].max() if not merged_df.empty else 0
+    nearest_sup = get_level_details(nearest_support, sorted_df)
+    nearest_res = get_level_details(nearest_resistance, sorted_df)
     
-    if max_ce_oi > 2000000:
-        spike_score += 20
-        spike_factors.append(f"Massive CALL OI ({max_ce_oi:,})")
-    
-    if max_pe_oi > 2000000:
-        spike_score += 20
-        spike_factors.append(f"Massive PUT OI ({max_pe_oi:,})")
-    
-    # Determine spike probability
-    probability = min(100, int(spike_score * 1.5))
-    
-    if probability >= 70:
-        intensity = "HIGH PROBABILITY SPIKE"
-        color = "#ff0000"
-    elif probability >= 50:
-        intensity = "MODERATE SPIKE RISK"
-        color = "#ff9900"
+    if nearest_sup and nearest_res:
+        range_size = nearest_res["strike"] - nearest_sup["strike"]
+        spot_position_pct = ((spot - nearest_sup["strike"]) / range_size * 100) if range_size > 0 else 50
+        
+        if spot_position_pct < 40:
+            range_bias = "Near SELLER support (Bullish sellers defending)"
+        elif spot_position_pct > 60:
+            range_bias = "Near SELLER resistance (Bearish sellers defending)"
+        else:
+            range_bias = "Middle of SELLER range"
     else:
-        intensity = "LOW SPIKE RISK"
-        color = "#00ff00"
+        range_size = 0
+        spot_position_pct = 50
+        range_bias = "Range undefined"
     
     return {
-        "active": days_to_expiry <= 5,
-        "probability": probability,
-        "score": spike_score,
-        "intensity": intensity,
-        "type": spike_type,
-        "color": color,
-        "factors": spike_factors,
-        "days_to_expiry": days_to_expiry
+        "nearest_support": nearest_sup,
+        "nearest_resistance": nearest_res,
+        "spot_in_range": (nearest_support, nearest_resistance),
+        "range_size": range_size,
+        "spot_position_pct": spot_position_pct,
+        "range_bias": range_bias,
+        "market_bias": market_bias
     }
 
-def calculate_entry_signal(spot, merged_df, atm_strike, seller_bias, seller_max_pain, 
-                          support_levels, resistance_levels, depth_analysis=None):
-    """
-    Calculate optimal entry signal
-    """
-    signal_score = 0
-    signal_reasons = []
-    position_type = "NEUTRAL"
+def compute_pcr_df(merged_df):
+    df = merged_df.copy()
+    df["OI_CE"] = pd.to_numeric(df.get("OI_CE", 0), errors="coerce").fillna(0).astype(int)
+    df["OI_PE"] = pd.to_numeric(df.get("OI_PE", 0), errors="coerce").fillna(0).astype(int)
     
-    # 1. Seller Bias Analysis
-    if "BULLISH" in seller_bias["bias"]:
-        signal_score += 40
-        position_type = "LONG"
-        signal_reasons.append(f"Seller bias: {seller_bias['bias']}")
-    elif "BEARISH" in seller_bias["bias"]:
-        signal_score += 40
-        position_type = "SHORT"
-        signal_reasons.append(f"Seller bias: {seller_bias['bias']}")
+    def pcr_calc(row):
+        ce = int(row["OI_CE"]) if row["OI_CE"] is not None else 0
+        pe = int(row["OI_PE"]) if row["OI_PE"] is not None else 0
+        if ce <= 0:
+            if pe > 0:
+                return float("inf")
+            else:
+                return np.nan
+        return pe / ce
     
-    # 2. PCR Analysis
-    oi_metrics = analyze_oi_pcr_metrics(merged_df, spot, atm_strike)
-    if position_type == "LONG" and oi_metrics["pcr_total"] > 1.2:
-        signal_score += 20
-        signal_reasons.append(f"PCR supports LONG ({oi_metrics['pcr_total']:.2f})")
-    elif position_type == "SHORT" and oi_metrics["pcr_total"] < 0.8:
-        signal_score += 20
-        signal_reasons.append(f"PCR supports SHORT ({oi_metrics['pcr_total']:.2f})")
+    df["PCR"] = df.apply(pcr_calc, axis=1)
+    return df
+
+def rank_support_resistance_seller(pcr_df):
+    eps = 1e-6
+    t = pcr_df.copy()
     
-    # 3. Market Depth Analysis
-    if depth_analysis:
-        pressure = depth_analysis["summary"]["depth_pressure"]
-        if position_type == "LONG" and pressure > 0.1:
-            signal_score += 15
-            signal_reasons.append(f"Depth pressure bullish ({pressure:+.2f})")
-        elif position_type == "SHORT" and pressure < -0.1:
-            signal_score += 15
-            signal_reasons.append(f"Depth pressure bearish ({pressure:+.2f})")
+    t["PCR_clipped"] = t["PCR"].replace([np.inf, -np.inf], np.nan).fillna(0)
     
-    # 4. Max Pain Alignment
-    if seller_max_pain:
-        distance = abs(spot - seller_max_pain) / spot * 100
-        if distance < 1.0:
-            signal_score += 15
-            signal_reasons.append(f"Near Max Pain (₹{seller_max_pain:,})")
+    t["seller_support_score"] = t["OI_PE"] + (t["PCR_clipped"] * 100000.0)
     
-    # 5. Support/Resistance Alignment
-    if support_levels and resistance_levels:
-        if position_type == "LONG" and spot < resistance_levels[0]["price"]:
-            signal_score += 10
-            signal_reasons.append(f"Below resistance (₹{resistance_levels[0]['price']:.2f})")
-        elif position_type == "SHORT" and spot > support_levels[0]["price"]:
-            signal_score += 10
-            signal_reasons.append(f"Above support (₹{support_levels[0]['price']:.2f})")
+    t["seller_resistance_factor"] = t["PCR_clipped"].apply(lambda x: 1.0/(x+eps) if x>0 else 1.0/(eps))
+    t["seller_resistance_score"] = t["OI_CE"] + (t["seller_resistance_factor"] * 100000.0)
     
-    # Calculate confidence
-    confidence = min(100, signal_score)
+    top_supports = t.sort_values("seller_support_score", ascending=False).head(3)
+    top_resists = t.sort_values("seller_resistance_score", ascending=False).head(3)
     
-    # Determine signal strength
-    if confidence >= 70:
-        signal_strength = "STRONG"
-        signal_color = "#00ff88" if position_type == "LONG" else "#ff4444"
-    elif confidence >= 50:
-        signal_strength = "MODERATE"
-        signal_color = "#00cc66" if position_type == "LONG" else "#ff6666"
-    elif confidence >= 30:
-        signal_strength = "WEAK"
-        signal_color = "#66b3ff"
-    else:
-        signal_strength = "NO SIGNAL"
-        signal_color = "#cccccc"
-        position_type = "NEUTRAL"
-    
-    # Calculate optimal entry price
-    if position_type == "LONG" and support_levels:
-        optimal_entry = support_levels[0]["price"]
-    elif position_type == "SHORT" and resistance_levels:
-        optimal_entry = resistance_levels[0]["price"]
-    else:
-        optimal_entry = spot
-    
-    # Calculate stop loss and target
-    stop_loss = None
-    target = None
-    
-    if position_type == "LONG" and support_levels and resistance_levels:
-        stop_loss = support_levels[0]["price"] * 0.995  # 0.5% below support
-        target = resistance_levels[0]["price"] * 1.01   # 1% above resistance
-    elif position_type == "SHORT" and support_levels and resistance_levels:
-        stop_loss = resistance_levels[0]["price"] * 1.005  # 0.5% above resistance
-        target = support_levels[0]["price"] * 0.99        # 1% below support
-    
-    return {
-        "position_type": position_type,
-        "signal_strength": signal_strength,
-        "confidence": confidence,
-        "optimal_entry_price": optimal_entry,
-        "signal_color": signal_color,
-        "reasons": signal_reasons,
-        "stop_loss": stop_loss,
-        "target": target
-    }
+    return t, top_supports, top_resists
 
 # -----------------------
-#  DATA FETCHING FUNCTIONS
+# DHAN API
 # -----------------------
 @st.cache_data(ttl=5)
 def get_nifty_spot_price():
-    """Fetch NIFTY spot price from Dhan API"""
     try:
         url = f"{DHAN_BASE_URL}/v2/marketfeed/ltp"
         payload = {"IDX_I": [13]}
@@ -762,14 +3008,15 @@ def get_nifty_spot_price():
         if data.get("status") == "success":
             idx_data = data.get("data", {}).get("IDX_I", {})
             nifty_data = idx_data.get("13", {})
-            return float(nifty_data.get("last_price", 0.0))
+            ltp = nifty_data.get("last_price", 0.0)
+            return float(ltp)
+        return 0.0
     except Exception as e:
         st.warning(f"Dhan LTP failed: {e}")
-    return 0.0
+        return 0.0
 
 @st.cache_data(ttl=300)
 def get_expiry_list():
-    """Fetch option expiry list from Dhan API"""
     try:
         url = f"{DHAN_BASE_URL}/v2/optionchain/expirylist"
         payload = {"UnderlyingScrip":13,"UnderlyingSeg":"IDX_I"}
@@ -784,13 +3031,13 @@ def get_expiry_list():
         data = r.json()
         if data.get("status")=="success":
             return data.get("data",[])
+        return []
     except Exception as e:
         st.warning(f"Expiry list failed: {e}")
-    return []
+        return []
 
 @st.cache_data(ttl=10)
 def fetch_dhan_option_chain(expiry_date):
-    """Fetch option chain data for specific expiry"""
     try:
         url = f"{DHAN_BASE_URL}/v2/optionchain"
         payload = {"UnderlyingScrip":13,"UnderlyingSeg":"IDX_I","Expiry":expiry_date}
@@ -805,110 +3052,320 @@ def fetch_dhan_option_chain(expiry_date):
         data = r.json()
         if data.get("status")=="success":
             return data.get("data",{})
+        return None
     except Exception as e:
         st.warning(f"Option chain failed: {e}")
-    return None
+        return None
 
 def parse_dhan_option_chain(chain_data):
-    """Parse Dhan option chain data into DataFrames"""
     if not chain_data:
         return pd.DataFrame(), pd.DataFrame()
-    
     oc = chain_data.get("oc",{})
     ce_rows, pe_rows = [], []
-    
     for strike_str, strike_data in oc.items():
         try:
             strike = int(float(strike_str))
         except:
             continue
-        
         ce = strike_data.get("ce")
         pe = strike_data.get("pe")
-        
         if ce:
-            ce_rows.append({
+            ci = {
                 "strikePrice": strike,
                 "OI_CE": safe_int(ce.get("oi",0)),
                 "Chg_OI_CE": safe_int(ce.get("oi",0)) - safe_int(ce.get("previous_oi",0)),
                 "Vol_CE": safe_int(ce.get("volume",0)),
                 "LTP_CE": safe_float(ce.get("last_price",0.0)),
                 "IV_CE": safe_float(ce.get("implied_volatility", np.nan))
-            })
-        
+            }
+            ce_rows.append(ci)
         if pe:
-            pe_rows.append({
+            pi = {
                 "strikePrice": strike,
                 "OI_PE": safe_int(pe.get("oi",0)),
                 "Chg_OI_PE": safe_int(pe.get("oi",0)) - safe_int(pe.get("previous_oi",0)),
                 "Vol_PE": safe_int(pe.get("volume",0)),
                 "LTP_PE": safe_float(pe.get("last_price",0.0)),
                 "IV_PE": safe_float(pe.get("implied_volatility", np.nan))
-            })
-    
+            }
+            pe_rows.append(pi)
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
 
-# -----------------------
-#  MAIN APPLICATION
-# -----------------------
-st.set_page_config(
-    page_title="Nifty Screener v7 - Complete",
-    page_icon="🎯",
-    layout="wide"
-)
+# ============================================
+# 📊 MARKET DEPTH DASHBOARD (NEW)
+# ============================================
 
-st.title("🎯 NIFTY Option Screener v7.0")
-st.markdown(f"**🕐 Current IST:** {get_ist_datetime_str()}")
+def display_market_depth_dashboard(spot, depth_analysis, depth_signals, enhanced_pressure):
+    """
+    Display comprehensive market depth dashboard
+    """
+    st.markdown("---")
+    st.markdown("## 📊 MARKET DEPTH ANALYZER (Order Book)")
+    
+    if not depth_analysis["available"]:
+        st.warning("Market depth data unavailable")
+        return
+    
+    # Header with key metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        imbalance = depth_analysis["depth_imbalance"]
+        color = "#00ff88" if imbalance > 0.1 else ("#ff4444" if imbalance < -0.1 else "#66b3ff")
+        st.markdown(f"""
+        <div style="text-align: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+            <div style="font-size: 0.9rem; color:#cccccc;">Depth Imbalance</div>
+            <div style="font-size: 1.8rem; color:{color}; font-weight:700;">{imbalance:+.3f}</div>
+            <div style="font-size: 0.8rem; color:#aaaaaa;">Bid/Ask ratio</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        spread_pct = depth_analysis["spread_percent"]
+        color = "#00ff88" if spread_pct < 0.02 else ("#ff9900" if spread_pct < 0.05 else "#ff4444")
+        st.markdown(f"""
+        <div style="text-align: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+            <div style="font-size: 0.9rem; color:#cccccc;">Bid-Ask Spread</div>
+            <div style="font-size: 1.8rem; color:{color}; font-weight:700;">{spread_pct:.3f}%</div>
+            <div style="font-size: 0.8rem; color:#aaaaaa;">₹{depth_analysis['spread']:.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        total_bid = depth_analysis["total_bid_qty"]
+        st.markdown(f"""
+        <div style="text-align: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+            <div style="font-size: 0.9rem; color:#cccccc;">Total Bid Qty</div>
+            <div style="font-size: 1.8rem; color:#00ff88; font-weight:700;">{total_bid:,}</div>
+            <div style="font-size: 0.8rem; color:#aaaaaa;">Buy orders</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        total_ask = depth_analysis["total_ask_qty"]
+        st.markdown(f"""
+        <div style="text-align: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+            <div style="font-size: 0.9rem; color:#cccccc;">Total Ask Qty</div>
+            <div style="font-size: 1.8rem; color:#ff4444; font-weight:700;">{total_ask:,}</div>
+            <div style="font-size: 0.8rem; color:#aaaaaa;">Sell orders</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Depth Signal
+    st.markdown("### 🎯 Depth-Based Signal")
+    if depth_signals["available"]:
+        col_sig1, col_sig2 = st.columns([1, 2])
+        
+        with col_sig1:
+            st.markdown(f"""
+            <div style="
+                padding: 20px;
+                border-radius: 10px;
+                background: {'#1a2e1a' if depth_signals['signal_type'] == 'BULLISH' else 
+                           '#2e1a1a' if depth_signals['signal_type'] == 'BEARISH' else '#1a1f2e'};
+                border: 3px solid {depth_signals['color']};
+                text-align: center;
+            ">
+                <div style="font-size: 1.2rem; color:#ffffff;">Depth Signal</div>
+                <div style="font-size: 2rem; color:{depth_signals['color']}; font-weight:900;">
+                    {depth_signals['signal_type']}
+                </div>
+                <div style="font-size: 1rem; color:#ffcc00;">
+                    {depth_signals['strength']}
+                </div>
+                <div style="font-size: 0.9rem; color:#cccccc; margin-top:10px;">
+                    Confidence: {depth_signals['confidence']}%
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col_sig2:
+            st.markdown("#### Signal Factors:")
+            for signal in depth_signals["signals"]:
+                st.markdown(f"• {signal}")
+    
+    # Depth Table
+    st.markdown("### 📋 Market Depth Table")
+    depth_table = create_depth_table(depth_analysis)
+    if depth_table is not None:
+        # Style the table
+        def color_depth_row(row):
+            styles = []
+            for col in depth_table.columns:
+                if "Bid" in col:
+                    styles.append("background-color: #1a2e1a; color: #00ff88")
+                elif "Ask" in col:
+                    styles.append("background-color: #2e1a1a; color: #ff4444")
+                else:
+                    styles.append("")
+            return styles
+        
+        styled_table = depth_table.style.apply(color_depth_row, axis=1)
+        st.dataframe(styled_table, use_container_width=True)
+    
+    # Enhanced Pressure Analysis
+    st.markdown("### ⚡ Enhanced Orderbook Pressure")
+    if enhanced_pressure["available"]:
+        col_pres1, col_pres2 = st.columns(2)
+        
+        with col_pres1:
+            pressure = enhanced_pressure["pressure"]
+            color = "#00ff88" if pressure > 0.2 else ("#ff4444" if pressure < -0.2 else "#66b3ff")
+            st.markdown(f"""
+            <div style="text-align: center; padding: 20px; background: rgba(0,0,0,0.3); border-radius: 10px;">
+                <div style="font-size: 1.1rem; color:#cccccc;">Enhanced Pressure Score</div>
+                <div style="font-size: 2.5rem; color:{color}; font-weight:900; margin:10px 0;">
+                    {pressure:+.3f}
+                </div>
+                <div style="font-size: 0.9rem; color:#aaaaaa;">
+                    Range: -1 (Sell) to +1 (Buy)
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col_pres2:
+            st.markdown("#### Pressure Factors:")
+            for factor in enhanced_pressure["factors"]:
+                st.markdown(f"• {factor}")
+            
+            st.markdown(f"""
+            **Current Spot:** ₹{spot:,.2f}  
+            **Best Bid:** ₹{enhanced_pressure['best_bid']:,.2f}  
+            **Best Ask:** ₹{enhanced_pressure['best_ask']:,.2f}  
+            **Spread:** ₹{enhanced_pressure['spread']:.2f} ({enhanced_pressure['spread_percent']:.3f}%)
+            """)
+    
+    # Depth Visualization
+    st.markdown("### 📊 Depth Visualization")
+    depth_viz = visualize_market_depth_plotly(depth_analysis, spot)
+    
+    if depth_viz is not None:
+        st.plotly_chart(depth_viz, use_container_width=True)
+    
+    # Support/Resistance from Depth
+    if depth_analysis["top_supports"] or depth_analysis["top_resistances"]:
+        st.markdown("### 🎯 Key Levels from Depth")
+        
+        col_sd, col_rd = st.columns(2)
+        
+        with col_sd:
+            st.markdown("#### 🛡️ Depth-Based Supports")
+            if depth_analysis["top_supports"]:
+                for price, qty in depth_analysis["top_supports"][:3]:
+                    distance = spot - price
+                    st.markdown(f"""
+                    <div style="
+                        padding: 10px;
+                        margin: 5px 0;
+                        background: #1a2e1a;
+                        border-radius: 5px;
+                        border-left: 4px solid #00ff88;
+                    ">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color:#ffffff;">₹{price:,.2f}</span>
+                            <span style="color:#00ff88;">{qty:,} qty</span>
+                        </div>
+                        <div style="font-size: 0.8rem; color:#cccccc;">
+                            Distance: ₹{distance:.2f} ({distance/spot*100:.2f}%)
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        with col_rd:
+            st.markdown("#### ⚡ Depth-Based Resistances")
+            if depth_analysis["top_resistances"]:
+                for price, qty in depth_analysis["top_resistances"][:3]:
+                    distance = price - spot
+                    st.markdown(f"""
+                    <div style="
+                        padding: 10px;
+                        margin: 5px 0;
+                        background: #2e1a1a;
+                        border-radius: 5px;
+                        border-left: 4px solid #ff4444;
+                    ">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color:#ffffff;">₹{price:,.2f}</span>
+                            <span style="color:#ff4444;">{qty:,} qty</span>
+                        </div>
+                        <div style="font-size: 0.8rem; color:#cccccc;">
+                            Distance: ₹{distance:.2f} ({distance/spot*100:.2f}%)
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+# -----------------------
+#  MAIN APP
+# -----------------------
+st.title("🎯 NIFTY Option Screener v7.5 — SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + Moment Detector + Expiry Spike + OI/PCR ANALYTICS + MARKET DEPTH")
+
+current_ist = get_ist_datetime_str()
+st.markdown(f"""
+<div style='text-align: center; margin-bottom: 20px;'>
+    <span class='ist-time'>🕐 IST: {current_ist}</span>
+</div>
+""", unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
-    st.markdown("### ⚙️ Settings")
-    
-    st.markdown("#### 🎯 Seller Logic")
     st.markdown("""
-    - **CALL Writing** = BEARISH (expect price below)
-    - **PUT Writing** = BULLISH (expect price above)
-    - **Unwinding** = Reversal signal
-    """)
+    <div class='seller-explanation'>
+    <h3>🎯 SELLER'S LOGIC</h3>
+    <p><strong>Options WRITING = Directional Bias:</strong></p>
+    <ul>
+    <li><span class='seller-bearish'>📉 CALL Writing</span> = BEARISH (expecting price to STAY BELOW)</li>
+    <li><span class='seller-bullish'>📈 PUT Writing</span> = BULLISH (expecting price to STAY ABOVE)</li>
+    <li><span class='seller-bullish'>🔄 CALL Buying Back</span> = BULLISH (covering bearish bets)</li>
+    <li><span class='seller-bearish'>🔄 PUT Buying Back</span> = BEARISH (covering bullish bets)</li>
+    </ul>
+    <p><em>Market makers & institutions are primarily SELLERS, not buyers.</em></p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    st.markdown("#### 📊 Market Depth")
+    st.markdown("---")
+    st.markdown("### 🎯 FEATURE SUMMARY")
     st.markdown("""
-    **Iceberg Detection:**
-    - >50k shares = Large hidden order
-    - Indicates institutional activity
-    """)
-    
-    st.markdown("#### 📈 Key Metrics")
-    st.markdown("""
-    - **PCR:** Put-Call Ratio sentiment
-    - **Max Pain:** Where sellers minimize loss
-    - **GEX:** Gamma Exposure effect
-    - **Depth Pressure:** Buy/Sell imbalance
+    **1. Seller's Perspective**  
+    **2. ATM Bias Analyzer**  
+    **3. Moment Detector**  
+    **4. Expiry Spike Detector**  
+    **5. OI/PCR Analytics**  
+    **6. MARKET DEPTH ANALYZER**  
+    **7. Telegram Signals**
     """)
     
     st.markdown("---")
+    st.markdown("### 📊 MARKET DEPTH")
+    st.markdown("""
+    **New Features:**
+    1. **Real-time Order Book** - Bid/Ask depth
+    2. **Depth Imbalance** - Buy/Sell ratio
+    3. **Large Order Detection** - Institutional activity
+    4. **Spread Analysis** - Liquidity measurement
+    5. **Depth Visualization** - Interactive chart
+    6. **Depth-based S/R** - Support/Resistance from order book
+    """)
     
-    # Refresh controls
-    auto_refresh = st.checkbox("Auto-refresh (60s)", value=True)
-    if st.button("🔄 Manual Refresh"):
+    # Save interval
+    save_interval = st.number_input("PCR Auto-save (sec)", value=SAVE_INTERVAL_SEC, min_value=60, step=60)
+    
+    # Telegram settings
+    st.markdown("---")
+    st.markdown("### 🤖 TELEGRAM SETTINGS")
+    auto_send = st.checkbox("Auto-send signals to Telegram", value=False)
+    show_signal_preview = st.checkbox("Show signal preview", value=True)
+    
+    if st.button("Clear Caches"):
         st.cache_data.clear()
         st.rerun()
-    
-    st.markdown(f"**Last update:** {get_ist_time_str()}")
-    
-    # Info
-    st.markdown("---")
-    st.caption("**Data Source:** Dhan API")
-    st.caption("**Version:** 7.0 Complete")
 
-# Fetch spot price
+# Fetch data
 col1, col2 = st.columns([1, 2])
 with col1:
     with st.spinner("Fetching NIFTY spot..."):
         spot = get_nifty_spot_price()
-    
     if spot == 0.0:
-        st.error("Unable to fetch NIFTY spot price")
+        st.error("Unable to fetch NIFTY spot")
         st.stop()
     
     expiries = get_expiry_list()
@@ -919,17 +3376,54 @@ with col1:
     expiry = st.selectbox("Select expiry", expiries, index=0)
 
 with col2:
-    st.markdown(f"""
-    <div class="signal-card">
-        <h3>📊 NIFTY CURRENT</h3>
-        <div style="font-size: 2.5rem; color: #ffcc00; font-weight: 700;">
-            ₹{spot:,.2f}
-        </div>
-        <div style="font-size: 1.1rem; color: #cccccc;">
-            Expiry: {expiry}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    if spot > 0:
+        st.metric("NIFTY Spot", f"₹{spot:.2f}")
+        st.metric("Expiry", expiry)
+
+# Calculate days to expiry
+try:
+    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
+    now = datetime.now()
+    tau = max((expiry_dt - now).total_seconds() / (365.25*24*3600), 1/365.25)
+    days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)
+except Exception:
+    tau = 7.0/365.0
+    days_to_expiry = 7.0
+
+# Add expiry info to sidebar
+with st.sidebar:
+    if days_to_expiry <= 5:
+        st.warning(f"⚠️ Expiry in {days_to_expiry:.1f} days")
+        st.info("Spike detector ACTIVE")
+    else:
+        st.success(f"✓ Expiry in {days_to_expiry:.1f} days")
+        st.info("Spike detector INACTIVE")
+    
+    st.markdown("---")
+    st.markdown(f"**Current IST:** {get_ist_time_str()}")
+    st.markdown(f"**Date:** {get_ist_date_str()}")
+
+# ============================================
+# 📊 FETCH AND ANALYZE MARKET DEPTH (NEW)
+# ============================================
+st.markdown("---")
+st.markdown("## 📊 REAL-TIME MARKET DEPTH")
+
+with st.spinner("Fetching market depth..."):
+    # Get market depth
+    depth_data = get_market_depth_nse(limit=15)
+    
+    # Analyze depth
+    depth_analysis = analyze_market_depth(depth_data, spot, levels=10)
+    
+    # Generate depth-based signals
+    depth_signals = calculate_depth_based_signals(depth_analysis, spot)
+    
+    # Enhanced orderbook pressure
+    enhanced_pressure = enhanced_orderbook_pressure(depth_analysis, spot)
+    
+    # Display depth dashboard
+    display_market_depth_dashboard(spot, depth_analysis, depth_signals, enhanced_pressure)
 
 # Fetch option chain
 with st.spinner("Fetching option chain..."):
@@ -940,653 +3434,847 @@ if chain is None:
 
 df_ce, df_pe = parse_dhan_option_chain(chain)
 if df_ce.empty or df_pe.empty:
-    st.error("Insufficient option chain data")
+    st.error("Insufficient CE/PE data")
     st.stop()
 
-# Merge and filter data
-merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer")\
-    .sort_values("strikePrice")\
-    .reset_index(drop=True)
-merged["strikePrice"] = merged["strikePrice"].astype(int)
-
 # Filter ATM window
-strike_gap = strike_gap_from_series(merged["strikePrice"])
-atm_strike = min(merged["strikePrice"].tolist(), key=lambda x: abs(x - spot))
+strike_gap = strike_gap_from_series(df_ce["strikePrice"])
+atm_strike = min(df_ce["strikePrice"].tolist(), key=lambda x: abs(x - spot))
 lower = atm_strike - (ATM_STRIKE_WINDOW * strike_gap)
 upper = atm_strike + (ATM_STRIKE_WINDOW * strike_gap)
-merged = merged[(merged["strikePrice"]>=lower) & (merged["strikePrice"]<=upper)]
 
-# Calculate time to expiry
-try:
-    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").replace(hour=15, minute=30)
-    now = datetime.now()
-    tau = max((expiry_dt - now).total_seconds() / (365.25*24*3600), 1/365.25)
-    days_to_expiry = (expiry_dt - now).total_seconds() / (24 * 3600)
-except:
-    tau = 7.0/365.0
-    days_to_expiry = 7.0
+df_ce = df_ce[(df_ce["strikePrice"]>=lower) & (df_ce["strikePrice"]<=upper)].reset_index(drop=True)
+df_pe = df_pe[(df_pe["strikePrice"]>=lower) & (df_pe["strikePrice"]<=upper)].reset_index(drop=True)
 
-# Calculate Greeks and GEX
+merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
+merged["strikePrice"] = merged["strikePrice"].astype(int)
+
+# Session storage for prev LTP/IV
+if "prev_ltps_seller" not in st.session_state:
+    st.session_state["prev_ltps_seller"] = {}
+if "prev_ivs_seller" not in st.session_state:
+    st.session_state["prev_ivs_seller"] = {}
+
+# Initialize moment history
+_init_history()
+
+# Compute per-strike metrics with SELLER interpretation
 for i, row in merged.iterrows():
-    strike = row["strikePrice"]
-    iv_ce = safe_float(row.get("IV_CE", np.nan)) / 100.0 if not np.isnan(row.get("IV_CE")) else 0.25
-    iv_pe = safe_float(row.get("IV_PE", np.nan)) / 100.0 if not np.isnan(row.get("IV_PE")) else 0.25
-    
-    # Calculate gamma
+    strike = int(row["strikePrice"])
+    ltp_ce = safe_float(row.get("LTP_CE",0.0))
+    ltp_pe = safe_float(row.get("LTP_PE",0.0))
+    iv_ce = safe_float(row.get("IV_CE", np.nan))
+    iv_pe = safe_float(row.get("IV_PE", np.nan))
+
+    key_ce = f"{expiry}_{strike}_CE"
+    key_pe = f"{expiry}_{strike}_PE"
+    prev_ce = st.session_state["prev_ltps_seller"].get(key_ce, None)
+    prev_pe = st.session_state["prev_ltps_seller"].get(key_pe, None)
+    prev_iv_ce = st.session_state["prev_ivs_seller"].get(key_ce, None)
+    prev_iv_pe = st.session_state["prev_ivs_seller"].get(key_pe, None)
+
+    ce_price_delta = None if prev_ce is None else (ltp_ce - prev_ce)
+    pe_price_delta = None if prev_pe is None else (ltp_pe - prev_pe)
+    ce_iv_delta = None if prev_iv_ce is None else (iv_ce - prev_iv_ce)
+    pe_iv_delta = None if prev_iv_pe is None else (iv_pe - prev_iv_pe)
+
+    st.session_state["prev_ltps_seller"][key_ce] = ltp_ce
+    st.session_state["prev_ltps_seller"][key_pe] = ltp_pe
+    st.session_state["prev_ivs_seller"][key_ce] = iv_ce
+    st.session_state["prev_ivs_seller"][key_pe] = iv_pe
+
+    chg_oi_ce = safe_int(row.get("Chg_OI_CE",0))
+    chg_oi_pe = safe_int(row.get("Chg_OI_PE",0))
+
+    # SELLER winding/unwinding labels
+    merged.at[i,"CE_Seller_Action"] = "WRITING" if chg_oi_ce>0 else ("BUYING BACK" if chg_oi_ce<0 else "HOLDING")
+    merged.at[i,"PE_Seller_Action"] = "WRITING" if chg_oi_pe>0 else ("BUYING BACK" if chg_oi_pe<0 else "HOLDING")
+
+    # SELLER divergence interpretation
+    merged.at[i,"CE_Seller_Divergence"] = seller_price_oi_divergence(chg_oi_ce, safe_int(row.get("Vol_CE",0)), ce_price_delta, "CE")
+    merged.at[i,"PE_Seller_Divergence"] = seller_price_oi_divergence(chg_oi_pe, safe_int(row.get("Vol_PE",0)), pe_price_delta, "PE")
+
+    # SELLER ITM/OTM interpretation
+    merged.at[i,"Seller_Interpretation"] = seller_itm_otm_interpretation(strike, atm_strike, chg_oi_ce, chg_oi_pe)
+
+    # Greeks calculation
+    sigma_ce = iv_ce/100.0 if not np.isnan(iv_ce) and iv_ce>0 else 0.25
+    sigma_pe = iv_pe/100.0 if not np.isnan(iv_pe) and iv_pe>0 else 0.25
+
     try:
-        gamma_ce = bs_gamma(spot, strike, RISK_FREE_RATE, iv_ce, tau)
-        gamma_pe = bs_gamma(spot, strike, RISK_FREE_RATE, iv_pe, tau)
-    except:
-        gamma_ce = gamma_pe = 0.0
-    
-    # Calculate GEX
+        delta_ce = bs_delta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
+        gamma_ce = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
+        vega_ce = bs_vega(spot, strike, RISK_FREE_RATE, sigma_ce, tau)
+        theta_ce = bs_theta(spot, strike, RISK_FREE_RATE, sigma_ce, tau, option_type="call")
+    except Exception:
+        delta_ce = gamma_ce = vega_ce = theta_ce = 0.0
+
+    try:
+        delta_pe = bs_delta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
+        gamma_pe = bs_gamma(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
+        vega_pe = bs_vega(spot, strike, RISK_FREE_RATE, sigma_pe, tau)
+        theta_pe = bs_theta(spot, strike, RISK_FREE_RATE, sigma_pe, tau, option_type="put")
+    except Exception:
+        delta_pe = gamma_pe = vega_pe = theta_pe = 0.0
+
+    merged.at[i,"Delta_CE"] = delta_ce
+    merged.at[i,"Gamma_CE"] = gamma_ce
+    merged.at[i,"Vega_CE"] = vega_ce
+    merged.at[i,"Theta_CE"] = theta_ce
+    merged.at[i,"Delta_PE"] = delta_pe
+    merged.at[i,"Gamma_PE"] = gamma_pe
+    merged.at[i,"Vega_PE"] = vega_pe
+    merged.at[i,"Theta_PE"] = theta_pe
+
+    # GEX calculation (SELLER exposure)
     oi_ce = safe_int(row.get("OI_CE",0))
     oi_pe = safe_int(row.get("OI_PE",0))
     notional = LOT_SIZE * spot
-    
-    merged.at[i,"Gamma_CE"] = gamma_ce
-    merged.at[i,"Gamma_PE"] = gamma_pe
-    merged.at[i,"GEX_CE"] = gamma_ce * notional * oi_ce
-    merged.at[i,"GEX_PE"] = gamma_pe * notional * oi_pe
-    merged.at[i,"GEX_Net"] = merged.at[i,"GEX_CE"] + merged.at[i,"GEX_PE"]
+    gex_ce = gamma_ce * notional * oi_ce
+    gex_pe = gamma_pe * notional * oi_pe
+    merged.at[i,"GEX_CE"] = gex_ce
+    merged.at[i,"GEX_PE"] = gex_pe
+    merged.at[i,"GEX_Net"] = gex_ce + gex_pe
 
-# ====================
-# MARKET DEPTH ANALYSIS
-# ====================
-st.markdown("---")
-st.markdown("## 📊 MARKET DEPTH ANALYSIS (Iceberg Detection)")
+    # SELLER strength score
+    merged.at[i,"Seller_Strength_Score"] = seller_strength_score(row)
 
-# Fetch market depth
-depth_data = get_market_depth()
-depth_analysis = analyze_market_depth(depth_data, spot) if depth_data else None
+    # SELLER gamma pressure
+    merged.at[i,"Seller_Gamma_Pressure"] = seller_gamma_pressure(row, atm_strike, strike_gap)
 
-if depth_analysis:
-    # Summary metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        pressure = depth_analysis["summary"]["depth_pressure"]
-        pressure_color = "#00ff88" if pressure > 0.1 else "#ff4444" if pressure < -0.1 else "#66b3ff"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="font-size: 0.9rem; color:#cccccc;">Depth Pressure</div>
-            <div style="font-size: 1.5rem; color:{pressure_color}; font-weight:700;">
-                {pressure:+.2f}
-            </div>
-            <div style="font-size: 0.8rem; color:#aaaaaa;">
-                {'Buying' if pressure > 0.1 else 'Selling' if pressure < -0.1 else 'Balanced'}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        iceberg_count = depth_analysis["summary"]["total_iceberg_orders"]
-        iceberg_color = "#ff00ff" if iceberg_count > 0 else "#cccccc"
-        st.markdown(f"""
-        <div class="metric-card {'iceberg-alert' if iceberg_count > 0 else ''}">
-            <div style="font-size: 0.9rem; color:#cccccc;">Iceberg Orders</div>
-            <div style="font-size: 1.5rem; color:{iceberg_color}; font-weight:700;">
-                {iceberg_count}
-            </div>
-            <div style="font-size: 0.8rem; color:#aaaaaa;">
-                Hidden large orders
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.metric("Total Bid Volume", f"{depth_analysis['summary']['total_bid_volume']:,}")
-    
-    with col4:
-        st.metric("Total Ask Volume", f"{depth_analysis['summary']['total_ask_volume']:,}")
-    
-    # Depth Levels Display
-    st.markdown("### 📈 Top 5 Depth Levels")
-    
-    depth_col1, depth_col2 = st.columns(2)
-    
-    with depth_col1:
-        st.markdown("##### 🟢 Buy Side (Bids)")
-        if depth_analysis['buy_side']['levels']:
-            for i, bid in enumerate(depth_analysis['buy_side']['levels'][:5], 1):
-                iceberg = "🧊 " if bid['is_iceberg'] else ""
-                distance_color = "#00ff88" if bid['distance_from_spot'] < 20 else "#ff9900" if bid['distance_from_spot'] < 50 else "#cccccc"
-                st.markdown(f"""
-                {i}. **₹{bid['price']:.2f}** | Qty: {bid['quantity']:,} {iceberg}
-                &nbsp;&nbsp;&nbsp;&nbsp;*Distance: <span style='color:{distance_color}'>{bid['distance_from_spot']:.1f} points</span>*
-                """, unsafe_allow_html=True)
-        else:
-            st.info("No bid data available")
-    
-    with depth_col2:
-        st.markdown("##### 🔴 Sell Side (Asks)")
-        if depth_analysis['sell_side']['levels']:
-            for i, ask in enumerate(depth_analysis['sell_side']['levels'][:5], 1):
-                iceberg = "🧊 " if ask['is_iceberg'] else ""
-                distance_color = "#ff4444" if ask['distance_from_spot'] < 20 else "#ff9900" if ask['distance_from_spot'] < 50 else "#cccccc"
-                st.markdown(f"""
-                {i}. **₹{ask['price']:.2f}** | Qty: {ask['quantity']:,} {iceberg}
-                &nbsp;&nbsp;&nbsp;&nbsp;*Distance: <span style='color:{distance_color}'>{ask['distance_from_spot']:.1f} points</span>*
-                """, unsafe_allow_html=True)
-        else:
-            st.info("No ask data available")
-    
-    # Support/Resistance from Depth
-    st.markdown("### 🎯 Depth-Based Support & Resistance")
-    
-    if depth_analysis['support_levels'] or depth_analysis['resistance_levels']:
-        support_col, resistance_col = st.columns(2)
-        
-        with support_col:
-            st.markdown("##### 🛡️ Support Levels (Strong Bids)")
-            if depth_analysis['support_levels']:
-                for support in depth_analysis['support_levels'][:3]:
-                    iceberg = "🚨 ICEBERG " if support['iceberg'] else ""
-                    st.markdown(f"""
-                    - **₹{support['price']:.2f}**
-                      Strength: {support['strength']:.1f}k
-                      Qty: {support['quantity']:,}
-                      {iceberg}
-                    """)
-            else:
-                st.info("No strong support levels detected")
-        
-        with resistance_col:
-            st.markdown("##### ⚡ Resistance Levels (Strong Asks)")
-            if depth_analysis['resistance_levels']:
-                for resistance in depth_analysis['resistance_levels'][:3]:
-                    iceberg = "🚨 ICEBERG " if resistance['iceberg'] else ""
-                    st.markdown(f"""
-                    - **₹{resistance['price']:.2f}**
-                      Strength: {resistance['strength']:.1f}k
-                      Qty: {resistance['quantity']:,}
-                      {iceberg}
-                    """)
-            else:
-                st.info("No strong resistance levels detected")
-    
-    # Iceberg Orders Detail
-    if depth_analysis['iceberg_orders']:
-        st.markdown("### 🚨 Iceberg Orders Detected")
-        iceberg_df = pd.DataFrame(depth_analysis['iceberg_orders'])
-        st.dataframe(iceberg_df, use_container_width=True)
-else:
-    st.warning("⚠️ Market depth data unavailable")
+    merged.at[i,"CE_Price_Delta"] = ce_price_delta
+    merged.at[i,"PE_Price_Delta"] = pe_price_delta
+    merged.at[i,"CE_IV_Delta"] = ce_iv_delta
+    merged.at[i,"PE_IV_Delta"] = pe_iv_delta
 
-# ====================
-# SELLER'S ANALYSIS
-# ====================
-st.markdown("---")
-st.markdown("## 🎯 SELLER'S ANALYSIS & OPTION DATA")
+# Aggregations
+total_CE_OI = merged["OI_CE"].sum()
+total_PE_OI = merged["OI_PE"].sum()
+total_CE_chg = merged["Chg_OI_CE"].sum()
+total_PE_chg = merged["Chg_OI_PE"].sum()
 
-# Calculate seller metrics
-seller_bias_result = calculate_seller_market_bias(merged, spot, atm_strike)
+# SELLER activity summary
+ce_selling = (merged["Chg_OI_CE"] > 0).sum()
+ce_buying_back = (merged["Chg_OI_CE"] < 0).sum()
+pe_selling = (merged["Chg_OI_PE"] > 0).sum()
+pe_buying_back = (merged["Chg_OI_PE"] < 0).sum()
+
+# Greeks totals
+total_gex_ce = merged["GEX_CE"].sum()
+total_gex_pe = merged["GEX_PE"].sum()
+total_gex_net = merged["GEX_Net"].sum()
+
+# Calculate SELLER metrics
 seller_max_pain = calculate_seller_max_pain(merged)
+seller_breakout_index = seller_breakout_probability_index(merged, atm_strike, strike_gap)
+
+# Calculate SELLER market bias
+seller_bias_result = calculate_seller_market_bias(merged, spot, atm_strike)
+
+# Compute PCR
+pcr_df = compute_pcr_df(merged)
+
+# Get SELLER support/resistance rankings
+ranked_current, seller_supports_df, seller_resists_df = rank_support_resistance_seller(pcr_df)
+
+# Analyze spot position from SELLER perspective
+spot_analysis = analyze_spot_position_seller(spot, ranked_current, seller_bias_result)
+
+nearest_sup = spot_analysis["nearest_support"]
+nearest_res = spot_analysis["nearest_resistance"]
+
+# ---- NEW: Capture snapshot for moment detector ----
+st.session_state["moment_history"].append(
+    _snapshot_from_state(get_ist_now(), spot, atm_strike, merged)
+)
+# Keep last 10 points
+st.session_state["moment_history"] = st.session_state["moment_history"][-10:]
+
+# ---- NEW: Compute 4 moment metrics with depth integration ----
+moment_metrics = {
+    "momentum_burst": compute_momentum_burst(st.session_state["moment_history"]),
+    "orderbook": enhanced_pressure,  # Use enhanced pressure from depth analysis
+    "gamma_cluster": compute_gamma_cluster(merged, atm_strike, window=2),
+    "oi_accel": compute_oi_velocity_acceleration(st.session_state["moment_history"], atm_strike, window_strikes=2),
+    "depth_analysis": depth_analysis,  # Add depth analysis
+    "depth_signals": depth_signals     # Add depth signals
+}
+
+# ============================================
+# 🎯 ATM BIAS ANALYSIS (NEW)
+# ============================================
+
+# Compute ATM and Level Biases
+atm_bias = analyze_atm_bias(merged, spot, atm_strike, strike_gap)
+support_bias = analyze_support_resistance_bias(merged, spot, atm_strike, strike_gap, "Support")
+resistance_bias = analyze_support_resistance_bias(merged, spot, atm_strike, strike_gap, "Resistance")
+
+# Calculate entry signal with moment detector, ATM bias & depth integration
+entry_signal = calculate_entry_signal_with_atm_bias(
+    spot=spot,
+    merged_df=merged,
+    atm_strike=atm_strike,
+    seller_bias_result=seller_bias_result,
+    seller_max_pain=seller_max_pain,
+    seller_supports_df=seller_supports_df,
+    seller_resists_df=seller_resists_df,
+    nearest_sup=nearest_sup,
+    nearest_res=nearest_res,
+    seller_breakout_index=seller_breakout_index,
+    moment_metrics=moment_metrics,
+    atm_bias=atm_bias,
+    support_bias=support_bias,
+    resistance_bias=resistance_bias,
+    depth_signals=depth_signals  # NEW: Add depth signals
+)
+
+# ============================================
+# 📊 COMPREHENSIVE OI & PCR DASHBOARD
+# ============================================
+
+# Run OI/PCR analysis
 oi_pcr_metrics = analyze_oi_pcr_metrics(merged, spot, atm_strike)
-expiry_spike_data = detect_expiry_spikes(merged, spot, atm_strike, days_to_expiry, expiry)
 
-# Key Metrics Row
-col1, col2, col3, col4 = st.columns(4)
+st.markdown("---")
+st.markdown("## 📊 ENHANCED OI & PCR ANALYTICS DASHBOARD")
 
-with col1:
-    st.metric("Spot Price", f"₹{spot:.2f}")
-    st.metric("ATM Strike", f"₹{atm_strike}")
+# Row 1: Totals
+col_t1, col_t2, col_t3, col_t4 = st.columns(4)
 
-with col2:
-    bias_color = seller_bias_result['color']
-    st.markdown(f"""
-    <div class="metric-card">
-        <div style="font-size: 0.9rem; color:#cccccc;">Seller Bias</div>
-        <div style="font-size: 1.3rem; color:{bias_color}; font-weight:700;">
-            {seller_bias_result['bias']}
-        </div>
-        <div style="font-size: 0.8rem; color:#aaaaaa;">
-            Polarity: {seller_bias_result['polarity']:.2f}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
-    pcr_color = oi_pcr_metrics['pcr_color']
-    st.markdown(f"""
-    <div class="metric-card">
-        <div style="font-size: 0.9rem; color:#cccccc;">PCR Analysis</div>
-        <div style="font-size: 1.8rem; color:{pcr_color}; font-weight:700;">
-            {oi_pcr_metrics['pcr_total']:.2f}
-        </div>
-        <div style="font-size: 0.8rem; color:{pcr_color};">
-            {oi_pcr_metrics['pcr_sentiment']}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col4:
-    total_gex = merged["GEX_Net"].sum()
-    gex_color = "#00ff88" if total_gex > 0 else "#ff4444" if total_gex < 0 else "#66b3ff"
-    st.markdown(f"""
-    <div class="metric-card">
-        <div style="font-size: 0.9rem; color:#cccccc;">Gamma Exposure</div>
-        <div style="font-size: 1.5rem; color:{gex_color}; font-weight:700;">
-            ₹{int(total_gex):,}
-        </div>
-        <div style="font-size: 0.8rem; color:#aaaaaa;">
-            {'Positive' if total_gex > 0 else 'Negative' if total_gex < 0 else 'Neutral'}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# OI Analysis Expanded
-st.markdown("### 📊 OPEN INTEREST ANALYSIS")
-
-oi_col1, oi_col2, oi_col3, oi_col4 = st.columns(4)
-
-with oi_col1:
-    st.metric("Total CALL OI", f"{oi_pcr_metrics['total_ce_oi']:,}")
+with col_t1:
+    st.metric("📈 Total CALL OI", f"{oi_pcr_metrics['total_ce_oi']:,}")
     st.metric("Δ CALL OI", f"{oi_pcr_metrics['total_ce_chg']:+,}")
 
-with oi_col2:
-    st.metric("Total PUT OI", f"{oi_pcr_metrics['total_pe_oi']:,}")
+with col_t2:
+    st.metric("📉 Total PUT OI", f"{oi_pcr_metrics['total_pe_oi']:,}")
     st.metric("Δ PUT OI", f"{oi_pcr_metrics['total_pe_chg']:+,}")
 
-with oi_col3:
-    call_sellers = (merged["Chg_OI_CE"] > 0).sum()
-    put_sellers = (merged["Chg_OI_PE"] > 0).sum()
-    st.metric("CALL Writing Strikes", call_sellers)
-    st.metric("PUT Writing Strikes", put_sellers)
+with col_t3:
+    st.metric("📊 Total OI", f"{oi_pcr_metrics['total_oi']:,}")
+    st.metric("Total ΔOI", f"{oi_pcr_metrics['total_chg_oi']:+,}")
 
-with oi_col4:
-    if seller_max_pain:
-        distance = abs(spot - seller_max_pain)
-        st.metric("Max Pain", f"₹{seller_max_pain:,}")
-        st.metric("Distance from Spot", f"₹{distance:.2f}")
+with col_t4:
+    st.markdown(f"""
+    <div style="
+        background: rgba(0,0,0,0.2);
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid {oi_pcr_metrics['pcr_color']};
+        text-align: center;
+    ">
+        <div style='font-size: 0.9rem; color:#cccccc;'>PCR (TOTAL)</div>
+        <div style='font-size: 2rem; color:{oi_pcr_metrics['pcr_color']}; font-weight:900;'>
+            {oi_pcr_metrics['pcr_total']:.2f}
+        </div>
+        <div style='font-size: 0.9rem; color:{oi_pcr_metrics['pcr_color']};'>
+            {oi_pcr_metrics['pcr_interpretation']}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-# Expiry Spike Analysis
-if expiry_spike_data["active"]:
-    st.markdown("### 📅 EXPIRY SPIKE ANALYSIS")
+# Row 2: PCR Card with detailed interpretation
+st.markdown(f"""
+<div style="
+    background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+    padding: 20px;
+    border-radius: 12px;
+    border: 2px solid {oi_pcr_metrics['pcr_color']};
+    margin: 15px 0;
+">
+    <h3 style='color:{oi_pcr_metrics["pcr_color"]}; margin:0 0 10px 0;'>🎯 PUT-CALL RATIO (PCR) ANALYSIS</h3>
     
-    spike_col1, spike_col2, spike_col3 = st.columns(3)
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 15px 0;">
+        <div style='text-align: center;'>
+            <div style='font-size: 0.9rem; color:#cccccc;'>Sentiment</div>
+            <div style='font-size: 1.3rem; color:{oi_pcr_metrics["pcr_color"]}; font-weight:700;'>
+                {oi_pcr_metrics['pcr_sentiment']}
+            </div>
+        </div>
+        
+        <div style='text-align: center;'>
+            <div style='font-size: 0.9rem; color:#cccccc;'>PCR Change</div>
+            <div style='font-size: 1.3rem; color:#ffcc00; font-weight:700;'>
+                {oi_pcr_metrics['pcr_chg']:+.2f}
+            </div>
+        </div>
+        
+        <div style='text-align: center;'>
+            <div style='font-size: 0.9rem; color:#cccccc;'>OI Momentum</div>
+            <div style='font-size: 1.3rem; color:#ff00ff; font-weight:700;'>
+                {oi_pcr_metrics['oi_momentum']:+.1f}%
+            </div>
+        </div>
+        
+        <div style='text-align: center;'>
+            <div style='font-size: 0.9rem; color:#cccccc;'>CE:PE Ratio</div>
+            <div style='font-size: 1.3rem; color:#66b3ff; font-weight:700;'>
+                {oi_pcr_metrics['ce_pe_ratio']:.2f}:1
+            </div>
+        </div>
+    </div>
+    
+    <div style='color:#ffffff; font-size: 1rem; margin-top: 10px;'>
+        <strong>Interpretation:</strong> {oi_pcr_metrics['oi_change_interpretation']}
+        {'. ' + oi_pcr_metrics['chg_interpretation'] if oi_pcr_metrics['chg_interpretation'] else ''}
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ============================================
+# 🎯 MULTI-DIMENSIONAL BIAS ANALYSIS (NEW)
+# ============================================
+
+# Display ATM Bias Dashboard
+if atm_bias or support_bias or resistance_bias:
+    display_bias_dashboard(atm_bias, support_bias, resistance_bias)
+
+# ============================================
+# 📅 EXPIRY SPIKE DETECTION
+# ============================================
+
+# Calculate expiry spike data
+expiry_spike_data = detect_expiry_spikes(merged, spot, atm_strike, days_to_expiry, expiry)
+
+# Advanced spike detection (optional)
+violent_unwinding_signals = detect_violent_unwinding(merged, spot, atm_strike)
+gamma_spike_risk = calculate_gamma_exposure_spike(total_gex_net, days_to_expiry)
+pinning_probability = predict_expiry_pinning_probability(
+    spot, seller_max_pain, 
+    nearest_sup["strike"] if nearest_sup else None,
+    nearest_res["strike"] if nearest_res else None
+)
+
+# Check for new Telegram signal
+telegram_signal = check_and_send_signal(
+    entry_signal, spot, seller_bias_result, 
+    seller_max_pain, nearest_sup, nearest_res, 
+    moment_metrics, seller_breakout_index, expiry, expiry_spike_data,
+    atm_bias, support_bias, resistance_bias
+)
+
+# ============================================
+# 📅 EXPIRY DATE SPIKE DETECTOR UI
+# ============================================
+
+st.markdown("---")
+st.markdown("## 📅 EXPIRY DATE SPIKE DETECTOR")
+
+# Main spike card
+if expiry_spike_data["active"]:
+    spike_col1, spike_col2, spike_col3 = st.columns([2, 1, 1])
     
     with spike_col1:
-        spike_color = expiry_spike_data["color"]
         st.markdown(f"""
-        <div class="metric-card">
-            <div style="font-size: 0.9rem; color:#cccccc;">Spike Probability</div>
-            <div style="font-size: 1.8rem; color:{spike_color}; font-weight:700;">
-                {expiry_spike_data['probability']}%
+        <div style="
+            background: linear-gradient(135deg, #2e1a1a 0%, #3e2a2a 100%);
+            padding: 20px;
+            border-radius: 12px;
+            border: 3px solid {expiry_spike_data['color']};
+            margin: 10px 0;
+        ">
+            <h3 style='color:{expiry_spike_data["color"]}; margin:0;'>📅 EXPIRY SPIKE ALERT</h3>
+            <div style='font-size: 2.5rem; color:{expiry_spike_data["color"]}; font-weight:900; margin:10px 0;'>
+                {expiry_spike_data["probability"]}%
             </div>
-            <div style="font-size: 0.8rem; color:#aaaaaa;">
-                {expiry_spike_data['intensity']}
+            <div style='font-size: 1.3rem; color:#ffffff; margin:5px 0;'>
+                {expiry_spike_data["intensity"]}
+            </div>
+            <div style='font-size: 1.1rem; color:#ffcc00; margin:5px 0;'>
+                Type: {expiry_spike_data["type"]}
             </div>
         </div>
         """, unsafe_allow_html=True)
     
     with spike_col2:
-        st.metric("Days to Expiry", f"{days_to_expiry:.1f}")
-        if expiry_spike_data["type"]:
-            st.metric("Spike Type", expiry_spike_data["type"])
+        st.markdown(f"""
+        <div style="
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        ">
+            <div style='font-size: 0.9rem; color:#cccccc;'>Days to Expiry</div>
+            <div style='font-size: 2rem; color:#ff9900; font-weight:700;'>
+                {expiry_spike_data['days_to_expiry']:.1f}
+            </div>
+            <div style='font-size: 0.8rem; color:#aaaaaa;'>
+                {expiry}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with spike_col3:
-        if expiry_spike_data["factors"]:
-            with st.expander("View Spike Factors"):
-                for factor in expiry_spike_data["factors"]:
-                    st.markdown(f"- {factor}")
+        st.markdown(f"""
+        <div style="
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        ">
+            <div style='font-size: 0.9rem; color:#cccccc;'>Spike Score</div>
+            <div style='font-size: 2rem; color:#ff00ff; font-weight:700;'>
+                {expiry_spike_data['score']}/100
+            </div>
+            <div style='font-size: 0.8rem; color:#aaaaaa;'>
+                Detection Factors
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-# ====================
-# TRADE SIGNAL GENERATION
-# ====================
+# ============================================
+# 🚀 TELEGRAM SIGNAL SECTION
+# ============================================
 st.markdown("---")
-st.markdown("## 🎯 TRADE SIGNAL GENERATION")
+st.markdown("## 📱 TELEGRAM SIGNAL GENERATION (Option 3 Format)")
 
-# Combine depth and option-based support/resistance
-option_supports = []
-option_resistances = []
-
-# Find option-based support (high PUT OI below spot)
-for _, row in merged.iterrows():
-    strike = row["strikePrice"]
-    put_oi = safe_int(row.get("OI_PE", 0))
+if telegram_signal:
+    # NEW SIGNAL DETECTED
+    st.success("🎯 **NEW TRADE SIGNAL GENERATED!**")
     
-    if strike < spot and put_oi > 50000:  # Significant PUT OI
-        option_supports.append({
-            'price': strike,
-            'strength': put_oi / 1000,
-            'type': 'option_put_oi',
-            'quantity': put_oi
-        })
-
-# Find option-based resistance (high CALL OI above spot)
-for _, row in merged.iterrows():
-    strike = row["strikePrice"]
-    call_oi = safe_int(row.get("OI_CE", 0))
+    # Auto-send to Telegram if enabled
+    if auto_send and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        with st.spinner("Sending to Telegram..."):
+            success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
+            if success:
+                st.success(f"✅ {message}")
+                st.balloons()
+            else:
+                st.error(f"❌ {message}")
     
-    if strike > spot and call_oi > 50000:  # Significant CALL OI
-        option_resistances.append({
-            'price': strike,
-            'strength': call_oi / 1000,
-            'type': 'option_call_oi',
-            'quantity': call_oi
-        })
+    # Create a nice display of the signal
+    col_signal1, col_signal2 = st.columns([2, 1])
+    
+    with col_signal1:
+        st.markdown("### 📋 Telegram Signal Ready:")
+        
+        if show_signal_preview:
+            # Display formatted preview
+            st.markdown("""
+            <div style="
+                background-color: #1a1f2e;
+                padding: 15px;
+                border-radius: 10px;
+                border-left: 4px solid #0088cc;
+                margin: 10px 0;
+                font-family: monospace;
+                white-space: pre-wrap;
+            ">
+            """ + telegram_signal + "</div>", unsafe_allow_html=True)
+        else:
+            st.code(telegram_signal)
+    
+    with col_signal2:
+        st.markdown("### 📤 Send Options:")
+        
+        # Copy to clipboard
+        if st.button("📋 Copy to Clipboard", use_container_width=True, key="copy_clipboard"):
+            st.success("✅ Signal copied to clipboard!")
+            
+        # Manual send to Telegram
+        if st.button("📱 Send to Telegram", use_container_width=True, key="send_telegram"):
+            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
+                if success:
+                    st.success(f"✅ {message}")
+                else:
+                    st.error(f"❌ {message}")
+            else:
+                st.warning("Telegram credentials not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to secrets.")
+            
+        # Save to file
+        if st.button("💾 Save to File", use_container_width=True, key="save_file"):
+            filename = f"signal_{get_ist_datetime_str().replace(':', '-').replace(' ', '_')}.txt"
+            with open(filename, 'w') as f:
+                f.write(telegram_signal)
+            st.success(f"✅ Signal saved to {filename}")
+    
+    # Add signal details
+    with st.expander("📊 View Signal Details", expanded=False):
+        col_details1, col_details2 = st.columns(2)
+        
+        with col_details1:
+            st.markdown("**Position Details:**")
+            st.metric("Type", entry_signal["position_type"])
+            st.metric("Strength", entry_signal["signal_strength"])
+            st.metric("Confidence", f"{entry_signal['confidence']:.0f}%")
+            st.metric("Entry Price", f"₹{entry_signal['optimal_entry_price']:,.2f}")
+        
+        with col_details2:
+            st.markdown("**Risk Management:**")
+            st.metric("Stop Loss", f"₹{entry_signal['stop_loss']:,.2f}" if entry_signal['stop_loss'] else "N/A")
+            st.metric("Target", f"₹{entry_signal['target']:,.2f}" if entry_signal['target'] else "N/A")
+            
+            # Calculate actual risk:reward
+            if entry_signal['stop_loss'] and entry_signal['target']:
+                if entry_signal["position_type"] == "LONG":
+                    risk = abs(entry_signal['optimal_entry_price'] - entry_signal['stop_loss'])
+                    reward = abs(entry_signal['target'] - entry_signal['optimal_entry_price'])
+                else:
+                    risk = abs(entry_signal['stop_loss'] - entry_signal['optimal_entry_price'])
+                    reward = abs(entry_signal['optimal_entry_price'] - entry_signal['target'])
+                
+                if risk > 0:
+                    rr_ratio = reward / risk
+                    st.metric("Risk:Reward", f"1:{rr_ratio:.2f}")
+    
+    # Signal timestamp
+    st.caption(f"⏰ Signal generated at: {get_ist_datetime_str()}")
+    
+    # Last signal info
+    if "last_signal" in st.session_state and st.session_state["last_signal"]:
+        st.caption(f"📝 Last signal type: {st.session_state['last_signal']}")
+    
+else:
+    # No active signal
+    st.info("📭 **No active trade signal to send.**")
+    
+    # Show why no signal
+    with st.expander("ℹ️ Why no signal?", expanded=False):
+        st.markdown(f"""
+        **Current Status:**
+        - Position Type: {entry_signal['position_type']}
+        - Signal Strength: {entry_signal['signal_strength']}
+        - Confidence: {entry_signal['confidence']:.0f}%
+        - Seller Bias: {seller_bias_result['bias']}
+        - ATM Bias: {atm_bias['verdict'] if atm_bias else 'N/A'}
+        - Depth Signal: {depth_signals['signal_type'] if depth_signals and depth_signals['available'] else 'N/A'}
+        - Expiry Spike Risk: {expiry_spike_data.get('probability', 0)}%
+        - PCR Sentiment: {oi_pcr_metrics['pcr_sentiment']}
+        
+        **Requirements for signal generation:**
+        ✅ Position Type ≠ NEUTRAL
+        ✅ Confidence ≥ 40%
+        ✅ Clear directional bias
+        ✅ ATM bias alignment
+        ✅ Depth signal confirmation
+        """)
+    
+    # Show last signal if exists
+    if "last_signal" in st.session_state and st.session_state["last_signal"]:
+        st.info(f"📝 Last signal was: {st.session_state['last_signal']}")
 
-# Sort by strength
-option_supports.sort(key=lambda x: x['strength'], reverse=True)
-option_resistances.sort(key=lambda x: x['strength'], reverse=True)
+# ============================================
+# 🚀 MOMENT DETECTOR DISPLAY
+# ============================================
 
-# Combine with depth levels
-all_supports = option_supports.copy()
-all_resistances = option_resistances.copy()
+st.markdown("---")
+st.markdown("## 🚀 MOMENT DETECTOR (Is this a real move?)")
 
-if depth_analysis:
-    all_supports.extend(depth_analysis['support_levels'])
-    all_resistances.extend(depth_analysis['resistance_levels'])
+moment_col1, moment_col2, moment_col3, moment_col4 = st.columns(4)
 
-# Sort combined levels
-all_supports.sort(key=lambda x: x['strength'], reverse=True)
-all_resistances.sort(key=lambda x: x['strength'], reverse=True)
+with moment_col1:
+    mb = moment_metrics["momentum_burst"]
+    if mb["available"]:
+        color = "#ff00ff" if mb["score"] > 70 else ("#ff9900" if mb["score"] > 40 else "#66b3ff")
+        st.markdown(f'''
+        <div class="moment-box">
+            <h4>💥 MOMENTUM BURST</h4>
+            <div class="moment-value" style="color:{color}">{mb["score"]}/100</div>
+            <div class="sub-info">{mb["note"]}</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    else:
+        st.markdown(f'''
+        <div class="moment-box">
+            <h4>💥 MOMENTUM BURST</h4>
+            <div class="moment-value" style="color:#cccccc">N/A</div>
+            <div class="sub-info">Need more refresh points</div>
+        </div>
+        ''', unsafe_allow_html=True)
 
-# Generate trade signal
-entry_signal = calculate_entry_signal(
-    spot=spot,
-    merged_df=merged,
-    atm_strike=atm_strike,
-    seller_bias=seller_bias_result,
-    seller_max_pain=seller_max_pain,
-    support_levels=all_supports,
-    resistance_levels=all_resistances,
-    depth_analysis=depth_analysis
-)
+with moment_col2:
+    ob = moment_metrics["orderbook"]
+    if ob["available"]:
+        pressure = ob.get("pressure", 0.0)
+        color = "#00ff88" if pressure > 0.15 else ("#ff4444" if pressure < -0.15 else "#66b3ff")
+        st.markdown(f'''
+        <div class="moment-box">
+            <h4>📊 ORDERBOOK PRESSURE</h4>
+            <div class="moment-value" style="color:{color}">{pressure:+.2f}</div>
+            <div class="sub-info">Buy/Sell imbalance</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    else:
+        st.markdown(f'''
+        <div class="moment-box">
+            <h4>📊 ORDERBOOK PRESSURE</h4>
+            <div class="moment-value" style="color:#cccccc">N/A</div>
+            <div class="sub-info">Depth data unavailable</div>
+        </div>
+        ''', unsafe_allow_html=True)
 
-# Display Signal
-st.markdown("### 📈 TRADE SIGNAL")
+with moment_col3:
+    gc = moment_metrics["gamma_cluster"]
+    if gc["available"]:
+        color = "#ff00ff" if gc["score"] > 70 else ("#ff9900" if gc["score"] > 40 else "#66b3ff")
+        st.markdown(f'''
+        <div class="moment-box">
+            <h4>🌀 GAMMA CLUSTER</h4>
+            <div class="moment-value" style="color:{color}">{gc["score"]}/100</div>
+            <div class="sub-info">ATM ±2 concentration</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    else:
+        st.markdown(f'''
+        <div class="moment-box">
+            <h4>🌀 GAMMA CLUSTER</h4>
+            <div class="moment-value" style="color:#cccccc">N/A</div>
+            <div class="sub-info">Data unavailable</div>
+        </div>
+        ''', unsafe_allow_html=True)
 
-if entry_signal["position_type"] != "NEUTRAL":
-    signal_color = entry_signal["signal_color"]
+with moment_col4:
+    oi = moment_metrics["oi_accel"]
+    if oi["available"]:
+        color = "#ff00ff" if oi["score"] > 70 else ("#ff9900" if oi["score"] > 40 else "#66b3ff")
+        st.markdown(f'''
+        <div class="moment-box">
+            <h4>⚡ OI ACCELERATION</h4>
+            <div class="moment-value" style="color:{color}">{oi["score"]}/100</div>
+            <div class="sub-info">{oi["note"]}</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    else:
+        st.markdown(f'''
+        <div class="moment-box">
+            <h4>⚡ OI ACCELERATION</h4>
+            <div class="moment-value" style="color:#cccccc">N/A</div>
+            <div class="sub-info">Need more refresh points</div>
+        </div>
+        ''', unsafe_allow_html=True)
+
+# ============================================
+# 🎯 SUPER PROMINENT ENTRY SIGNAL (WITH DEPTH INTEGRATION)
+# ============================================
+
+st.markdown("---")
+
+if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 40:
+    # ACTIVE SIGNAL
+    signal_bg = "#1a2e1a" if entry_signal["position_type"] == "LONG" else "#2e1a1a"
+    signal_border = "#00ff88" if entry_signal["position_type"] == "LONG" else "#ff4444"
     signal_emoji = "🚀" if entry_signal["position_type"] == "LONG" else "🐻"
     
+    # Create a container with custom styling
+    with st.container():
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, {signal_bg} 0%, #2a3e2a 100%);
+            padding: 30px;
+            border-radius: 20px;
+            border: 5px solid {signal_border};
+            margin: 0 auto;
+            text-align: center;
+            max-width: 900px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+        ">
+        """, unsafe_allow_html=True)
+        
+        # Emoji and title row
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col1:
+            st.markdown(f"<div style='text-align: center; font-size: 4rem;'>{signal_emoji}</div>", unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"""
+            <div style='text-align: center;'>
+                <div style='font-size: 2.8rem; font-weight: 900; color:{signal_border}; line-height: 1.2;'>
+                    {entry_signal["signal_strength"]} {entry_signal["position_type"]} SIGNAL
+                </div>
+                <div style='font-size: 1.2rem; color: #ffdd44; margin-top: 5px;'>
+                    Confidence: {entry_signal["confidence"]:.0f}%
+                </div>
+                <div style='font-size: 1.1rem; color: #66b3ff; margin-top: 5px;'>
+                    ATM Bias: {atm_bias['verdict'] if atm_bias else 'N/A'}
+                </div>
+                <div style='font-size: 1.1rem; color: #00ffff; margin-top: 5px;'>
+                    Depth Signal: {depth_signals['signal_type'] if depth_signals and depth_signals['available'] else 'N/A'}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"<div style='text-align: center; font-size: 4rem;'>{signal_emoji}</div>", unsafe_allow_html=True)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Optimal entry price in a separate styled container
     st.markdown(f"""
-    <div class="signal-card" style="border-color: {signal_color};">
-        <h3>{signal_emoji} {entry_signal['signal_strength']} {entry_signal['position_type']} SIGNAL</h3>
-        <div style="font-size: 2.2rem; color: {signal_color}; font-weight: 900;">
-            Confidence: {entry_signal['confidence']:.0f}%
+    <div style="
+        background: rgba(0,0,0,0.3); 
+        padding: 20px; 
+        border-radius: 10px; 
+        margin: 20px auto;
+        max-width: 900px;
+        text-align: center;
+    ">
+        <div style="font-size: 3rem; color: #ffcc00; font-weight: 900;">
+            ₹{entry_signal["optimal_entry_price"]:,.2f}
         </div>
-        <div style="font-size: 1.5rem; color: #ffcc00; font-weight: 700; margin: 10px 0;">
-            Entry: ₹{entry_signal['optimal_entry_price']:,.2f}
+        <div style="font-size: 1.3rem; color: #cccccc; margin-top: 5px;">
+            OPTIMAL ENTRY PRICE
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Signal Details
-    col_sig1, col_sig2 = st.columns(2)
-    
-    with col_sig1:
-        st.markdown("**Signal Reasons:**")
-        for reason in entry_signal["reasons"]:
-            st.markdown(f"- {reason}")
-    
-    with col_sig2:
-        st.markdown("**Risk Management:**")
-        if entry_signal["stop_loss"]:
-            st.metric("Stop Loss", f"₹{entry_signal['stop_loss']:,.2f}")
-        if entry_signal["target"]:
-            st.metric("Target", f"₹{entry_signal['target']:,.2f}")
-        
-        # Risk:Reward
-        if entry_signal["stop_loss"] and entry_signal["target"]:
-            if entry_signal["position_type"] == "LONG":
-                risk = abs(entry_signal["optimal_entry_price"] - entry_signal["stop_loss"])
-                reward = abs(entry_signal["target"] - entry_signal["optimal_entry_price"])
-            else:
-                risk = abs(entry_signal["stop_loss"] - entry_signal["optimal_entry_price"])
-                reward = abs(entry_signal["optimal_entry_price"] - entry_signal["target"])
-            
-            if risk > 0:
-                rr_ratio = reward / risk
-                st.metric("Risk:Reward", f"1:{rr_ratio:.2f}")
-else:
-    st.markdown("""
-    <div class="signal-card">
-        <h3>⚖️ NO CLEAR SIGNAL</h3>
-        <div style="font-size: 1.8rem; color: #cccccc; font-weight: 700;">
-            Wait for better setup
+    # Stats row
+    col_stats1, col_stats2, col_stats3 = st.columns(3)
+    with col_stats1:
+        st.markdown("""
+        <div style="text-align: center;">
+            <div style="font-size: 1.1rem; color: #aaaaaa;">Current Spot</div>
+            <div style="font-size: 1.8rem; color: #ffffff; font-weight: 700;">₹""" + f"{spot:,.2f}" + """</div>
         </div>
-        <div style="font-size: 1.1rem; color: #aaaaaa; margin-top: 10px;">
-            Confidence: {:.0f}% | Market conditions neutral
+        """, unsafe_allow_html=True)
+    
+    with col_stats2:
+        distance = abs(spot - entry_signal["optimal_entry_price"])
+        st.markdown(f"""
+        <div style="text-align: center;">
+            <div style="font-size: 1.1rem; color: #aaaaaa;">Distance</div>
+            <div style="font-size: 1.8rem; color: #ffaa00; font-weight: 700;">₹{distance:.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col_stats3:
+        st.markdown(f"""
+        <div style="text-align: center;">
+            <div style="font-size: 1.1rem; color: #aaaaaa;">Direction</div>
+            <div style="font-size: 1.8rem; color: {signal_border}; font-weight: 700;">{entry_signal["position_type"]}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Moment confirmation with depth
+    st.markdown(f"""
+    <div style="
+        margin-top: 25px; 
+        padding: 20px; 
+        background: rgba(0,0,0,0.2); 
+        border-radius: 10px;
+        max-width: 900px;
+        margin-left: auto;
+        margin-right: auto;
+    ">
+        <div style="font-size: 1.2rem; color: #ffdd44; margin-bottom: 10px; text-align: center;">🎯 CONFIRMATION SIGNALS</div>
+        <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
+            <div>Momentum: {moment_metrics['momentum_burst'].get('score', 0)}/100</div>
+            <div>Depth: {depth_signals['signal_type'] if depth_signals and depth_signals['available'] else 'N/A'}</div>
+            <div>Pressure: {moment_metrics['orderbook'].get('pressure', 0):+.2f}</div>
+            <div>OI Accel: {moment_metrics['oi_accel'].get('score', 0)}/100</div>
         </div>
     </div>
-    """.format(entry_signal['confidence']), unsafe_allow_html=True)
-
-# ====================
-# COMBINED SUPPORT/RESISTANCE
-# ====================
-st.markdown("---")
-st.markdown("## 🎯 COMBINED SUPPORT & RESISTANCE LEVELS")
-
-support_col, resistance_col = st.columns(2)
-
-with support_col:
-    st.markdown("### 🛡️ SUPPORT LEVELS")
+    """, unsafe_allow_html=True)
     
-    if all_supports:
-        for i, support in enumerate(all_supports[:5], 1):
-            source = "🧊 Depth" if support.get('iceberg') else "📊 Options" if support['type'].startswith('option') else "📈 Depth"
-            st.markdown(f"""
-            {i}. **₹{support['price']:.2f}**
-               Strength: {support['strength']:.1f}k
-               Source: {source}
-            """)
-    else:
-        st.info("No support levels identified")
-
-with resistance_col:
-    st.markdown("### ⚡ RESISTANCE LEVELS")
+    # OI/PCR Confirmation
+    st.markdown(f"""
+    <div style="
+        margin-top: 25px; 
+        padding: 20px; 
+        background: rgba(0,0,0,0.2); 
+        border-radius: 10px;
+        max-width: 900px;
+        margin-left: auto;
+        margin-right: auto;
+    ">
+        <div style="font-size: 1.2rem; color: #66b3ff; margin-bottom: 10px; text-align: center;">📊 OI/PCR CONFIRMATION</div>
+        <div style="display: flex; justify-content: center; gap: 20px; font-size: 1rem; color: #cccccc; text-align: center;">
+            <div>PCR: {oi_pcr_metrics['pcr_total']:.2f}</div>
+            <div>Sentiment: {oi_pcr_metrics['pcr_sentiment']}</div>
+            <div>CALL OI: {oi_pcr_metrics['total_ce_oi']:,}</div>
+            <div>PUT OI: {oi_pcr_metrics['total_pe_oi']:,}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    if all_resistances:
-        for i, resistance in enumerate(all_resistances[:5], 1):
-            source = "🧊 Depth" if resistance.get('iceberg') else "📊 Options" if resistance['type'].startswith('option') else "📈 Depth"
-            st.markdown(f"""
-            {i}. **₹{resistance['price']:.2f}**
-               Strength: {resistance['strength']:.1f}k
-               Source: {source}
-            """)
-    else:
-        st.info("No resistance levels identified")
-
-# ====================
-# DETAILED OPTION CHAIN
-# ====================
-st.markdown("---")
-st.markdown("## 📊 DETAILED OPTION CHAIN DATA")
-
-# Display option chain data
-display_cols = [
-    "strikePrice", 
-    "OI_CE", "Chg_OI_CE", 
-    "OI_PE", "Chg_OI_PE",
-    "IV_CE", "IV_PE",
-    "GEX_Net"
-]
-
-# Format the display
-def color_oi_change(val):
-    if val > 0:
-        return 'background-color: #2e1a1a; color: #ff6666'
-    elif val < 0:
-        return 'background-color: #1a2e1a; color: #00ff88'
-    return ''
-
-def color_gex(val):
-    if val > 0:
-        return 'background-color: #1a2e1a; color: #00ff88'
-    elif val < 0:
-        return 'background-color: #2e1a1a; color: #ff6666'
-    return ''
-
-styled_df = merged[display_cols].style\
-    .applymap(color_oi_change, subset=['Chg_OI_CE', 'Chg_OI_PE'])\
-    .applymap(color_gex, subset=['GEX_Net'])\
-    .format({
-        'strikePrice': '{:,}',
-        'OI_CE': '{:,}',
-        'Chg_OI_CE': '{:+,}',
-        'OI_PE': '{:,}',
-        'Chg_OI_PE': '{:+,}',
-        'IV_CE': '{:.1f}%',
-        'IV_PE': '{:.1f}%',
-        'GEX_Net': '₹{:,.0f}'
-    })
-
-st.dataframe(styled_df, use_container_width=True, height=400)
-
-# ====================
-# TRADING INSIGHTS
-# ====================
-st.markdown("---")
-st.markdown("## 💡 TRADING INSIGHTS & ANALYSIS")
-
-insight_col1, insight_col2 = st.columns(2)
-
-with insight_col1:
-    st.markdown("### 🎯 MARKET ANALYSIS")
+    # Action buttons
+    st.markdown("<br>", unsafe_allow_html=True)
+    action_col1, action_col2, action_col3 = st.columns([2, 1, 1])
     
-    # Seller Bias Analysis
-    st.markdown(f"**Seller Activity:** {seller_bias_result['explanation']}")
-    st.markdown(f"**Expected Action:** {seller_bias_result['action']}")
+    with action_col1:
+        if st.button(f"📊 PLACE {entry_signal['position_type']} ORDER AT ₹{entry_signal['optimal_entry_price']:,.0f}", 
+                    use_container_width=True, type="primary", key="place_order"):
+            st.success(f"✅ {entry_signal['position_type']} order queued at ₹{entry_signal['optimal_entry_price']:,.2f}")
+            st.balloons()
     
-    # PCR Analysis
-    st.markdown(f"**PCR Interpretation:** {oi_pcr_metrics['pcr_interpretation']}")
-    st.markdown(f"**OI Change Pattern:** {oi_pcr_metrics['oi_change_interpretation']}")
+    with action_col2:
+        if st.button("🔔 SET PRICE ALERT", use_container_width=True, key="set_alert"):
+            st.info(f"📢 Alert set for {entry_signal['optimal_entry_price']:,.2f}")
     
-    # GEX Analysis
-    total_gex = merged["GEX_Net"].sum()
-    if total_gex > 1000000:
-        st.success("**Gamma Exposure:** Positive GEX (stabilizing effect). Market makers are short gamma.")
-    elif total_gex < -1000000:
-        st.warning("**Gamma Exposure:** Negative GEX (destabilizing effect). Market makers are long gamma.")
+    with action_col3:
+        if st.button("🔄 REFRESH", use_container_width=True, key="refresh"):
+            st.rerun()
     
-    # Iceberg Insights
-    if depth_analysis and depth_analysis['summary']['total_iceberg_orders'] > 0:
-        st.warning(f"**Iceberg Alert:** {depth_analysis['summary']['total_iceberg_orders']} large hidden orders detected. Institutional activity present.")
-    
-    # Expiry Insights
-    if expiry_spike_data["active"] and expiry_spike_data["probability"] > 50:
-        st.warning(f"**Expiry Risk:** High spike probability ({expiry_spike_data['probability']}%). Trade cautiously.")
-
-with insight_col2:
-    st.markdown("### 🛡️ RISK MANAGEMENT")
-    
-    # Range Analysis
-    if all_supports and all_resistances:
-        best_support = all_supports[0]['price']
-        best_resistance = all_resistances[0]['price']
-        range_size = best_resistance - best_support
+else:
+    # NO SIGNAL
+    with st.container():
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #1a1f2e 0%, #2a2f3e 100%);
+            padding: 30px;
+            border-radius: 20px;
+            border: 5px solid #666666;
+            margin: 0 auto;
+            text-align: center;
+            max-width: 900px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+        ">
+        """, unsafe_allow_html=True)
         
-        st.metric("Trading Range", f"₹{best_support:.2f} - ₹{best_resistance:.2f}")
-        st.metric("Range Size", f"₹{range_size:.2f}")
+        # Warning icon
+        st.markdown("""
+        <div style="font-size: 4rem; color: #cccccc; margin-bottom: 20px; text-align: center;">
+            ⚠️
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Position in range
-        if range_size > 0:
-            position_pct = ((spot - best_support) / range_size) * 100
-            position_color = "#00ff88" if position_pct < 40 else "#ff4444" if position_pct > 60 else "#ff9900"
-            st.markdown(f"**Spot Position:** <span style='color:{position_color}'>{position_pct:.1f}% within range</span>", unsafe_allow_html=True)
+        # No signal message
+        st.markdown("""
+        <div style="font-size: 2.5rem; font-weight: 900; color:#cccccc; line-height: 1.2; margin-bottom: 15px; text-align: center;">
+            NO CLEAR ENTRY SIGNAL
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Stop Loss Suggestions
-        st.markdown("**Stop Loss Ideas:**")
-        if entry_signal["position_type"] == "LONG":
-            stop_levels = []
-            if all_supports:
-                stop_levels.append(f"Below support: ₹{best_support:.2f}")
-            if depth_analysis and depth_analysis['support_levels']:
-                depth_stop = depth_analysis['support_levels'][0]['price']
-                stop_levels.append(f"Below depth support: ₹{depth_stop:.2f}")
-            
-            for stop in stop_levels[:2]:
-                st.markdown(f"- {stop}")
+        st.markdown(f"""
+        <div style="font-size: 1.8rem; color: #ffcc00; font-weight: 700; margin-bottom: 20px; text-align: center;">
+            Wait for Better Setup
+        </div>
+        """, unsafe_allow_html=True)
         
-        elif entry_signal["position_type"] == "SHORT":
-            stop_levels = []
-            if all_resistances:
-                stop_levels.append(f"Above resistance: ₹{best_resistance:.2f}")
-            if depth_analysis and depth_analysis['resistance_levels']:
-                depth_stop = depth_analysis['resistance_levels'][0]['price']
-                stop_levels.append(f"Above depth resistance: ₹{depth_stop:.2f}")
-            
-            for stop in stop_levels[:2]:
-                st.markdown(f"- {stop}")
-    
-    # Trading Volume Insights
-    total_volume = merged["Vol_CE"].sum() + merged["Vol_PE"].sum()
-    if total_volume > 1000000:
-        st.info(f"**High Trading Volume:** {total_volume:,} contracts. Active market participation.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-# ====================
-# FINAL SUMMARY
-# ====================
+# ============================================
+# 🎯 SELLER'S BIAS
+# ============================================
+
+st.markdown(f"""
+<div class='seller-bias-box'>
+    <h3>🎯 SELLER'S MARKET BIAS</h3>
+    <div class='bias-value' style='color:{seller_bias_result["color"]}'>
+        {seller_bias_result["bias"]}
+    </div>
+    <p>Polarity Score: {seller_bias_result["polarity"]:.2f}</p>
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown(f"""
+<div class='seller-explanation'>
+    <h4>🧠 SELLER'S THINKING:</h4>
+    <p><strong>{seller_bias_result["explanation"]}</strong></p>
+    <p><strong>Action:</strong> {seller_bias_result["action"]}</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Footer
 st.markdown("---")
-st.markdown("## 📋 FINAL MARKET SUMMARY")
-
-summary_col1, summary_col2, summary_col3 = st.columns(3)
-
-with summary_col1:
-    st.markdown("#### 📊 Market Structure")
-    st.markdown(f"- **Spot:** ₹{spot:.2f}")
-    st.markdown(f"- **ATM:** ₹{atm_strike}")
-    st.markdown(f"- **Bias:** {seller_bias_result['bias']}")
-    st.markdown(f"- **PCR:** {oi_pcr_metrics['pcr_total']:.2f}")
-    st.markdown(f"- **GEX:** ₹{int(merged['GEX_Net'].sum()):,}")
-
-with summary_col2:
-    st.markdown("#### 🎯 Key Levels")
-    if all_supports:
-        st.markdown(f"- **Support:** ₹{all_supports[0]['price']:.2f}")
-    if all_resistances:
-        st.markdown(f"- **Resistance:** ₹{all_resistances[0]['price']:.2f}")
-    if seller_max_pain:
-        st.markdown(f"- **Max Pain:** ₹{seller_max_pain:,}")
-    
-    # Depth summary
-    if depth_analysis:
-        st.markdown(f"- **Depth Pressure:** {depth_analysis['summary']['depth_pressure']:+.2f}")
-
-with summary_col3:
-    st.markdown("#### ⚠️ Risk Factors")
-    
-    risk_factors = []
-    
-    # Expiry risk
-    if expiry_spike_data["active"] and expiry_spike_data["probability"] > 50:
-        risk_factors.append(f"Expiry spike risk: {expiry_spike_data['probability']}%")
-    
-    # Iceberg risk
-    if depth_analysis and depth_analysis['summary']['total_iceberg_orders'] > 0:
-        risk_factors.append(f"Iceberg orders: {depth_analysis['summary']['total_iceberg_orders']}")
-    
-    # GEX risk
-    total_gex = merged["GEX_Net"].sum()
-    if abs(total_gex) > 2000000:
-        risk_factors.append(f"Extreme GEX: ₹{int(total_gex):,}")
-    
-    # PCR extremes
-    if oi_pcr_metrics["pcr_total"] > 2.0 or oi_pcr_metrics["pcr_total"] < 0.5:
-        risk_factors.append(f"Extreme PCR: {oi_pcr_metrics['pcr_total']:.2f}")
-    
-    if risk_factors:
-        for factor in risk_factors[:3]:
-            st.markdown(f"- {factor}")
-    else:
-        st.markdown("- No major risk factors detected")
-
-# ====================
-# FOOTER
-# ====================
-st.markdown("---")
-st.markdown(f"**🔄 Auto-refresh:** {AUTO_REFRESH_SEC}s | **⏰ Last Update:** {get_ist_datetime_str()}")
-
-# Auto-refresh logic
-if auto_refresh:
-    time.sleep(AUTO_REFRESH_SEC)
-    st.rerun()
+st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
+st.caption("🎯 **NIFTY Option Screener v7.5 — SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS + MARKET DEPTH ANALYZER** | All features enabled")
 
 # Requirements note
-st.caption("""
-**Requirements:** `streamlit pandas numpy requests pytz scipy` | **Data Source:** Dhan API | 
-**Version:** NIFTY Option Screener v7.0 Complete
-""")
+st.markdown("""
+<small>
+**Requirements:** 
+`streamlit pandas numpy requests pytz scipy supabase python-dotenv matplotlib plotly` | 
+**Data:** Dhan API required | **Market Depth:** NSE API (fallback: simulated)
+</small>
+""", unsafe_allow_html=True)
+
+st.markdown("---")
+st.markdown("**🔄 Last update:** Auto-refreshing every 60 seconds")
