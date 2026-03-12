@@ -152,7 +152,7 @@ def compute_greeks(spot, strike, tau, risk_free_rate, ltp, option_type):
 # -----------------------
 #  CONFIG
 # -----------------------
-AUTO_REFRESH_SEC = 60
+AUTO_REFRESH_SEC = 28
 LOT_SIZE = 50
 RISK_FREE_RATE = 0.06
 ATM_STRIKE_WINDOW = 8
@@ -8940,7 +8940,7 @@ def render_nifty_option_screener():
     """, unsafe_allow_html=True)
     
     st.markdown("---")
-    st.markdown("**🔄 Last update:** Auto-refreshing every 60 seconds")
+    st.markdown(f"**🔄 Last update:** Auto-refreshing every {AUTO_REFRESH_SEC} seconds")
 
 # -----------------------
 #  STANDALONE EXECUTION
