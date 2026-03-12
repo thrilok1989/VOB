@@ -5882,12 +5882,12 @@ def load_option_screener_data_silently():
     Returns True on success, False on failure
     """
     try:
-        # Use shared spot price from session state if available (avoids redundant API calls)
-        spot = st.session_state.get('nifty_spot', 0) or st.session_state.get('last_spot_price', 0)
+        # Always fetch fresh spot price (cached for 2s via @st.cache_data)
+        spot = get_nifty_spot_price()
 
-        # If not available, fetch from API
+        # Fallback to session state only if API fails
         if spot == 0 or spot is None:
-            spot = get_nifty_spot_price()
+            spot = st.session_state.get('nifty_spot', 0) or st.session_state.get('last_spot_price', 0)
 
         if spot == 0.0:
             return False
@@ -5914,13 +5914,8 @@ def load_option_screener_data_silently():
             tau = 7.0/365.0
             days_to_expiry = 7.0
 
-        # Fetch option chain - use session state if available for same expiry
-        chain_cache_key = f'option_chain_{expiry}'
-        chain = st.session_state.get(chain_cache_key, None)
-        if chain is None:
-            chain = fetch_dhan_option_chain(expiry)
-            if chain:
-                st.session_state[chain_cache_key] = chain
+        # Always fetch fresh option chain (cached for 45s via @st.cache_data)
+        chain = fetch_dhan_option_chain(expiry)
         if chain is None:
             return False
 
@@ -6172,16 +6167,15 @@ def render_nifty_option_screener():
             st.cache_data.clear()
             st.rerun()
     
-    # Fetch data - Use shared spot price from session state if available (avoids redundant API calls)
+    # Fetch data - Always fetch fresh spot price on every refresh
     col1, col2 = st.columns([1, 2])
     with col1:
-        # First check if spot price is already in session state from main app
-        spot = st.session_state.get('nifty_spot', 0) or st.session_state.get('last_spot_price', 0)
+        # Always fetch fresh spot price (cached for 2s via @st.cache_data)
+        spot = get_nifty_spot_price()
 
-        # If not available, fetch from API (with caching)
+        # Fallback to session state only if API fails
         if spot == 0 or spot is None:
-            with st.spinner("Fetching NIFTY spot..."):
-                spot = get_nifty_spot_price()
+            spot = st.session_state.get('nifty_spot', 0) or st.session_state.get('last_spot_price', 0)
 
         if spot == 0.0:
             st.error("Unable to fetch NIFTY spot")
@@ -6229,14 +6223,9 @@ def render_nifty_option_screener():
         st.markdown(f"**Current IST:** {get_ist_time_str()}")
         st.markdown(f"**Date:** {get_ist_date_str()}")
     
-    # Fetch option chain - use session state if available for same expiry
-    chain_cache_key = f'option_chain_{expiry}'
-    chain = st.session_state.get(chain_cache_key, None)
-    if chain is None:
-        with st.spinner("Fetching option chain..."):
-            chain = fetch_dhan_option_chain(expiry)
-            if chain:
-                st.session_state[chain_cache_key] = chain
+    # Always fetch fresh option chain (cached for 45s via @st.cache_data on fetch_dhan_option_chain)
+    with st.spinner("Fetching option chain..."):
+        chain = fetch_dhan_option_chain(expiry)
     if chain is None:
         st.error("Failed to fetch option chain")
         st.stop()
