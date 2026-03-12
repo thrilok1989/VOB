@@ -3803,8 +3803,6 @@ st.markdown(r"""
 
 st.set_page_config(page_title="Nifty Screener v7 - Seller's Perspective + ATM Bias Analyzer + Moment Detector + Expiry Spike + OI/PCR", layout="wide")
 
-st_autorefresh(interval=AUTO_REFRESH_SEC * 1000, key="auto_refresh")
-
 # -----------------------
 #  UTILITY FUNCTIONS
 # -----------------------
@@ -8935,6 +8933,7 @@ def render_nifty_option_screener():
     
     st.markdown("---")
     st.markdown(f"**🔄 Last update:** Auto-refreshing every {AUTO_REFRESH_SEC} seconds")
+    st_autorefresh(interval=AUTO_REFRESH_SEC * 1000, key="auto_refresh")
 
 # -----------------------
 #  STANDALONE EXECUTION
