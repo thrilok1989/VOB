@@ -3573,6 +3573,8 @@ def analyze_pcr_for_expiry(pcr_value, days_to_expiry):
     
     return "PCR analysis standard"
 
+st.set_page_config(page_title="Nifty Screener v7 - Seller's Perspective + ATM Bias Analyzer + Moment Detector + Expiry Spike + OI/PCR", layout="wide")
+
 # -----------------------
 #  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES + EXPIRY SPIKE + OI/PCR + ATM BIAS
 # -----------------------
@@ -3800,8 +3802,6 @@ st.markdown(r"""
     [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
 </style>
 """, unsafe_allow_html=True)
-
-st.set_page_config(page_title="Nifty Screener v7 - Seller's Perspective + ATM Bias Analyzer + Moment Detector + Expiry Spike + OI/PCR", layout="wide")
 
 # -----------------------
 #  UTILITY FUNCTIONS
