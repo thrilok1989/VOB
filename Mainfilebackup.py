@@ -19,6 +19,7 @@ NEW FEATURES ADDED:
 """
 
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import numpy as np
 import requests
@@ -3801,15 +3802,6 @@ st.markdown(r"""
 """, unsafe_allow_html=True)
 
 st.set_page_config(page_title="Nifty Screener v7 - Seller's Perspective + ATM Bias Analyzer + Moment Detector + Expiry Spike + OI/PCR", layout="wide")
-
-def auto_refresh(interval_sec=AUTO_REFRESH_SEC):
-    if "last_refresh" not in st.session_state:
-        st.session_state["last_refresh"] = time.time()
-    if time.time() - st.session_state["last_refresh"] > interval_sec:
-        st.session_state["last_refresh"] = time.time()
-        st.rerun()
-
-auto_refresh()
 
 # -----------------------
 #  UTILITY FUNCTIONS
@@ -8941,6 +8933,7 @@ def render_nifty_option_screener():
     
     st.markdown("---")
     st.markdown(f"**🔄 Last update:** Auto-refreshing every {AUTO_REFRESH_SEC} seconds")
+    st_autorefresh(interval=AUTO_REFRESH_SEC * 1000, key="auto_refresh")
 
 # -----------------------
 #  STANDALONE EXECUTION
