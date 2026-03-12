@@ -4713,8 +4713,13 @@ def display_market_depth_dashboard(spot, depth_analysis, depth_signals, enhanced
                 annotation_font=dict(color=color, size=11),
             )
 
+        # Set x-axis range to include all bars AND all reference lines
+        all_x_values = sup_prices + res_prices + [spot, atm_strike, itm1, otm1]
+        x_min = min(all_x_values) - 10
+        x_max = max(all_x_values) + 10
+
         fig.update_layout(
-            title="Support & Resistance — Order Book Depth",
+            title=f"Support & Resistance — Order Book Depth  |  Spot: ₹{spot:,.2f}",
             xaxis_title="Price Level (₹)",
             yaxis_title="Quantity",
             plot_bgcolor="#0e1117",
@@ -4723,7 +4728,7 @@ def display_market_depth_dashboard(spot, depth_analysis, depth_signals, enhanced
             height=420,
             margin=dict(l=10, r=40, t=70, b=40),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            xaxis=dict(tickformat=",.0f", tickprefix="₹"),
+            xaxis=dict(tickformat=",.0f", tickprefix="₹", range=[x_min, x_max]),
         )
         st.plotly_chart(fig, use_container_width=True)
 
