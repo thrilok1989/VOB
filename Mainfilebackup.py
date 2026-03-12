@@ -3573,6 +3573,8 @@ def analyze_pcr_for_expiry(pcr_value, days_to_expiry):
     
     return "PCR analysis standard"
 
+st.set_page_config(page_title="Nifty Screener v7 - Seller's Perspective + ATM Bias Analyzer + Moment Detector + Expiry Spike + OI/PCR", layout="wide")
+
 # -----------------------
 #  CUSTOM CSS - SELLER THEME + NEW MOMENT FEATURES + EXPIRY SPIKE + OI/PCR + ATM BIAS
 # -----------------------
@@ -3800,8 +3802,6 @@ st.markdown(r"""
     [data-testid="stMetricValue"] { color: #ff66cc !important; font-size: 1.6rem !important; font-weight: 700 !important; }
 </style>
 """, unsafe_allow_html=True)
-
-st.set_page_config(page_title="Nifty Screener v7 - Seller's Perspective + ATM Bias Analyzer + Moment Detector + Expiry Spike + OI/PCR", layout="wide")
 
 # -----------------------
 #  UTILITY FUNCTIONS
@@ -4657,6 +4657,45 @@ def display_market_depth_dashboard(spot, depth_analysis, depth_signals, enhanced
             st.markdown("*Largest ask quantities*")
             for i, (price, qty) in enumerate(depth_analysis["top_resistances"][:3], 1):
                 st.markdown(f"**R{i}:** ₹{price:,.2f} (Qty: {qty:,})")
+
+        # --- Horizontal bar chart for Support & Resistance ---
+        supports = depth_analysis["top_supports"][:3]
+        resistances = depth_analysis["top_resistances"][:3]
+
+        labels = [f"S{i+1}: ₹{p:,.2f}" for i, (p, _) in enumerate(supports)] + \
+                 [f"R{i+1}: ₹{p:,.2f}" for i, (p, _) in enumerate(resistances)]
+        quantities = [q for _, q in supports] + [q for _, q in resistances]
+        colors = ["#00ff88"] * len(supports) + ["#ff4444"] * len(resistances)
+
+        chart_df = pd.DataFrame({
+            "Level": labels,
+            "Quantity": quantities,
+            "Color": colors
+        })
+
+        import plotly.graph_objects as go
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            y=chart_df["Level"],
+            x=chart_df["Quantity"],
+            orientation="h",
+            marker_color=chart_df["Color"],
+            text=[f"{q:,}" for q in chart_df["Quantity"]],
+            textposition="outside",
+            textfont=dict(color="white", size=13),
+        ))
+        fig.update_layout(
+            title="Support & Resistance — Order Book Depth",
+            xaxis_title="Quantity",
+            yaxis_title="",
+            plot_bgcolor="#0e1117",
+            paper_bgcolor="#0e1117",
+            font=dict(color="white"),
+            height=320,
+            margin=dict(l=10, r=40, t=40, b=30),
+            yaxis=dict(autorange="reversed"),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------
 # 🎯 COMPREHENSIVE MARKET DEPTH DASHBOARD (ADVANCED)
