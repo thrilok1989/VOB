@@ -4658,42 +4658,72 @@ def display_market_depth_dashboard(spot, depth_analysis, depth_signals, enhanced
             for i, (price, qty) in enumerate(depth_analysis["top_resistances"][:3], 1):
                 st.markdown(f"**R{i}:** ₹{price:,.2f} (Qty: {qty:,})")
 
-        # --- Horizontal bar chart for Support & Resistance ---
+        # --- Vertical bar chart with Spot / ATM / ITM1 / OTM1 lines ---
         supports = depth_analysis["top_supports"][:3]
         resistances = depth_analysis["top_resistances"][:3]
 
-        labels = [f"S{i+1}: ₹{p:,.2f}" for i, (p, _) in enumerate(supports)] + \
-                 [f"R{i+1}: ₹{p:,.2f}" for i, (p, _) in enumerate(resistances)]
-        quantities = [q for _, q in supports] + [q for _, q in resistances]
-        colors = ["#00ff88"] * len(supports) + ["#ff4444"] * len(resistances)
+        # Sort supports ascending, resistances ascending by price
+        supports_sorted = sorted(supports, key=lambda x: x[0])
+        resistances_sorted = sorted(resistances, key=lambda x: x[0])
 
-        chart_df = pd.DataFrame({
-            "Level": labels,
-            "Quantity": quantities,
-            "Color": colors
-        })
+        sup_prices = [p for p, _ in supports_sorted]
+        sup_qtys = [q for _, q in supports_sorted]
+        res_prices = [p for p, _ in resistances_sorted]
+        res_qtys = [q for _, q in resistances_sorted]
 
         import plotly.graph_objects as go
         fig = go.Figure()
+
+        # Support bars (green) — below spot
         fig.add_trace(go.Bar(
-            y=chart_df["Level"],
-            x=chart_df["Quantity"],
-            orientation="h",
-            marker_color=chart_df["Color"],
-            text=[f"{q:,}" for q in chart_df["Quantity"]],
-            textposition="outside",
-            textfont=dict(color="white", size=13),
+            x=sup_prices, y=sup_qtys,
+            marker_color="#00ff88",
+            text=[f"S{i+1}<br>{q:,}" for i, q in enumerate(sup_qtys)],
+            textposition="outside", textfont=dict(color="#00ff88", size=11),
+            name="Support", width=3,
         ))
+        # Resistance bars (red) — above spot
+        fig.add_trace(go.Bar(
+            x=res_prices, y=res_qtys,
+            marker_color="#ff4444",
+            text=[f"R{i+1}<br>{q:,}" for i, q in enumerate(res_qtys)],
+            textposition="outside", textfont=dict(color="#ff4444", size=11),
+            name="Resistance", width=3,
+        ))
+
+        # Calculate ATM strike (round spot to nearest 50)
+        atm_strike = round(spot / 50) * 50
+        strike_gap = 50
+        itm1 = atm_strike - strike_gap  # 1 strike below ATM
+        otm1 = atm_strike + strike_gap  # 1 strike above ATM
+
+        # Vertical reference lines: Spot, ATM, ITM1, OTM1
+        ref_lines = [
+            (spot, "Spot", "#ffff00", "dash"),
+            (atm_strike, "ATM", "#ff66cc", "solid"),
+            (itm1, "ITM1", "#66b3ff", "dot"),
+            (otm1, "OTM1", "#ff9933", "dot"),
+        ]
+        for price_val, label, color, dash_style in ref_lines:
+            fig.add_vline(
+                x=price_val,
+                line_width=2, line_dash=dash_style, line_color=color,
+                annotation_text=f"{label}: ₹{price_val:,.0f}",
+                annotation_position="top",
+                annotation_font=dict(color=color, size=11),
+            )
+
         fig.update_layout(
             title="Support & Resistance — Order Book Depth",
-            xaxis_title="Quantity",
-            yaxis_title="",
+            xaxis_title="Price Level (₹)",
+            yaxis_title="Quantity",
             plot_bgcolor="#0e1117",
             paper_bgcolor="#0e1117",
             font=dict(color="white"),
-            height=320,
-            margin=dict(l=10, r=40, t=40, b=30),
-            yaxis=dict(autorange="reversed"),
+            height=420,
+            margin=dict(l=10, r=40, t=70, b=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            xaxis=dict(tickformat=",.0f", tickprefix="₹"),
         )
         st.plotly_chart(fig, use_container_width=True)
 
